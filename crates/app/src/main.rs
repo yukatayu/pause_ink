@@ -101,7 +101,9 @@ struct DesktopApp {
     overlay_key: Option<(i64, usize, usize, u32, u32)>,
     canvas_drag_active: bool,
     guide_capture_armed: bool,
+    recovery_prompt_open: bool,
     last_update_at: Instant,
+    last_autosave_at: Instant,
 }
 
 impl DesktopApp {
@@ -110,6 +112,7 @@ impl DesktopApp {
         settings: Settings,
         runtime: Option<pauseink_media::MediaRuntime>,
     ) -> Self {
+        let recovery_prompt_open = portable_paths.autosave_file("recovery_latest").exists();
         let provider = runtime.clone().map(FfprobeMediaProvider::new);
         let runtime_status = runtime
             .map(|runtime| {
@@ -141,7 +144,9 @@ impl DesktopApp {
             overlay_key: None,
             canvas_drag_active: false,
             guide_capture_armed: false,
+            recovery_prompt_open,
             last_update_at: Instant::now(),
+            last_autosave_at: Instant::now(),
         }
     }
 
@@ -183,7 +188,13 @@ impl DesktopApp {
 
     fn save_project(&mut self, path: PathBuf) {
         match self.session.save_project_to_path(&path) {
-            Ok(()) => self.push_log(format!("プロジェクトを保存: {}", path.display())),
+            Ok(()) => {
+                let autosave_path = self.portable_paths.autosave_file("recovery_latest");
+                if autosave_path.exists() {
+                    let _ = fs::remove_file(&autosave_path);
+                }
+                self.push_log(format!("プロジェクトを保存: {}", path.display()))
+            }
             Err(error) => self.push_log(format!("保存失敗: {error:#}")),
         }
     }
@@ -531,6 +542,43 @@ impl DesktopApp {
             Err(error) => self.push_log(format!("settings 直列化失敗: {error}")),
         }
     }
+
+    fn maybe_autosave(&mut self) {
+        if !self.session.dirty || self.last_autosave_at.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+
+        match self.session.save_project_to_string() {
+            Ok(serialized) => {
+                let autosave_path = self.portable_paths.autosave_file("recovery_latest");
+                match fs::write(&autosave_path, serialized) {
+                    Ok(()) => {
+                        self.last_autosave_at = Instant::now();
+                        self.push_log(format!("autosave 更新: {}", autosave_path.display()));
+                    }
+                    Err(error) => self.push_log(format!("autosave 保存失敗: {error}")),
+                }
+            }
+            Err(error) => self.push_log(format!("autosave 直列化失敗: {error:#}")),
+        }
+    }
+
+    fn recover_latest_autosave(&mut self) {
+        let autosave_path = self.portable_paths.autosave_file("recovery_latest");
+        match fs::read_to_string(&autosave_path)
+            .ok()
+            .and_then(|source| AppSession::load_project_from_str(&source).ok())
+        {
+            Some(session) => {
+                self.session = session;
+                self.preview_key = None;
+                self.overlay_key = None;
+                self.recovery_prompt_open = false;
+                self.push_log(format!("autosave から復旧: {}", autosave_path.display()));
+            }
+            None => self.push_log("autosave 復旧に失敗しました。"),
+        }
+    }
 }
 
 impl eframe::App for DesktopApp {
@@ -541,6 +589,28 @@ impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.advance_playback(&ctx);
+        self.maybe_autosave();
+
+        if self.recovery_prompt_open {
+            egui::Window::new("Recovery")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(&ctx, |ui| {
+                    let autosave_path = self.portable_paths.autosave_file("recovery_latest");
+                    ui.label("前回の autosave が見つかりました。");
+                    ui.label(autosave_path.display().to_string());
+                    ui.horizontal(|ui| {
+                        if ui.button("復旧する").clicked() {
+                            self.recover_latest_autosave();
+                        }
+                        if ui.button("破棄する").clicked() {
+                            let _ = fs::remove_file(&autosave_path);
+                            self.recovery_prompt_open = false;
+                        }
+                    });
+                });
+        }
 
         egui::Panel::top("top_bar").show(&ctx, |ui| {
             ui.horizontal_wrapped(|ui| {

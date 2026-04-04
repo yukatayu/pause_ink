@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 61% 前後。single-window GUI、preview canvas、free ink、guide/template preview の最小縦断が通り、次は autosave/recovery と export engine 実装へ進む
-- 現在の即時マイルストーン: autosave/recovery、export queue/engine、transparent/composite 実検証を通す
+- 全体状態: 全体で概算 64% 前後。single-window GUI、preview canvas、free ink、guide/template preview、autosave/recovery の最小線が通り、次は export engine と実 export 検証へ進む
+- 現在の即時マイルストーン: export queue/engine、transparent/composite 実検証、README/manual の現実反映を通す
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -36,6 +36,7 @@
   - `portable_fs` に cache/autosave/runtime 下位 path helper と directory 作成を追加
   - `app` に free ink commit、shift grouping、clear event、save/load、guide/template 状態を追加
   - `app` binary に single-window GUI、preview canvas、outline/page events、guide/template preview を追加
+  - `app` binary に autosave cadence と recovery prompt の最小実装を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -61,12 +62,12 @@
 | Phase 13 | 実行中 | 35% | outline / groups / page events | object outline と page events bottom tab を追加 |
 | Phase 14 | 未着手 | 0% | style / entrance / clear effects | built-in effects のみ |
 | Phase 15 | 実行中 | 20% | export UI と export engine | bucket 解決と capability 判定の基礎を追加 |
-| Phase 16 | 実行中 | 20% | preferences / cache manager / recovery | settings load/save と portable dir 作成を GUI 起動経路へ接続 |
+| Phase 16 | 実行中 | 40% | preferences / cache manager / recovery | autosave cadence と recovery prompt の最小実装を追加 |
 | Phase 17 | 実行中 | 15% | README / manuals / tutorials / polish | UI 文言と一部 preset docs を日本語化済み |
 | Phase 18 | 未着手 | 0% | 最終 build / test / export / Windows build 試行 | done criteria を満たすまで終了しない |
 
 ## 次の具体的な一手
 
-1. autosave cadence と recovery prompt を実装する。
-2. export queue / engine を繋ぎ、transparent/composite を host で実検証する。
-3. README / manual / tutorials を現実の UI とコマンドへ合わせて日本語で更新する。
+1. export queue / engine を繋ぎ、transparent/composite を host で実検証する。
+2. README / manual / tutorials を現実の UI とコマンドへ合わせて日本語で更新する。
+3. cache manager、preferences、Windows build 試行と最終 QA/docs sanity review を進める。

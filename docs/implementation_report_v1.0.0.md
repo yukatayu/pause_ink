@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe / preview frame、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI を接続した。次は autosave/recovery と export engine / 実 export 検証へ進む。
-- 現在のフェーズ: Phase 10 実行中。
+- 現在の状態: `media` の runtime discovery / probe / preview frame、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt の最小線を接続した。次は export engine / 実 export 検証へ進む。
+- 現在のフェーズ: Phase 11 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -42,7 +42,7 @@
 | Phase 13 | 実行中 | object outline と page events bottom tab の最小表示を実装 |
 | Phase 14 | 未着手 | |
 | Phase 15 | 実行中 | bucket 解決と capability 判定の基礎を実装 |
-| Phase 16 | 未着手 | |
+| Phase 16 | 実行中 | settings file roundtrip、portable dir 作成、autosave cadence、recovery prompt の最小線を接続 |
 | Phase 17 | 実行中 | UI 文言と一部 preset docs の日本語化を開始 |
 | Phase 18 | 未着手 | |
 
@@ -163,6 +163,11 @@
   - 検討した代替案: UI 層でその都度 smoothing して domain へ完成済み path だけ保存する。
   - 理由: preview と export で同じ stroke processing を再利用し、UI 側の責務肥大化を避けるため。
   - 影響: `renderer` は CPU-safe preview/export の共通基盤になり、app/lib は raw point capture と command dispatch に集中できる。
+- 2026-04-05T04:30:00+09:00
+  - 決定: 既存の `crates/app/src/main.rs` に入っていた single-window GUI 実装は活かし、`app` lib 側の session API を合わせて疎結合を保つ。
+  - 検討した代替案: GUI を一度捨てて session 設計から書き直す。
+  - 理由: main window / canvas / outline / page events / template preview の実装面積を残した方が出戻りが少なく、`app` lib 側で business rule を収めれば architectural priority も守れるため。
+  - 影響: このブロックでは `main.rs` は最小修正に留め、`app` lib と supporting crates の API を先に充足する方針に切り替えた。
 
 ## 5. 作業ログ
 
@@ -271,6 +276,26 @@
   - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/ui/src/lib.rs`, `progress.md`
   - 結果: imported media と playback state を app/UI 境界へ載せる最小 skeleton ができ、状態文言を日本語で固定できた。
   - 次の一手: preview/editor state、mode 切替、free ink capture を追加する。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `renderer` に CPU-safe overlay raster、path trace / clear の最小時刻評価、stroke stabilization helper を追加し、`media` に preview frame 抽出を追加した。
+  - 変更ファイル: `crates/renderer/Cargo.toml`, `crates/renderer/src/lib.rs`, `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `Cargo.toml`
+  - 結果: preview/export 共通の描画核と、FFmpeg runtime 経由の静止フレーム抽出が揃った。
+  - 次の一手: app session から free ink / save-load / guide-template 状態を扱えるようにする。
+- 2026-04-05T03:35:00+09:00
+  - 実施内容: `app` lib に free ink commit、shift grouping、clear event、save/load、entity extra 保持、object bounds、project title/media hint API を追加し、`portable_fs` に settings file roundtrip / dir 作成を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/portable_fs/Cargo.toml`, `crates/portable_fs/src/lib.rs`
+  - 結果: session 単体で `.pauseink` の保存読込、undo/redo、free ink、portable settings I/O が扱えるようになった。
+  - 次の一手: single-window GUI をこの session API に合わせて compile / check を通す。
+- 2026-04-05T04:30:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の GUI 実装を session API に合わせて接続し、single-window canvas / outline / page events / template preview / guide overlay を compile 可能にした。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`
+  - 結果: `cargo check -p pauseink-app --all-targets` が通り、既存 GUI 実装と新しい session/renderer/media 基盤が接続された。
+  - 次の一手: autosave/recovery、export queue/engine、実 export 検証を進める。
+- 2026-04-05T04:50:00+09:00
+  - 実施内容: `crates/app/src/main.rs` に autosave cadence、保存成功時の autosave cleanup、起動時 recovery prompt、autosave 読込導線を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`
+  - 結果: Phase 16 の最小 recovery 線が GUI 起動経路へ載り、未保存作業の救済経路ができた。
+  - 次の一手: export queue/engine と transparent/composite export 検証へ進む。
 - 2026-04-05T02:55:00+09:00
   - 実施内容: `project_io` に typed annotation sync と extra 維持を追加し、`domain` に stroke append command を追加、`renderer` に overlay/clear/path trace 描画と stabilization helper を追加した。
   - 変更ファイル: `crates/project_io/src/lib.rs`, `crates/domain/src/lib.rs`, `crates/domain/src/project_commands.rs`, `crates/renderer/Cargo.toml`, `crates/renderer/src/lib.rs`
@@ -401,6 +426,16 @@
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
 - `cargo test --workspace`
   - 結果: exit 0。app/ui status skeleton と文書更新後の workspace 回帰確認を完了。
+- `cargo test -p pauseink-renderer`
+  - 結果: exit 0。4 tests passed。visible stroke、path trace、clear、dissolve clear の raster 基礎を確認。
+- `cargo test -p pauseink-media -p pauseink-app`
+  - 結果: exit 0。`pauseink-media` 12 tests、`pauseink-app` 2 tests が通過。preview frame smoke と import/session 接続を確認。
+- `cargo test -p pauseink-app`
+  - 結果: exit 0。7 tests passed。free ink commit、shift grouping、clear event、save/load、undo/redo を確認。
+- `cargo test -p pauseink-portable-fs -p pauseink-renderer`
+  - 結果: exit 0。`pauseink-portable-fs` 7 tests、`pauseink-renderer` 5 tests が通過。settings file roundtrip と renderer 角保持ケースを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。single-window GUI を含む全 target が compile。`eframe::egui::Panel` 系の deprecation warning が 8 件残るが、動作を止めるものではない。
 - `cargo test -p pauseink-domain -p pauseink-project-io -p pauseink-renderer`
   - 結果: exit 0。append stroke command、annotation sync、renderer clear/path trace/stabilization tests を含めて通過。
 - `cargo test -p pauseink-app`
@@ -462,6 +497,16 @@
     - `presets_core` に `RuntimeTier` / `ProfileSourceKind` を追加する
   - 見送った提案:
     - host Ubuntu apt build の capability を既定サポート表として docs に固定する。理由: mainline runtime と法務境界が崩れるため
+- Pass 2.5 — ui/app boundary explorer
+  - 目的: `eframe/egui` 導入後の `app` / `ui` / core crates の責務境界を再点検する。
+  - 要約:
+    - 推奨依存方向は `ui -> app -> {domain, project_io, portable_fs, media, export, renderer, fonts, template_layout, presets_core}`
+    - `app` は single-writer の live state / command / autosave-export state machine を持ち、`ui` は widget tree と texture / panel / modal などの view state に留める
+    - autosave / export job / provider capability 判定は `ui` へ漏らさず `app` か supporting crate に寄せる
+  - 採用した変更:
+    - `main.rs` で扱う GUI 修正を最小に留め、session / persistence / renderer / media API を `app` lib 側で先に整える方針を維持
+  - 見送った提案:
+    - この段階で widget tree 全体を `ui` crate へ全面移送する。理由: 先に export/autosave 完成度を上げる方が done criteria への寄与が大きいため
 
 ## 9. Export / profile メモ
 
@@ -497,6 +542,7 @@
 - frame access、実 preview 更新、free ink capture、transport GUI 接続は実装済みだが、thumbnails/probe cache と autosave/recovery は未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 - export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
+- autosave cadence と recovery prompt の最小線は入ったが、複数 autosave slot、復旧差分表示、cache manager UI はまだ未実装。
 - GUI は `eframe/egui 0.34.1` の API に合わせて build しているが、現時点では `Panel::*` の deprecation warning が残っている。動作には影響しないが、後続で `show_inside` / `default_size` へ揃える余地がある。
 - 現ホストには `xvfb-run` が無いため、headless の GUI 起動 smoke はまだ取れていない。GUI の build は通っているが、表示付き起動確認は後続で実施する。
 
