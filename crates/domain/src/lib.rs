@@ -1,6 +1,10 @@
 use std::cmp::Ordering;
 
+mod history;
+
 use serde::{Deserialize, Serialize};
+
+pub use history::*;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TimeBase {
@@ -124,5 +128,78 @@ mod tests {
 
         assert!(one_second > ntsc_frame);
         assert_eq!(one_second, MediaTime::new(1, TimeBase::new(1, 1)));
+    }
+
+    #[test]
+    fn history_respects_depth_limit_and_invalidates_redo() {
+        let mut state = Vec::<String>::new();
+        let mut history = CommandHistory::with_limit(2);
+
+        history
+            .apply(&mut state, Box::new(PushValue("first")))
+            .expect("first command should apply");
+        history
+            .apply(&mut state, Box::new(PushValue("second")))
+            .expect("second command should apply");
+        history
+            .apply(&mut state, Box::new(PushValue("third")))
+            .expect("third command should apply");
+
+        assert_eq!(state, vec!["first", "second", "third"]);
+
+        assert!(history.undo(&mut state).expect("undo should succeed"));
+        assert_eq!(state, vec!["first", "second"]);
+        assert!(history.undo(&mut state).expect("undo should succeed"));
+        assert_eq!(state, vec!["first"]);
+        assert!(!history
+            .undo(&mut state)
+            .expect("oldest command should be evicted at depth limit"));
+
+        history
+            .apply(&mut state, Box::new(PushValue("replacement")))
+            .expect("new command should apply");
+        assert!(!history
+            .redo(&mut state)
+            .expect("redo should be invalidated after a new command"));
+    }
+
+    #[test]
+    fn grouped_commands_undo_in_reverse_order() {
+        let mut state = Vec::<String>::new();
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut state,
+                Box::new(CommandBatch::new(vec![
+                    Box::new(PushValue("first")),
+                    Box::new(PushValue("second")),
+                ])),
+            )
+            .expect("batched command should apply");
+
+        assert_eq!(state, vec!["first", "second"]);
+        assert!(history.undo(&mut state).expect("batch undo should succeed"));
+        assert!(state.is_empty());
+    }
+
+    struct PushValue(&'static str);
+
+    impl Command<Vec<String>> for PushValue {
+        fn apply(&self, state: &mut Vec<String>) -> Result<(), CommandError> {
+            state.push(self.0.to_owned());
+            Ok(())
+        }
+
+        fn undo(&self, state: &mut Vec<String>) -> Result<(), CommandError> {
+            match state.pop() {
+                Some(value) if value == self.0 => Ok(()),
+                Some(value) => Err(CommandError::new(format!(
+                    "unexpected undo order: expected {}, got {}",
+                    self.0, value
+                ))),
+                None => Err(CommandError::new("state was empty during undo")),
+            }
+        }
     }
 }

@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: Phase 3 の最小 `.pauseink` loader / saver まで実装。次は command model / undo-redo。
-- 現在のフェーズ: Phase 5 着手準備中。
+- 現在の状態: Phase 5 の generic command history まで実装。次は settings 永続化と env override 実利用。
+- 現在のフェーズ: Phase 5 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -31,7 +31,7 @@
 | Phase 2 | 実行中 | `MediaTime` と clear 境界 semantics を最小実装 |
 | Phase 3 | 実行中 | `.pauseink` schema / lenient load / canonical save / unknown field 保持の最小版を実装 |
 | Phase 4 | 実行中 | portable root と主要ディレクトリ解決を最小実装 |
-| Phase 5 | 着手準備中 | command model / bounded undo-redo を次に実装 |
+| Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
 | Phase 6 | 未着手 | |
 | Phase 7 | 未着手 | |
 | Phase 8 | 未着手 | |
@@ -83,6 +83,11 @@
   - 検討した代替案: コメント保持付きの完全 JSON5 roundtrip serializer を初手で実装する。
   - 理由: v1.0 の determinism と unknown field 保持を先に満たし、comment preservation は limitation として明示する方が安全なため。
   - 影響: `docs/implementation_report_v1.0.0.md` と manuals に save 時のコメント消失を明記する必要がある。
+- 2026-04-05T01:05:00+09:00
+  - 決定: undo/redo 基盤は project 専用 enum を先に固定せず、generic `Command` / `CommandBatch` / `CommandHistory` として実装する。
+  - 検討した代替案: 最初から `ProjectCommand` enum を作って history を密結合にする。
+  - 理由: grouped command、redo invalidation、bounded history を先に検証しつつ、後から domain command を載せ替えやすくするため。
+  - 影響: UI / domain の実編集操作は後続でこの generic history に乗せる。
 
 ## 5. 作業ログ
 
@@ -126,6 +131,11 @@
   - 変更ファイル: `Cargo.toml`, `crates/project_io/Cargo.toml`, `crates/project_io/src/lib.rs`
   - 結果: comments / trailing commas を許可する loader と deterministic save が動作した。
   - 次の一手: command model / undo-redo と portable settings を実装する。
+- 2026-04-05T01:05:00+09:00
+  - 実施内容: command history の failing test を追加し、generic `Command` / `CommandBatch` / `CommandHistory` を実装。
+  - 変更ファイル: `crates/domain/Cargo.toml`, `crates/domain/src/history.rs`, `crates/domain/src/lib.rs`
+  - 結果: bounded history、redo invalidation、grouped command undo の基礎がテストで固定された。
+  - 次の一手: settings 永続化と env override 実利用へ広げる。
 
 ## 6. 検証ログ
 
@@ -169,6 +179,12 @@
   - 結果: exit 0。2 tests passed。
 - `cargo test --workspace`
   - 結果: exit 0。`project_io` 追加後の回帰確認を完了。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 101。`CommandHistory` / `CommandBatch` / `Command` / `DEFAULT_HISTORY_DEPTH` / `CommandError` 未定義で red。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。generic history 追加後の回帰確認を完了。
 
 ## 7. 失敗と修正
 
@@ -217,6 +233,7 @@
 - FFmpeg runtime が未配置のため、import/export 実検証はまだできない。
 - Windows cross-build 環境は未整備。
 - `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
+- command history は generic 基盤のみ実装済みで、実 project editing command はまだ未接続。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 
 ## 13. 最終受け入れチェックリスト
