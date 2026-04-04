@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 49% 前後。Phase 10 の playback foundation を app/ui の日本語 status skeleton へ接続し、次は preview/editor state と描画入力へ進む
-- 現在の即時マイルストーン: preview/editor state、free ink capture、guide/template mode の最小縦断を作る
+- 全体状態: 全体で概算 61% 前後。single-window GUI、preview canvas、free ink、guide/template preview の最小縦断が通り、次は autosave/recovery と export engine 実装へ進む
+- 現在の即時マイルストーン: autosave/recovery、export queue/engine、transparent/composite 実検証を通す
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -31,6 +31,11 @@
   - typed project model を操作する insert / z-order project command を追加
   - imported media / playback state / seek clamp / frame-canvas mapping を追加
   - `app` に session、`ui` に日本語 status model を追加し、import/playback skeleton を接続
+  - `renderer` に overlay/clear/path trace 描画と stroke stabilization helper を追加
+  - `project_io` に typed project 同期と entity extra 維持を追加
+  - `portable_fs` に cache/autosave/runtime 下位 path helper と directory 作成を追加
+  - `app` に free ink commit、shift grouping、clear event、save/load、guide/template 状態を追加
+  - `app` binary に single-window GUI、preview canvas、outline/page events、guide/template preview を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -44,24 +49,24 @@
 | Phase 1 | 完了 | 100% | workspace / crate 骨格を実装可能な形へ拡張 | `app` を薄くし `ui` を独立境界にした |
 | Phase 2 | 実行中 | 55% | domain model と clear/page 仕様を固定 | stroke / object / group / style / entrance の typed 基盤を追加 |
 | Phase 3 | 実行中 | 50% | `.pauseink` lenient load / normalized save | typed wrapper と entity-level unknown field 保持を追加 |
-| Phase 4 | 実行中 | 35% | portable root と設定保存 | 実行ファイル隣接ルールの最小実装あり |
+| Phase 4 | 実行中 | 55% | portable root と設定保存 | cache/autosave/runtime 下位 path と dir 作成を追加 |
 | Phase 5 | 実行中 | 55% | command model と bounded undo/redo | typed project command と履歴接続を追加 |
 | Phase 6 | 実行中 | 60% | preset / export profile 基盤 | built-in family catalog と profile loader を追加 |
 | Phase 7 | 実行中 | 30% | local font / Google Fonts 基盤 | graceful failure の最小実装あり |
 | Phase 8 | 実行中 | 35% | template layout / guide geometry | grapheme-aware 最小実装あり |
 | Phase 9 | 実行中 | 75% | FFmpeg provider / probe / capability | runtime discovery と host smoke を追加 |
-| Phase 10 | 実行中 | 40% | 再生基盤 | app/ui の import/playback status skeleton まで接続 |
-| Phase 11 | 未着手 | 0% | free ink capture と stabilization | raw points を保持 |
-| Phase 12 | 未着手 | 0% | guide system | 非 export を保証 |
-| Phase 13 | 未着手 | 0% | outline / groups / page events | run 表示を分離 |
+| Phase 10 | 実行中 | 70% | 再生基盤 | single-window GUI に preview canvas と transport を接続 |
+| Phase 11 | 実行中 | 65% | free ink capture と stabilization | raw/stabilized/derived と shift grouping を GUI 経由で接続 |
+| Phase 12 | 実行中 | 55% | guide system | guide capture と template preview の editor-only 表示を追加 |
+| Phase 13 | 実行中 | 35% | outline / groups / page events | object outline と page events bottom tab を追加 |
 | Phase 14 | 未着手 | 0% | style / entrance / clear effects | built-in effects のみ |
 | Phase 15 | 実行中 | 20% | export UI と export engine | bucket 解決と capability 判定の基礎を追加 |
-| Phase 16 | 未着手 | 0% | preferences / cache manager / recovery | autosave と復旧を検証 |
-| Phase 17 | 実行中 | 10% | README / manuals / tutorials / polish | UI 文言と一部 preset docs を日本語化済み |
+| Phase 16 | 実行中 | 20% | preferences / cache manager / recovery | settings load/save と portable dir 作成を GUI 起動経路へ接続 |
+| Phase 17 | 実行中 | 15% | README / manuals / tutorials / polish | UI 文言と一部 preset docs を日本語化済み |
 | Phase 18 | 未着手 | 0% | 最終 build / test / export / Windows build 試行 | done criteria を満たすまで終了しない |
 
 ## 次の具体的な一手
 
-1. preview/editor state と mode 切替を `app` に追加する。
-2. free ink capture と raw stroke 生成を最小 UI から通す。
-3. guide/template mode の editor-only 表示と commit/cancel を足す。
+1. autosave cadence と recovery prompt を実装する。
+2. export queue / engine を繋ぎ、transparent/composite を host で実検証する。
+3. README / manual / tutorials を現実の UI とコマンドへ合わせて日本語で更新する。

@@ -5,3 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pauseink-domain = { path = "../domain" }
+tiny-skia = "0.12"

@@ -475,6 +475,51 @@ mod tests {
     }
 
     #[test]
+    fn append_stroke_command_groups_multiple_strokes_under_one_object() {
+        let mut project = AnnotationProject {
+            strokes: vec![Stroke {
+                id: StrokeId::new("stroke-1"),
+                ..Stroke::default()
+            }],
+            glyph_objects: vec![GlyphObject {
+                id: GlyphObjectId::new("object-1"),
+                stroke_ids: vec![StrokeId::new("stroke-1")],
+                ..GlyphObject::default()
+            }],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(CommandBatch::new(vec![
+                    Box::new(InsertStrokeCommand {
+                        stroke: Stroke {
+                            id: StrokeId::new("stroke-2"),
+                            ..Stroke::default()
+                        },
+                        index: None,
+                    }),
+                    Box::new(AppendStrokeToGlyphObjectCommand {
+                        object_id: GlyphObjectId::new("object-1"),
+                        stroke_id: StrokeId::new("stroke-2"),
+                    }),
+                ])),
+            )
+            .expect("append stroke batch should apply");
+
+        assert_eq!(
+            project.glyph_objects[0].stroke_ids,
+            vec![StrokeId::new("stroke-1"), StrokeId::new("stroke-2")]
+        );
+
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.strokes.len(), 1);
+        assert_eq!(project.glyph_objects[0].stroke_ids, vec![StrokeId::new("stroke-1")]);
+    }
+
+    #[test]
     fn group_and_clear_event_commands_attach_to_typed_project() {
         let mut project = AnnotationProject::default();
         let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);

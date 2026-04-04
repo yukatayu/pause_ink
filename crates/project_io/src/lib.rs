@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pauseink_domain::{ClearEvent, GlyphObject, Group, Stroke};
+use pauseink_domain::{AnnotationProject, ClearEvent, GlyphObject, Group, Stroke};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -122,6 +122,82 @@ impl PauseInkProject {
         }
 
         Value::Object(object)
+    }
+
+    pub fn to_annotation_project(&self) -> AnnotationProject {
+        AnnotationProject {
+            strokes: self.strokes.iter().map(|entry| entry.stroke.clone()).collect(),
+            glyph_objects: self.objects.iter().map(|entry| entry.object.clone()).collect(),
+            groups: self.groups.iter().map(|entry| entry.group.clone()).collect(),
+            clear_events: self
+                .clear_events
+                .iter()
+                .map(|entry| entry.clear_event.clone())
+                .collect(),
+        }
+    }
+
+    pub fn sync_annotation_project(&mut self, annotations: &AnnotationProject) {
+        let stroke_extra = self
+            .strokes
+            .iter()
+            .map(|entry| (entry.stroke.id.0.clone(), entry.extra.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let object_extra = self
+            .objects
+            .iter()
+            .map(|entry| (entry.object.id.0.clone(), entry.extra.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let group_extra = self
+            .groups
+            .iter()
+            .map(|entry| (entry.group.id.0.clone(), entry.extra.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let clear_event_extra = self
+            .clear_events
+            .iter()
+            .map(|entry| (entry.clear_event.id.0.clone(), entry.extra.clone()))
+            .collect::<BTreeMap<_, _>>();
+
+        self.strokes = annotations
+            .strokes
+            .iter()
+            .cloned()
+            .map(|stroke| ProjectStroke {
+                extra: stroke_extra.get(&stroke.id.0).cloned().unwrap_or_default(),
+                stroke,
+            })
+            .collect();
+        self.objects = annotations
+            .glyph_objects
+            .iter()
+            .cloned()
+            .map(|object| ProjectGlyphObject {
+                extra: object_extra.get(&object.id.0).cloned().unwrap_or_default(),
+                object,
+            })
+            .collect();
+        self.groups = annotations
+            .groups
+            .iter()
+            .cloned()
+            .map(|group| ProjectGroup {
+                extra: group_extra.get(&group.id.0).cloned().unwrap_or_default(),
+                group,
+            })
+            .collect();
+        self.clear_events = annotations
+            .clear_events
+            .iter()
+            .cloned()
+            .map(|clear_event| ProjectClearEvent {
+                extra: clear_event_extra
+                    .get(&clear_event.id.0)
+                    .cloned()
+                    .unwrap_or_default(),
+                clear_event,
+            })
+            .collect();
     }
 }
 
@@ -324,5 +400,53 @@ mod tests {
         assert_eq!(loaded.project.strokes[0].stroke.id.0, "stroke-1");
         assert_eq!(loaded.project.objects[0].object.id.0, "object-1");
         assert_eq!(loaded.project.clear_events[0].clear_event.id.0, "clear-1");
+    }
+
+    #[test]
+    fn sync_annotation_project_preserves_known_entity_extra_fields() {
+        let mut project = PauseInkProject {
+            strokes: vec![ProjectStroke {
+                stroke: Stroke {
+                    id: pauseink_domain::StrokeId::new("stroke-1"),
+                    ..Stroke::default()
+                },
+                extra: BTreeMap::from([("keep_me".into(), json!(true))]),
+            }],
+            objects: vec![ProjectGlyphObject {
+                object: GlyphObject {
+                    id: pauseink_domain::GlyphObjectId::new("object-1"),
+                    ..GlyphObject::default()
+                },
+                extra: BTreeMap::from([("custom".into(), json!("value"))]),
+            }],
+            ..PauseInkProject::default()
+        };
+        let annotations = AnnotationProject {
+            strokes: vec![
+                Stroke {
+                    id: pauseink_domain::StrokeId::new("stroke-1"),
+                    created_at: pauseink_domain::MediaTime::from_millis(123),
+                    ..Stroke::default()
+                },
+                Stroke {
+                    id: pauseink_domain::StrokeId::new("stroke-2"),
+                    ..Stroke::default()
+                },
+            ],
+            glyph_objects: vec![GlyphObject {
+                id: pauseink_domain::GlyphObjectId::new("object-1"),
+                stroke_ids: vec![pauseink_domain::StrokeId::new("stroke-1")],
+                ..GlyphObject::default()
+            }],
+            ..AnnotationProject::default()
+        };
+
+        project.sync_annotation_project(&annotations);
+
+        assert_eq!(project.strokes.len(), 2);
+        assert_eq!(project.strokes[0].extra.get("keep_me"), Some(&json!(true)));
+        assert!(project.strokes[1].extra.is_empty());
+        assert_eq!(project.objects[0].extra.get("custom"), Some(&json!("value")));
+        assert_eq!(project.to_annotation_project(), annotations);
     }
 }

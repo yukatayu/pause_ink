@@ -145,6 +145,41 @@ impl Command<AnnotationProject> for SetGlyphObjectZIndexCommand {
     }
 }
 
+pub struct AppendStrokeToGlyphObjectCommand {
+    pub object_id: GlyphObjectId,
+    pub stroke_id: StrokeId,
+}
+
+impl Command<AnnotationProject> for AppendStrokeToGlyphObjectCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.stroke_ids.iter().any(|stroke_id| stroke_id == &self.stroke_id) {
+            return Err(CommandError::new(format!(
+                "stroke {} is already attached to glyph object {}",
+                self.stroke_id.0, self.object_id.0
+            )));
+        }
+        object.stroke_ids.push(self.stroke_id.clone());
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        let Some(index) = object
+            .stroke_ids
+            .iter()
+            .position(|stroke_id| stroke_id == &self.stroke_id)
+        else {
+            return Err(CommandError::new(format!(
+                "stroke {} is not attached to glyph object {}",
+                self.stroke_id.0, self.object_id.0
+            )));
+        };
+        object.stroke_ids.remove(index);
+        Ok(())
+    }
+}
+
 fn remove_by_id<T, Id, F>(items: &mut Vec<T>, target_id: &Id, id_of: F) -> Result<(), CommandError>
 where
     Id: PartialEq + std::fmt::Display,

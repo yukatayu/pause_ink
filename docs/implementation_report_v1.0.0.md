@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper、`media` の imported media / playback state / seek clamp / frame-canvas mapping に加え、`app` の session と `ui` の日本語 status skeleton を接続した。次は preview/editor state と free ink capture へ進む。
+- 現在の状態: `media` の runtime discovery / probe / preview frame、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI を接続した。次は autosave/recovery と export engine / 実 export 検証へ進む。
 - 現在のフェーズ: Phase 10 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
@@ -30,16 +30,16 @@
 | Phase 1 | 完了 | workspace 拡張、logging 初期化、基礎 crate 境界を反映 |
 | Phase 2 | 実行中 | typed stroke / glyph object / group / style / entrance モデルを追加 |
 | Phase 3 | 実行中 | `.pauseink` typed wrapper、entity-level unknown field 保持、roundtrip test を追加 |
-| Phase 4 | 実行中 | portable root / env override / settings.json5 の最小実装を完了 |
+| Phase 4 | 実行中 | portable root / env override / settings.json5 に加え cache/autosave/runtime 下位 path と dir 作成を追加 |
 | Phase 5 | 実行中 | typed project command と history 接続を追加 |
 | Phase 6 | 実行中 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
 | Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
 | Phase 9 | 実行中 | runtime discovery、raw probe、capability parser、host smoke を実装済み |
-| Phase 10 | 実行中 | imported media / playback state / seek / mapping と app/ui status skeleton を実装 |
-| Phase 11 | 未着手 | |
-| Phase 12 | 未着手 | |
-| Phase 13 | 未着手 | |
+| Phase 10 | 実行中 | imported media / playback state / seek / mapping と single-window preview GUI を実装 |
+| Phase 11 | 実行中 | free ink capture、shift grouping、stabilization helper を GUI へ接続 |
+| Phase 12 | 実行中 | guide capture と template preview の editor-only 表示を実装 |
+| Phase 13 | 実行中 | object outline と page events bottom tab の最小表示を実装 |
 | Phase 14 | 未着手 | |
 | Phase 15 | 実行中 | bucket 解決と capability 判定の基礎を実装 |
 | Phase 16 | 未着手 | |
@@ -153,6 +153,16 @@
   - 検討した代替案: ここで即座に GUI toolkit を導入して import/playback/preview まで一気に実装する。
   - 理由: playback foundation の接続面を先に app/UI 境界で固定し、次の preview/editor 実装で責務を崩さないようにするため。
   - 影響: 直近では CLI 風の status 表示だが、後続の GUI 実装は `AppSession` と UI model を差し替える形で進められる。
+- 2026-04-05T02:55:00+09:00
+  - 決定: v1.0 の最小 GUI は `eframe/egui` を app binary の composition root にのみ導入し、business rule は引き続き `app` lib / `domain` / `project_io` / `renderer` / `media` 側へ寄せる。
+  - 検討した代替案: `ui` crate 側へ即座に stateful GUI 全体を寄せる、または GUI を後回しにして CLI のまま export を先行する。
+  - 理由: single-window の最小完成形を早く通しつつ、UI が business rule を直接持たない構成を守りやすいため。
+  - 影響: mainline の GUI 実装は `crates/app/src/main.rs` に集約され、`ui` crate は当面軽量な補助境界として残る。
+- 2026-04-05T02:55:00+09:00
+  - 決定: free ink の raw/stabilized/derived 生成は `renderer` crate の helper と app session の commit path で統一する。
+  - 検討した代替案: UI 層でその都度 smoothing して domain へ完成済み path だけ保存する。
+  - 理由: preview と export で同じ stroke processing を再利用し、UI 側の責務肥大化を避けるため。
+  - 影響: `renderer` は CPU-safe preview/export の共通基盤になり、app/lib は raw point capture と command dispatch に集中できる。
 
 ## 5. 作業ログ
 
@@ -261,6 +271,16 @@
   - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/ui/src/lib.rs`, `progress.md`
   - 結果: imported media と playback state を app/UI 境界へ載せる最小 skeleton ができ、状態文言を日本語で固定できた。
   - 次の一手: preview/editor state、mode 切替、free ink capture を追加する。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `project_io` に typed annotation sync と extra 維持を追加し、`domain` に stroke append command を追加、`renderer` に overlay/clear/path trace 描画と stabilization helper を追加した。
+  - 変更ファイル: `crates/project_io/src/lib.rs`, `crates/domain/src/lib.rs`, `crates/domain/src/project_commands.rs`, `crates/renderer/Cargo.toml`, `crates/renderer/src/lib.rs`
+  - 結果: save/load roundtrip を壊さずに live project と file wrapper を同期できるようになり、free ink / preview / export の共通描画基盤ができた。
+  - 次の一手: `app` lib に save/load/free ink/guide/template 状態と file path helper を追加し、GUI から使う。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `portable_fs` に cache/autosave/runtime 下位 path と directory 作成を追加し、`app` lib に free ink commit、shift grouping、clear event、save/load、title/media accessor、guide/template 用 helper を追加、`app` binary に single-window GUI を実装した。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`, `crates/app/Cargo.toml`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `progress.md`
+  - 結果: host 上で build 可能な single-window GUI、preview canvas、object outline、page events、guide/template preview の最小縦断が揃った。
+  - 次の一手: autosave/recovery、Google Fonts 実取得、export queue/engine、実 export 検証を進める。
 
 ## 6. 検証ログ
 
@@ -381,6 +401,14 @@
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
 - `cargo test --workspace`
   - 結果: exit 0。app/ui status skeleton と文書更新後の workspace 回帰確認を完了。
+- `cargo test -p pauseink-domain -p pauseink-project-io -p pauseink-renderer`
+  - 結果: exit 0。append stroke command、annotation sync、renderer clear/path trace/stabilization tests を含めて通過。
+- `cargo test -p pauseink-app`
+  - 結果: exit 0。free ink commit、shift grouping、clear event、save/load unknown field 維持、GUI binary compile を含めて通過。
+- `cargo test --workspace`
+  - 結果: exit 0。GUI / portable path helper / renderer 追加後の workspace 回帰確認を完了。
+- `command -v xvfb-run || true`
+  - 結果: 出力なし。現ホストでは `xvfb-run` を使った headless GUI 起動 smoke は未実施。
 - `ffmpeg -version | sed -n '1,12p'`
   - 結果: Ubuntu apt build `6.1.1-3ubuntu5`。`--enable-gpl`、`--enable-libaom`、`--enable-libopus`、`--enable-libsvtav1`、`--enable-libvpx`、`--enable-libx264`、`--enable-libx265` を確認。
 - `ffprobe -version | sed -n '1,12p'`
@@ -464,11 +492,13 @@
 - `.pauseink` parse/save は typed wrapper まで入ったが、metadata/media/settings/pages/presets はまだ generic JSON のまま。
 - typed project command は insert / z-order update までで、実 UI 操作との接続や削除/選択/batch edit はまだ未実装。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
-- Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
+- Google Fonts は URL / cache path / CSS parser と GUI 上の一覧表示まではあるが、実ダウンロードと template への適用はまだ未接続。
 - media provider は import/playback foundation と app/ui status skeleton まで実装済みだが、実 frame access と GUI preview は未実装。
-- frame access、実 preview 更新、free ink capture、transport GUI 接続はまだ未実装。
+- frame access、実 preview 更新、free ink capture、transport GUI 接続は実装済みだが、thumbnails/probe cache と autosave/recovery は未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 - export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
+- GUI は `eframe/egui 0.34.1` の API に合わせて build しているが、現時点では `Panel::*` の deprecation warning が残っている。動作には影響しないが、後続で `show_inside` / `default_size` へ揃える余地がある。
+- 現ホストには `xvfb-run` が無いため、headless の GUI 起動 smoke はまだ取れていない。GUI の build は通っているが、表示付き起動確認は後続で実施する。
 
 ## 13. 最終受け入れチェックリスト
 

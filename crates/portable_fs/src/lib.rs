@@ -1,3 +1,4 @@
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,43 @@ impl PortablePaths {
 
     pub fn settings_file(&self) -> PathBuf {
         self.config_dir.join("settings.json5")
+    }
+
+    pub fn google_fonts_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("google_fonts")
+    }
+
+    pub fn font_index_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("font_index")
+    }
+
+    pub fn media_probe_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("media_probe")
+    }
+
+    pub fn thumbnail_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("thumbnails")
+    }
+
+    pub fn runtime_ffmpeg_dir(&self) -> PathBuf {
+        self.runtime_dir.join("ffmpeg")
+    }
+
+    pub fn autosave_file(&self, stem: &str) -> PathBuf {
+        self.autosave_dir.join(format!("{stem}.pauseink"))
+    }
+
+    pub fn ensure_exists(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.config_dir)?;
+        std::fs::create_dir_all(&self.logs_dir)?;
+        std::fs::create_dir_all(&self.autosave_dir)?;
+        std::fs::create_dir_all(&self.temp_dir)?;
+        std::fs::create_dir_all(&self.google_fonts_cache_dir())?;
+        std::fs::create_dir_all(&self.font_index_cache_dir())?;
+        std::fs::create_dir_all(&self.media_probe_cache_dir())?;
+        std::fs::create_dir_all(&self.thumbnail_cache_dir())?;
+        std::fs::create_dir_all(&self.runtime_ffmpeg_dir())?;
+        Ok(())
     }
 }
 
@@ -114,6 +152,8 @@ pub enum PortableFsError {
     Parse(#[from] json5::Error),
     #[error("settings serialization error: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error("portable filesystem I/O error: {0}")]
+    Io(#[from] io::Error),
 }
 
 pub fn load_settings_from_str(source: &str) -> Result<Settings, PortableFsError> {
@@ -122,6 +162,27 @@ pub fn load_settings_from_str(source: &str) -> Result<Settings, PortableFsError>
 
 pub fn save_settings_to_string(settings: &Settings) -> Result<String, PortableFsError> {
     Ok(serde_json::to_string_pretty(settings)?)
+}
+
+pub fn load_settings_from_file(paths: &PortablePaths) -> Result<Settings, PortableFsError> {
+    Ok(load_settings_from_str(&std::fs::read_to_string(paths.settings_file())?)?)
+}
+
+pub fn load_settings_or_default(paths: &PortablePaths) -> Result<Settings, PortableFsError> {
+    match std::fs::read_to_string(paths.settings_file()) {
+        Ok(raw) => load_settings_from_str(&raw),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(error) => Err(PortableFsError::Io(error)),
+    }
+}
+
+pub fn save_settings_to_file(
+    paths: &PortablePaths,
+    settings: &Settings,
+) -> Result<(), PortableFsError> {
+    paths.ensure_exists()?;
+    std::fs::write(paths.settings_file(), save_settings_to_string(settings)?)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -171,5 +232,46 @@ mod tests {
         assert!(loaded.gpu_preview_enabled);
         assert!(loaded.media_hwaccel_enabled);
         assert!(loaded.google_fonts.enabled);
+    }
+
+    #[test]
+    fn cache_and_autosave_paths_stay_under_portable_root() {
+        let paths = PortablePaths::from_executable_dir(Path::new("/tmp/demo"));
+
+        assert_eq!(
+            paths.google_fonts_cache_dir(),
+            Path::new("/tmp/demo/pauseink_data/cache/google_fonts")
+        );
+        assert_eq!(
+            paths.runtime_ffmpeg_dir(),
+            Path::new("/tmp/demo/pauseink_data/runtime/ffmpeg")
+        );
+        assert_eq!(
+            paths.autosave_file("recovery_latest"),
+            Path::new("/tmp/demo/pauseink_data/autosave/recovery_latest.pauseink")
+        );
+    }
+
+    #[test]
+    fn settings_file_roundtrip_works_on_disk() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        let settings = Settings::default();
+
+        save_settings_to_file(&paths, &settings).expect("settings save should work");
+        let loaded = load_settings_from_file(&paths).expect("settings load should work");
+
+        assert_eq!(loaded.history_depth, settings.history_depth);
+        assert!(paths.thumbnail_cache_dir().is_dir());
+    }
+
+    #[test]
+    fn load_settings_or_default_uses_defaults_when_file_is_missing() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+
+        let loaded = load_settings_or_default(&paths).expect("default settings should load");
+
+        assert_eq!(loaded.history_depth, 256);
     }
 }

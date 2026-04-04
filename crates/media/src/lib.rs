@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use image::ImageFormat;
 use pauseink_domain::{MediaDuration, MediaTime, Point2};
 use serde::Deserialize;
 use thiserror::Error;
@@ -163,6 +164,13 @@ pub struct RuntimeCapabilities {
     pub hwaccels: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba_pixels: Vec<u8>,
+}
+
 impl RuntimeCapabilities {
     pub fn from_outputs(encoders_output: &str, muxers_output: &str, hwaccels_output: &str) -> Self {
         Self {
@@ -191,6 +199,13 @@ pub enum MediaError {
 pub trait MediaProvider {
     fn probe(&self, source_path: &Path) -> Result<MediaProbe, MediaError>;
     fn capabilities(&self) -> Result<RuntimeCapabilities, MediaError>;
+    fn preview_frame(
+        &self,
+        source_path: &Path,
+        time: MediaTime,
+        max_width: u32,
+        max_height: u32,
+    ) -> Result<PreviewFrame, MediaError>;
     fn diagnostics(&self) -> MediaRuntime;
 }
 
@@ -234,6 +249,36 @@ impl MediaProvider for FfprobeMediaProvider {
         Ok(RuntimeCapabilities::from_outputs(
             &encoders, &muxers, &hwaccels,
         ))
+    }
+
+    fn preview_frame(
+        &self,
+        source_path: &Path,
+        time: MediaTime,
+        max_width: u32,
+        max_height: u32,
+    ) -> Result<PreviewFrame, MediaError> {
+        let mut command = Command::new(&self.runtime.ffmpeg_path);
+        command.args(["-loglevel", "error", "-ss", &format_media_time_seconds(time), "-i"]);
+        command.arg(source_path);
+        command.args(["-frames:v", "1"]);
+        if max_width > 0 && max_height > 0 {
+            command.args([
+                "-vf",
+                &format!(
+                    "scale={max_width}:{max_height}:force_original_aspect_ratio=decrease"
+                ),
+            ]);
+        }
+        command.args(["-f", "image2pipe", "-vcodec", "png", "pipe:1"]);
+
+        let output = command.output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(MediaError::CommandFailed(stderr));
+        }
+
+        decode_preview_frame(&output.stdout)
     }
 
     fn diagnostics(&self) -> MediaRuntime {
@@ -446,6 +491,17 @@ fn parse_rational(raw: &str) -> Option<f64> {
     Some(numerator / denominator)
 }
 
+fn decode_preview_frame(bytes: &[u8]) -> Result<PreviewFrame, MediaError> {
+    let dynamic = image::load_from_memory_with_format(bytes, ImageFormat::Png)
+        .map_err(|error| MediaError::CommandFailed(format!("preview decode failed: {error}")))?;
+    let rgba = dynamic.to_rgba8();
+    Ok(PreviewFrame {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba_pixels: rgba.into_raw(),
+    })
+}
+
 fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
     pix_fmt.contains("rgba") || pix_fmt.contains("yuva") || pix_fmt.contains("argb")
 }
@@ -533,6 +589,13 @@ fn capture_version_output(binary_path: &Path) -> Result<VersionOutput, MediaErro
     })
 }
 
+fn format_media_time_seconds(time: MediaTime) -> String {
+    format!(
+        "{:.6}",
+        time.ticks as f64 * time.time_base.numerator as f64 / time.time_base.denominator as f64
+    )
+}
+
 fn system_license_summary(version_output: &str) -> String {
     if version_output.contains("--enable-gpl") {
         "host system runtime; ffmpeg build reports --enable-gpl".to_owned()
@@ -612,6 +675,20 @@ mod tests {
 
         fn capabilities(&self) -> Result<RuntimeCapabilities, MediaError> {
             Ok(self.capabilities.clone())
+        }
+
+        fn preview_frame(
+            &self,
+            _source_path: &Path,
+            _time: MediaTime,
+            _max_width: u32,
+            _max_height: u32,
+        ) -> Result<PreviewFrame, MediaError> {
+            Ok(PreviewFrame {
+                width: 1,
+                height: 1,
+                rgba_pixels: vec![0, 0, 0, 0],
+            })
         }
 
         fn diagnostics(&self) -> MediaRuntime {
@@ -956,5 +1033,47 @@ cuda
         assert_eq!(probe.height, Some(180));
         assert_eq!(probe.video_codec.as_deref(), Some("mjpeg"));
         assert_eq!(imported.probe.width, Some(320));
+    }
+
+    #[test]
+    fn host_preview_frame_smoke_if_host_runtime_exists() {
+        let runtime = match discover_system_runtime() {
+            Ok(runtime) => runtime,
+            Err(_) => return,
+        };
+
+        let temp_dir = tempdir().expect("temp dir");
+        let sample_path = temp_dir.path().join("preview-smoke.avi");
+        let output = Command::new(&runtime.ffmpeg_path)
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=320x180:d=1:r=30",
+                "-an",
+                "-c:v",
+                "mjpeg",
+            ])
+            .arg(&sample_path)
+            .output()
+            .expect("ffmpeg smoke command should run");
+
+        assert!(
+            output.status.success(),
+            "ffmpeg preview smoke fixture creation should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let provider = FfprobeMediaProvider::new(runtime);
+        let frame = provider
+            .preview_frame(&sample_path, MediaTime::from_millis(0), 160, 160)
+            .expect("preview extraction should succeed");
+
+        assert!(frame.width > 0);
+        assert!(frame.height > 0);
+        assert_eq!(frame.rgba_pixels.len(), (frame.width * frame.height * 4) as usize);
     }
 }
