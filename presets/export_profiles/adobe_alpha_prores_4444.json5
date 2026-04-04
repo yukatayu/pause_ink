@@ -1,0 +1,6 @@
+{
+  id: "adobe_alpha_prores_4444",
+  display_name: "Adobe Alpha",
+  family: "mov_prores_4444_pcm",
+  notes: "Alpha-capable single-file output for Adobe-focused workflows.",
+}

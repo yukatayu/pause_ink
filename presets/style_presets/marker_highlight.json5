@@ -1,0 +1,13 @@
+{
+  id: "marker_highlight",
+  display_name: "Marker Highlight",
+  base_style: {
+    thickness: 16.0,
+    color_rgba: [1.0, 0.92, 0.1, 0.45],
+    glow: { enabled: false },
+  },
+  entrance: {
+    kind: "instant",
+    target: "group",
+  },
+}

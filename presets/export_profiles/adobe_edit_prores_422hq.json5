@@ -1,0 +1,6 @@
+{
+  id: "adobe_edit_prores_422hq",
+  display_name: "Adobe Edit",
+  family: "mov_prores_422hq_pcm",
+  notes: "Editing/intermediate output for Adobe-focused workflows.",
+}

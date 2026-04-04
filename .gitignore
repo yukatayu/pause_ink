@@ -1,0 +1,7 @@
+target/
+Cargo.lock
+pauseink_data/
+.dev_runtime/
+*.tmp
+*.temp
+*.log

@@ -1,0 +1,13 @@
+{
+  id: "x",
+  display_name: "X",
+  notes: "Use official upload/media studio guidance. Verify exact values during implementation.",
+  intended_families: ["mp4_av1_aac", "webm_vp9_opus"],
+  source_urls: [
+    "https://help.x.com/en/using-x/media-studio-faqs",
+  ],
+  app_safe_defaults: {
+    "720p": { video_bitrate_mbps: 5, audio_bitrate_kbps: 128 },
+    "1080p": { video_bitrate_mbps: 8, audio_bitrate_kbps: 128 },
+  },
+}

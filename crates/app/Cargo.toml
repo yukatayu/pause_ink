@@ -1,0 +1,11 @@
+[package]
+name = "pauseink-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pauseink-domain = { path = "../domain" }
+pauseink-project-io = { path = "../project_io" }
+pauseink-portable-fs = { path = "../portable_fs" }
+pauseink-presets-core = { path = "../presets_core" }

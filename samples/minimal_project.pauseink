@@ -1,0 +1,60 @@
+// Example project file for PauseInk.
+// This file is illustrative, not authoritative.
+
+{
+  format_version: "1.0.0",
+  project: {
+    metadata: {
+      title: "minimal example",
+      created_with: "handoff-package",
+    },
+    media: {
+      source_path: "sample.mp4",
+      fps_hint: 30.0,
+      width: 1920,
+      height: 1080,
+    },
+    settings: {
+      guide_modifier: "platform_default",
+      history_depth: 256,
+    },
+    objects: [
+      {
+        id: "obj_001",
+        type: "glyph_object",
+        page_anchor_time_ms: 1000,
+        z_index: 10,
+        strokes: [
+          {
+            id: "stroke_001",
+            raw_points: [
+              { x: 100.0, y: 100.0, t_ms: 1000 },
+              { x: 120.0, y: 118.0, t_ms: 1016 },
+              { x: 145.0, y: 125.0, t_ms: 1033 },
+            ],
+            style: {
+              thickness: 6.0,
+              color_rgba: [1.0, 1.0, 1.0, 1.0],
+            },
+          },
+        ],
+        entrance: {
+          kind: "path_trace",
+          target: "glyph",
+          order: "serial",
+          duration_mode: "length_proportional",
+          speed_scalar: 1.0,
+        },
+      },
+    ],
+    groups: [],
+    clear_events: [
+      {
+        id: "clear_001",
+        time_ms: 4000,
+        kind: "instant",
+      },
+    ],
+    presets: {},
+  },
+}

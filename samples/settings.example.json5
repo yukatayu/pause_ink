@@ -1,0 +1,22 @@
+{
+  history_depth: 256,
+  guide_modifier: "platform_default",
+  guide_slope_degrees: 0.0,
+
+  gpu_preview_enabled: true,
+  media_hwaccel_enabled: true,
+
+  stroke_stabilization_default: 35,
+
+  google_fonts: {
+    enabled: true,
+    families: [
+      "M PLUS Rounded 1c",
+      "Noto Sans JP",
+    ],
+  },
+
+  local_font_dirs: [],
+
+  portable_root_override: null, // developer/test only
+}

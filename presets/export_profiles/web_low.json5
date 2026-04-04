@@ -1,0 +1,6 @@
+{
+  id: "web_low",
+  display_name: "Low",
+  intended_families: ["webm_vp9_opus", "webm_av1_opus", "mp4_av1_aac"],
+  notes: "App-authored general low quality preset.",
+}

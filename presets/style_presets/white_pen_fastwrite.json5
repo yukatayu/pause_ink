@@ -1,0 +1,21 @@
+{
+  id: "white_pen_fastwrite",
+  display_name: "White Pen Fast Write",
+  base_style: {
+    thickness: 6.0,
+    color_rgba: [1.0, 1.0, 1.0, 1.0],
+    glow: { enabled: false },
+  },
+  entrance: {
+    kind: "path_trace",
+    target: "glyph",
+    order: "serial",
+    duration_mode: "length_proportional",
+    speed_scalar: 1.0,
+    head_effect: {
+      kind: "glow",
+      color_source: "stroke_color",
+      size_multiplier: 1.3,
+    },
+  },
+}

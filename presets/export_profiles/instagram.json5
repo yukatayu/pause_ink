@@ -1,0 +1,19 @@
+{
+  id: "instagram",
+  display_name: "Instagram",
+  notes: "Use official public constraints where available; exact bitrate ladder may remain app-authored safe defaults.",
+  intended_families: ["mp4_av1_aac", "webm_vp9_opus"],
+  source_urls: [
+    "https://help.instagram.com/1038071743007909",
+    "https://www.facebook.com/business/ads-guide/update/video/instagram-story",
+    "https://www.facebook.com/business/ads-guide/update/video/instagram-reels",
+  ],
+  public_constraints: {
+    min_fps: 30,
+    min_resolution_px: 720,
+  },
+  app_safe_defaults: {
+    "1080x1920": { video_bitrate_mbps: 8, audio_bitrate_kbps: 128 },
+    "1080x1350": { video_bitrate_mbps: 8, audio_bitrate_kbps: 128 },
+  },
+}
