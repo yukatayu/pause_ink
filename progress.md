@@ -18,6 +18,8 @@
   - generic command history と bounded undo/redo の基礎実装を追加
   - portable settings と env override の最小実装を追加
   - local font family 列挙と Google Fonts CSS2 URL / cache path の基礎実装を追加
+  - template slot / guide geometry の最小実装を追加
+  - host 検証用 `ffmpeg` / `ffprobe` 利用可能を確認
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - ホスト環境に `ffmpeg` / `ffprobe` が未配置
@@ -49,6 +51,6 @@
 
 ## 次の具体的な一手
 
-1. template layout / guide geometry の failing test を追加する。
-2. grapheme-aware slot と slope / guide geometry を実装する。
-3. その後 media provider の入口へ進む。
+1. media provider / ffprobe capability の failing test を追加する。
+2. host `ffprobe` を使った probe 基盤と runtime discovery を実装する。
+3. その後 export family 実行計画へ進む。

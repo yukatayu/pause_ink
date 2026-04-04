@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: fonts 基盤の最小版まで実装。次は template layout / guide geometry。
-- 現在のフェーズ: Phase 8 着手準備中。
+- 現在の状態: template layout / guide geometry の最小版まで実装。host では `ffmpeg` / `ffprobe` が利用可能。
+- 現在のフェーズ: Phase 9 着手準備中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -17,7 +17,7 @@
 - ホスト OS: Linux yukatayu-agent 6.8.0-106-generic x86_64 GNU/Linux
 - シェル: `bash`
 - Rust toolchain: `stable-x86_64-unknown-linux-gnu` / `rustc 1.93.0` / `cargo 1.93.0`
-- FFmpeg runtime 状態: ホストに `ffmpeg` / `ffprobe` なし。sidecar runtime も未配置。
+- FFmpeg runtime 状態: host に `ffmpeg 6.1.1-3ubuntu5` / `ffprobe 6.1.1-3ubuntu5` があり、検証に利用可能。sidecar runtime は未配置。
 - Cross-build tooling 状態: `rustup target list --installed` は `x86_64-unknown-linux-gnu` のみ。
 - GPU / driver メモ: まだ未調査。UI 実装時に runtime probe を追加予定。
 - ディスク / メモリ備考: 現時点で顕著な制約は未確認。
@@ -34,8 +34,8 @@
 | Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
 | Phase 6 | 未着手 | |
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
-| Phase 8 | 着手準備中 | template layout / guide geometry を次に実装 |
-| Phase 9 | 未着手 | |
+| Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
+| Phase 9 | 着手準備中 | host `ffprobe` を使った media provider の入口を次に実装 |
 | Phase 10 | 未着手 | |
 | Phase 11 | 未着手 | |
 | Phase 12 | 未着手 | |
@@ -98,6 +98,11 @@
   - 検討した代替案: Google Fonts の全メタデータ API や重いブラウザ依存取得に寄せる。
   - 理由: v1.0 では configured family を軽量に取得できれば十分であり、broken entry を UI 全体から切り離しやすいため。
   - 影響: 実ダウンロード段階では CSS から最初の `url(...)` を抽出し、失敗時はその family だけを非表示扱いにできる。
+- 2026-04-05T01:50:00+09:00
+  - 決定: host に入った Ubuntu apt 版 `ffmpeg` / `ffprobe` は検証用 runtime として使うが、mainline 実装方針は引き続き portable sidecar provider として維持する。
+  - 検討した代替案: system `ffmpeg` を mainline 依存とみなす。
+  - 理由: apt build は `--enable-gpl` を含み、release packaging 方針と切り分けて扱う必要があるため。
+  - 影響: 実装レポートと packaging/licensing notes に host 検証 runtime と sidecar mainline 方針の差を明記する。
 
 ## 5. 作業ログ
 
@@ -156,6 +161,11 @@
   - 変更ファイル: `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`
   - 結果: broken CSS は `None` で握りつぶせる形になり、missing extra dirs も無視できるようにした。
   - 次の一手: template layout と guide geometry を実装する。
+- 2026-04-05T01:50:00+09:00
+  - 実施内容: template layout の failing test を追加し、grapheme-aware slot / scale / slope / guide geometry を実装。
+  - 変更ファイル: `crates/template_layout/Cargo.toml`, `crates/template_layout/src/lib.rs`
+  - 結果: grapheme cluster 単位の slot と 5 本構成の guide line がテストで固定された。
+  - 次の一手: host `ffprobe` を使った media provider の入口を実装する。
 
 ## 6. 検証ログ
 
@@ -224,6 +234,16 @@
   - 結果: exit 0。4 tests passed。
 - `cargo test --workspace`
   - 結果: exit 0。fonts 追加後の回帰確認を完了。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 101。template layout / guide geometry API 未定義で red。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 0。3 tests passed。
+- `ffmpeg -version | head -n 3`
+  - 結果: `ffmpeg version 6.1.1-3ubuntu5`。Ubuntu apt build、`--enable-gpl` を含む。
+- `ffprobe -version | head -n 3`
+  - 結果: `ffprobe version 6.1.1-3ubuntu5`。Ubuntu apt build、`--enable-gpl` を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。template layout 追加後の回帰確認を完了。
 
 ## 7. 失敗と修正
 
@@ -258,6 +278,7 @@
 - mainline 方針: FFmpeg sidecar runtime provider。
 - 現時点では optional codec pack 未実装。
 - H.264 / HEVC は mainline 前提にしない。
+- host 検証では Ubuntu apt の `ffmpeg 6.1.1-3ubuntu5` を利用可能。これは `--enable-gpl` を含むため、release packaging とは切り分けて扱う。
 - release packaging 用の provenance / notice 整理は後続フェーズで記録する。
 
 ## 11. 開発者チュートリアル
@@ -275,6 +296,7 @@
 - command history は generic 基盤のみ実装済みで、実 project editing command はまだ未接続。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
+- media provider / export / 実 UI はまだ未実装で、`ffmpeg` は現時点では環境確認のみ。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 
 ## 13. 最終受け入れチェックリスト
