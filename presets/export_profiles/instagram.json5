@@ -1,8 +1,9 @@
 {
   id: "instagram",
   display_name: "Instagram",
-  notes: "Use official public constraints where available; exact bitrate ladder may remain app-authored safe defaults.",
-  intended_families: ["mp4_av1_aac", "webm_vp9_opus"],
+  source_kind: "app_authored",
+  notes: "公開制約は公式公開情報を参照し、具体ビットレートは v1.0 の安全側 app-authored 値を使う。",
+  compatibility: ["mp4_av1_aac", "webm_vp9_opus"],
   source_urls: [
     "https://help.instagram.com/1038071743007909",
     "https://www.facebook.com/business/ads-guide/update/video/instagram-story",
@@ -12,8 +13,22 @@
     min_fps: 30,
     min_resolution_px: 720,
   },
-  app_safe_defaults: {
-    "1080x1920": { video_bitrate_mbps: 8, audio_bitrate_kbps: 128 },
-    "1080x1350": { video_bitrate_mbps: 8, audio_bitrate_kbps: 128 },
+  settings_buckets: {
+    "1080x1920": {
+      target_video_bitrate_kbps: 8000,
+      max_video_bitrate_kbps: 10000,
+      audio_bitrate_kbps: 128,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac"],
+    },
+    "1080x1350": {
+      target_video_bitrate_kbps: 8000,
+      max_video_bitrate_kbps: 10000,
+      audio_bitrate_kbps: 128,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac"],
+    },
   },
 }

@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` に runtime origin / raw probe / capability parser、`presets_core` に runtime tier / source kind を追加済み。host では Ubuntu apt の `ffmpeg` / `ffprobe` が利用可能。
+- 現在の状態: `media` に sidecar/system runtime discovery、raw probe、capability parser、host `ffprobe` smoke を追加済み。`presets_core` には built-in family catalog、profile loader、`settings_buckets` schema を追加し、`presets/export_profiles/` を stable schema へ更新した。次は `export` crate で concrete settings 計算を実装する。
 - 現在のフェーズ: Phase 9 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
@@ -32,10 +32,10 @@
 | Phase 3 | 実行中 | `.pauseink` schema / lenient load / canonical save / unknown field 保持の最小版を実装 |
 | Phase 4 | 実行中 | portable root / env override / settings.json5 の最小実装を完了 |
 | Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
-| Phase 6 | 実行中 | family/profile 二層 schema の最小実装を完了 |
+| Phase 6 | 実行中 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
 | Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
-| Phase 9 | 実行中 | runtime provenance、raw probe、capability parser、schema 補強を実装済み |
+| Phase 9 | 実行中 | runtime discovery、raw probe、capability parser、host smoke を実装済み |
 | Phase 10 | 未着手 | |
 | Phase 11 | 未着手 | |
 | Phase 12 | 未着手 | |
@@ -108,16 +108,26 @@
   - 検討した代替案: 現在の `PathBuf` 2 本と `compatibility` だけの最小 schema のまま export orchestration で補う。
   - 理由: mainline sidecar と host 検証 runtime を区別できないと packaging/licensing の境界が崩れ、family/profile 側の schema が薄すぎると UI/export 実装へ hard-code が漏れるため。
   - 影響: Phase 9-15 の前に media/provider と presets schema の補強テストを追加する必要がある。
-- 2026-04-05T02:20:00+09:00
+- 2026-04-05T00:40:00+09:00
   - 決定: `MediaRuntime` は `RuntimeOrigin`、`manifest_path`、`build_summary`、`license_summary` を持ち、probe では `avg_frame_rate_raw`、`r_frame_rate_raw`、`pix_fmt`、`has_alpha`、`has_audio` を保持する。
   - 検討した代替案: human-readable summary のみで raw probe 情報を捨てる。
   - 理由: VFR / alpha / optional codec pack 判定に raw metadata が必要だから。
   - 影響: import caveat と export capability 判定を provider 側で持てる。
-- 2026-04-05T02:20:00+09:00
+- 2026-04-05T00:40:00+09:00
   - 決定: `ExportFamily` は `RuntimeTier` と codec/muxer requirement を持ち、`DistributionProfile` は `ProfileSourceKind` と source URL / notes を持つ。
   - 検討した代替案: runtime tier 判定を export orchestration 側の if 文で行う。
   - 理由: H.264 / HEVC optional codec pack を schema で mainline から切り離すため。
   - 影響: JSON5 preset file もこの schema へ寄せる必要がある。
+- 2026-04-05T00:53:59+09:00
+  - 決定: sidecar runtime discovery では `manifest.json` を必須にし、system runtime fallback は明示的に許可した場合だけ使う。
+  - 検討した代替案: binary 2 本が見つかれば manifest 無しでも sidecar として採用する。
+  - 理由: provenance / license summary の無い runtime を mainline sidecar と扱うのは危険だから。
+  - 影響: packaging 時は manifest 生成が必須になり、host system runtime は validation 用の別経路として扱う。
+- 2026-04-05T00:53:59+09:00
+  - 決定: export profile file の正規 schema は `settings_buckets` を含む JSON5 とし、loader 側で legacy の `family` / `intended_families` / `video_bitrate_ladder_mbps` / `app_safe_defaults` / `audio` を正規化吸収する。
+  - 検討した代替案: 旧サンプル schema をそのまま固定し、concrete settings は Rust 側のハードコードで補う。
+  - 理由: profile 追加を data-driven に保ちながら、既存 handoff 資産との互換も残せるため。
+  - 影響: `presets/export_profiles/` は stable schema に移行し、`export` crate は `settings_buckets` を直接利用できる。
 
 ## 5. 作業ログ
 
@@ -186,11 +196,21 @@
   - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: runtime provenance 欠落、probe 情報不足、family/profile schema の薄さ、host 検証 runtime と release packaging の記録不足を Phase 9 の主要論点として確定した。
   - 次の一手: runtime origin / manifest / capability と export family/profile schema の failing test を追加する。
-- 2026-04-05T02:20:00+09:00
+- 2026-04-05T00:40:00+09:00
   - 実施内容: `media` に runtime origin / raw probe / capability parser を追加し、`presets_core` に runtime tier / source kind を追加。
   - 変更ファイル: `crates/media/src/lib.rs`, `crates/presets_core/src/lib.rs`
   - 結果: host runtime と mainline sidecar の切り分け、alpha/VFR などの raw probe 情報保持、optional codec pack tier の区別が code/schema 上に現れた。
   - 次の一手: host `ffprobe` 実 probe と JSON5 export profile loader を実装する。
+- 2026-04-05T00:53:59+09:00
+  - 実施内容: `media` に sidecar/system runtime discovery、manifest 読込、version summary 取得、host `ffprobe` smoke test を追加。
+  - 変更ファイル: `crates/media/Cargo.toml`, `crates/media/src/lib.rs`
+  - 結果: mainline sidecar と host system runtime の選択経路が分離され、host 環境では 320x180 MJPEG fixture を生成して provider 経由の probe が通ることを確認した。
+  - 次の一手: built-in export family/profile loader と settings schema を実装する。
+- 2026-04-05T00:53:59+09:00
+  - 実施内容: `presets_core` に built-in export family catalog、distribution profile loader、`settings_buckets` schema を追加し、`presets/export_profiles/` を日本語ベースの stable schema へ更新した。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`, `presets/export_profiles/README.md`, `presets/export_profiles/*.json5`, `progress.md`
+  - 結果: `low` / `medium` / `high` / `youtube` / `x` / `instagram` / `adobe_edit` / `adobe_alpha` / `custom` を data-driven に読み込めるようになった。
+  - 次の一手: `export` crate に concrete settings 計算と bucket 解決を実装する。
 
 ## 6. 検証ログ
 
@@ -281,6 +301,12 @@
   - 結果: exit 0。5 tests passed。
 - `cargo test -p pauseink-presets-core`
   - 結果: exit 0。3 tests passed。
+- `cargo test -p pauseink-media`
+  - 結果: exit 0。8 tests passed。sidecar discovery、system fallback 優先順位、host `ffprobe` smoke を含む。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。5 tests passed。legacy schema 正規化と repository preset file load を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。runtime discovery / profile loader / stable profile files 反映後の回帰確認を完了。
 - `cargo test --workspace`
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
 - `ffmpeg -version | sed -n '1,12p'`
@@ -363,13 +389,13 @@
 - 現在の repository は最小 scaffold のみで、実アプリ機能は未実装。
 - portable sidecar runtime が未配置のため、mainline packaging 前提の import/export 実検証はまだできない。
 - Windows cross-build 環境は未整備。
-- `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
+- `.pauseink` parse/save、undo/redo は基盤のみ、実 UI、renderer、export engine はまだ本実装前。
 - command history は generic 基盤のみ実装済みで、実 project editing command はまだ未接続。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
-- media provider / export / 実 UI はまだ未実装で、host `ffmpeg` は probe/capability 設計検証にのみ使っている。
+- media provider は discovery / probe / capability まで実装済みだが、import flow と playback 接続は未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
-- `presets/export_profiles/` の JSON5 実ファイルはまだ新 schema と同期していない。
+- export concrete settings の bucket 選択、Custom 編集、runtime capability に基づく family/profile gating はまだ未実装。
 
 ## 13. 最終受け入れチェックリスト
 

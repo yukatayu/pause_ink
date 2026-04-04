@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -35,10 +36,96 @@ impl MediaRuntime {
 
     pub fn from_system_path() -> Self {
         Self::from_paths(
-            PathBuf::from("ffmpeg"),
-            PathBuf::from("ffprobe"),
+            PathBuf::from(ffmpeg_binary_name()),
+            PathBuf::from(ffprobe_binary_name()),
             RuntimeOrigin::SystemHost,
         )
+    }
+}
+
+pub fn ffmpeg_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }
+}
+
+pub fn ffprobe_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    }
+}
+
+pub fn default_platform_id() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+pub fn sidecar_runtime_dir(runtime_root: &Path, platform_id: &str) -> PathBuf {
+    runtime_root.join("ffmpeg").join(platform_id)
+}
+
+pub fn discover_sidecar_runtime(
+    runtime_root: &Path,
+    platform_id: &str,
+) -> Result<MediaRuntime, MediaError> {
+    let runtime_dir = sidecar_runtime_dir(runtime_root, platform_id);
+    let ffmpeg_path = runtime_dir.join(ffmpeg_binary_name());
+    let ffprobe_path = runtime_dir.join(ffprobe_binary_name());
+    let manifest_path = runtime_dir.join("manifest.json");
+
+    ensure_file_exists(&ffmpeg_path, "ffmpeg binary")?;
+    ensure_file_exists(&ffprobe_path, "ffprobe binary")?;
+    ensure_file_exists(&manifest_path, "runtime manifest")?;
+
+    let manifest_raw = fs::read_to_string(&manifest_path)?;
+    let manifest: RuntimeManifest = serde_json::from_str(&manifest_raw)
+        .map_err(MediaError::ManifestParse)?;
+
+    Ok(MediaRuntime {
+        ffmpeg_path,
+        ffprobe_path,
+        origin: RuntimeOrigin::Sidecar,
+        manifest_path: Some(manifest_path),
+        build_summary: manifest.build_summary(),
+        license_summary: manifest.license_summary,
+    })
+}
+
+pub fn discover_system_runtime() -> Result<MediaRuntime, MediaError> {
+    let ffmpeg_version = capture_version_output(Path::new(ffmpeg_binary_name()))?;
+    let ffprobe_version = capture_version_output(Path::new(ffprobe_binary_name()))?;
+
+    Ok(MediaRuntime {
+        ffmpeg_path: PathBuf::from(ffmpeg_binary_name()),
+        ffprobe_path: PathBuf::from(ffprobe_binary_name()),
+        origin: RuntimeOrigin::SystemHost,
+        manifest_path: None,
+        build_summary: Some(format!(
+            "{} | {}",
+            ffmpeg_version.first_line, ffprobe_version.first_line
+        )),
+        license_summary: Some(system_license_summary(&ffmpeg_version.full_output)),
+    })
+}
+
+pub fn discover_runtime(
+    runtime_root: &Path,
+    platform_id: &str,
+    allow_system_fallback: bool,
+) -> Result<MediaRuntime, MediaError> {
+    match discover_sidecar_runtime(runtime_root, platform_id) {
+        Ok(runtime) => Ok(runtime),
+        Err(sidecar_error) if allow_system_fallback => {
+            discover_system_runtime().map_err(|system_error| {
+                MediaError::RuntimeUnavailable(format!(
+                    "sidecar discovery failed: {sidecar_error}; system fallback failed: {system_error}"
+                ))
+            })
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -91,7 +178,11 @@ pub enum MediaError {
     #[error("ffprobe execution failed: {0}")]
     CommandFailed(String),
     #[error("ffprobe output parse failed: {0}")]
-    Parse(#[from] serde_json::Error),
+    ProbeParse(serde_json::Error),
+    #[error("runtime manifest parse failed: {0}")]
+    ManifestParse(serde_json::Error),
+    #[error("media runtime unavailable: {0}")]
+    RuntimeUnavailable(String),
     #[error("ffprobe I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -150,7 +241,8 @@ impl MediaProvider for FfprobeMediaProvider {
 }
 
 pub fn parse_ffprobe_output(json: &str) -> Result<MediaProbe, MediaError> {
-    let payload: FfprobePayload = serde_json::from_str(json)?;
+    let payload: FfprobePayload =
+        serde_json::from_str(json).map_err(MediaError::ProbeParse)?;
     let video_stream = payload.streams.iter().find(|stream| stream.codec_type == "video");
     let audio_stream = payload.streams.iter().find(|stream| stream.codec_type == "audio");
 
@@ -257,6 +349,70 @@ fn parse_hwaccels(output: &str) -> Vec<String> {
         .collect()
 }
 
+fn ensure_file_exists(path: &Path, label: &str) -> Result<(), MediaError> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(MediaError::RuntimeUnavailable(format!(
+            "{label} not found at {}",
+            path.display()
+        )))
+    }
+}
+
+fn capture_version_output(binary_path: &Path) -> Result<VersionOutput, MediaError> {
+    let output = Command::new(binary_path).arg("-version").output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(MediaError::CommandFailed(stderr));
+    }
+
+    let full_output = String::from_utf8_lossy(&output.stdout).into_owned();
+    let first_line = full_output
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("unknown version")
+        .to_owned();
+
+    Ok(VersionOutput {
+        first_line,
+        full_output,
+    })
+}
+
+fn system_license_summary(version_output: &str) -> String {
+    if version_output.contains("--enable-gpl") {
+        "host system runtime; ffmpeg build reports --enable-gpl".to_owned()
+    } else {
+        "host system runtime; packaging/license review still required".to_owned()
+    }
+}
+
+#[derive(Debug)]
+struct VersionOutput {
+    first_line: String,
+    full_output: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RuntimeManifest {
+    build_summary: Option<String>,
+    license_summary: Option<String>,
+    version: Option<String>,
+    source: Option<String>,
+}
+
+impl RuntimeManifest {
+    fn build_summary(&self) -> Option<String> {
+        self.build_summary
+            .clone()
+            .or_else(|| self.version.as_ref().map(|version| format!("sidecar runtime {version}")))
+            .or_else(|| self.source.clone())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct FfprobePayload {
     #[serde(default)]
@@ -284,9 +440,12 @@ struct FfprobeStream {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::process::Command;
 
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn probe_parser_extracts_video_summary() {
@@ -364,6 +523,65 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_runtime_discovery_reads_manifest_and_layout() {
+        let temp_dir = tempdir().expect("temp dir");
+        let platform_id = "linux-x86_64";
+        let runtime_dir = sidecar_runtime_dir(temp_dir.path(), platform_id);
+        fs::create_dir_all(&runtime_dir).expect("runtime dir");
+        fs::write(runtime_dir.join(ffmpeg_binary_name()), b"").expect("ffmpeg placeholder");
+        fs::write(runtime_dir.join(ffprobe_binary_name()), b"").expect("ffprobe placeholder");
+        fs::write(
+            runtime_dir.join("manifest.json"),
+            r#"{
+              "build_summary": "PauseInk sidecar test runtime",
+              "license_summary": "MIT-friendly test runtime"
+            }"#,
+        )
+        .expect("manifest");
+
+        let runtime =
+            discover_sidecar_runtime(temp_dir.path(), platform_id).expect("sidecar should resolve");
+
+        assert_eq!(runtime.origin, RuntimeOrigin::Sidecar);
+        assert_eq!(
+            runtime.build_summary.as_deref(),
+            Some("PauseInk sidecar test runtime")
+        );
+        assert_eq!(
+            runtime.license_summary.as_deref(),
+            Some("MIT-friendly test runtime")
+        );
+        assert_eq!(
+            runtime.manifest_path.as_deref(),
+            Some(runtime_dir.join("manifest.json").as_path())
+        );
+    }
+
+    #[test]
+    fn runtime_discovery_prefers_sidecar_before_system_fallback() {
+        let temp_dir = tempdir().expect("temp dir");
+        let platform_id = "linux-x86_64";
+        let runtime_dir = sidecar_runtime_dir(temp_dir.path(), platform_id);
+        fs::create_dir_all(&runtime_dir).expect("runtime dir");
+        fs::write(runtime_dir.join(ffmpeg_binary_name()), b"").expect("ffmpeg placeholder");
+        fs::write(runtime_dir.join(ffprobe_binary_name()), b"").expect("ffprobe placeholder");
+        fs::write(
+            runtime_dir.join("manifest.json"),
+            r#"{
+              "version": "1.0.0",
+              "source": "https://example.invalid/runtime"
+            }"#,
+        )
+        .expect("manifest");
+
+        let runtime =
+            discover_runtime(temp_dir.path(), platform_id, true).expect("runtime should resolve");
+
+        assert_eq!(runtime.origin, RuntimeOrigin::Sidecar);
+        assert_eq!(runtime.build_summary.as_deref(), Some("sidecar runtime 1.0.0"));
+    }
+
+    #[test]
     fn probe_parser_keeps_raw_timing_and_alpha_metadata() {
         let probe = parse_ffprobe_output(
             r#"{
@@ -421,5 +639,47 @@ cuda
         assert!(capabilities.audio_encoders.contains(&"libopus".to_owned()));
         assert!(capabilities.muxers.contains(&"webm".to_owned()));
         assert!(capabilities.hwaccels.contains(&"vaapi".to_owned()));
+    }
+
+    #[test]
+    fn host_ffprobe_smoke_if_host_runtime_exists() {
+        let runtime = match discover_system_runtime() {
+            Ok(runtime) => runtime,
+            Err(_) => return,
+        };
+
+        let temp_dir = tempdir().expect("temp dir");
+        let sample_path = temp_dir.path().join("probe-smoke.avi");
+        let output = Command::new(&runtime.ffmpeg_path)
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x180:d=1:r=30",
+                "-an",
+                "-c:v",
+                "mjpeg",
+            ])
+            .arg(&sample_path)
+            .output()
+            .expect("ffmpeg smoke command should run");
+
+        assert!(
+            output.status.success(),
+            "ffmpeg smoke fixture creation should succeed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let provider = FfprobeMediaProvider::new(runtime);
+        let probe = provider
+            .probe(&sample_path)
+            .expect("generated fixture should be probeable");
+
+        assert_eq!(probe.width, Some(320));
+        assert_eq!(probe.height, Some(180));
+        assert_eq!(probe.video_codec.as_deref(), Some("mjpeg"));
     }
 }

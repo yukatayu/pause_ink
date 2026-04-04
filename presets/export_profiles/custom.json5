@@ -1,0 +1,15 @@
+{
+  id: "custom",
+  display_name: "カスタム",
+  source_kind: "app_authored",
+  compatibility: "any",
+  notes: "UI で数値を直接編集するための基準プロファイル。",
+  settings_buckets: {
+    default: {
+      audio_bitrate_kbps: 160,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+  },
+}

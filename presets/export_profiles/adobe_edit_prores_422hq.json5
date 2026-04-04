@@ -1,6 +1,13 @@
 {
-  id: "adobe_edit_prores_422hq",
-  display_name: "Adobe Edit",
-  family: "mov_prores_422hq_pcm",
-  notes: "Editing/intermediate output for Adobe-focused workflows.",
+  id: "adobe_edit",
+  display_name: "Adobe 編集",
+  source_kind: "app_authored",
+  compatibility: ["mov_prores_422hq_pcm"],
+  notes: "Adobe 系編集ワークフロー向けの中間書き出しプリセット。",
+  settings_buckets: {
+    default: {
+      sample_rate_hz: 48000,
+      preferred_audio_codecs: ["pcm_s16le"],
+    },
+  },
 }

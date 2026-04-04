@@ -1,6 +1,13 @@
 {
-  id: "adobe_alpha_prores_4444",
-  display_name: "Adobe Alpha",
-  family: "mov_prores_4444_pcm",
-  notes: "Alpha-capable single-file output for Adobe-focused workflows.",
+  id: "adobe_alpha",
+  display_name: "Adobe アルファ",
+  source_kind: "app_authored",
+  compatibility: ["mov_prores_4444_pcm", "png_sequence_rgba"],
+  notes: "Adobe 向けのアルファ保持プリセット。family が連番画像なら音声設定は無視される。",
+  settings_buckets: {
+    default: {
+      sample_rate_hz: 48000,
+      preferred_audio_codecs: ["pcm_s16le"],
+    },
+  },
 }
