@@ -2,11 +2,13 @@ use std::cmp::Ordering;
 
 mod annotations;
 mod history;
+mod project_commands;
 
 use serde::{Deserialize, Serialize};
 
 pub use annotations::*;
 pub use history::*;
+pub use project_commands::*;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TimeBase {
@@ -390,6 +392,124 @@ mod tests {
         assert_eq!(clear.duration, MediaDuration::from_millis(300));
         assert_eq!(clear.granularity, ClearTargetGranularity::Group);
         assert_eq!(clear.ordering, ClearOrdering::Reverse);
+    }
+
+    #[test]
+    fn typed_project_commands_roundtrip_through_history() {
+        let mut project = AnnotationProject::default();
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        let stroke = Stroke {
+            id: StrokeId::new("stroke-1"),
+            created_at: MediaTime::from_millis(100),
+            ..Stroke::default()
+        };
+        let object = GlyphObject {
+            id: GlyphObjectId::new("object-1"),
+            stroke_ids: vec![StrokeId::new("stroke-1")],
+            created_at: MediaTime::from_millis(100),
+            ..GlyphObject::default()
+        };
+
+        history
+            .apply(
+                &mut project,
+                Box::new(CommandBatch::new(vec![
+                    Box::new(InsertStrokeCommand {
+                        stroke: stroke.clone(),
+                        index: None,
+                    }),
+                    Box::new(InsertGlyphObjectCommand {
+                        object: object.clone(),
+                        index: None,
+                    }),
+                ])),
+            )
+            .expect("typed insert batch should apply");
+
+        assert_eq!(project.strokes.len(), 1);
+        assert_eq!(project.glyph_objects.len(), 1);
+
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert!(project.strokes.is_empty());
+        assert!(project.glyph_objects.is_empty());
+
+        assert!(history.redo(&mut project).expect("redo should succeed"));
+        assert_eq!(project.strokes[0].id.0, "stroke-1");
+        assert_eq!(project.glyph_objects[0].id.0, "object-1");
+    }
+
+    #[test]
+    fn z_order_command_is_reversible_without_touching_capture_or_reveal_order() {
+        let mut project = AnnotationProject {
+            glyph_objects: vec![GlyphObject {
+                id: GlyphObjectId::new("object-1"),
+                ordering: OrderingMetadata {
+                    z_index: 3,
+                    capture_order: 10,
+                    reveal_order: 2,
+                },
+                ..GlyphObject::default()
+            }],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(SetGlyphObjectZIndexCommand {
+                    object_id: GlyphObjectId::new("object-1"),
+                    from: 3,
+                    to: 9,
+                }),
+            )
+            .expect("z-order command should apply");
+
+        assert_eq!(project.glyph_objects[0].ordering.z_index, 9);
+        assert_eq!(project.glyph_objects[0].ordering.capture_order, 10);
+        assert_eq!(project.glyph_objects[0].ordering.reveal_order, 2);
+
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.glyph_objects[0].ordering.z_index, 3);
+    }
+
+    #[test]
+    fn group_and_clear_event_commands_attach_to_typed_project() {
+        let mut project = AnnotationProject::default();
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(InsertGroupCommand {
+                    group: Group {
+                        id: GroupId::new("group-1"),
+                        glyph_object_ids: vec![GlyphObjectId::new("object-1")],
+                        loose_stroke_ids: vec![StrokeId::new("stroke-free-1")],
+                        ..Group::default()
+                    },
+                    index: None,
+                }),
+            )
+            .expect("group insert should apply");
+        history
+            .apply(
+                &mut project,
+                Box::new(InsertClearEventCommand {
+                    clear_event: ClearEvent {
+                        id: ClearEventId::new("clear-1"),
+                        time: MediaTime::from_millis(500),
+                        ..ClearEvent::default()
+                    },
+                    index: None,
+                }),
+            )
+            .expect("clear insert should apply");
+
+        assert_eq!(project.groups.len(), 1);
+        assert_eq!(project.clear_events.len(), 1);
+        assert_eq!(page_index_for_time(&project.clear_events, MediaTime::from_millis(600)), 1);
     }
 
     #[test]

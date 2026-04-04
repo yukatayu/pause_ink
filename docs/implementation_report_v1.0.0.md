@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算に加え、`domain` に stroke / glyph object / group / style / entrance の typed model を追加し、`project_io` で `strokes` / `objects` / `groups` / `clear_events` を typed wrapper 化した。次は project command と undo/redo の接続へ進む。
+- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算に加え、`domain` に stroke / glyph object / group / style / entrance の typed model と project command を追加し、`project_io` で `strokes` / `objects` / `groups` / `clear_events` を typed wrapper 化した。次は playback foundation に入る。
 - 現在のフェーズ: Phase 9 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
@@ -31,7 +31,7 @@
 | Phase 2 | 実行中 | typed stroke / glyph object / group / style / entrance モデルを追加 |
 | Phase 3 | 実行中 | `.pauseink` typed wrapper、entity-level unknown field 保持、roundtrip test を追加 |
 | Phase 4 | 実行中 | portable root / env override / settings.json5 の最小実装を完了 |
-| Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
+| Phase 5 | 実行中 | typed project command と history 接続を追加 |
 | Phase 6 | 実行中 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
 | Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
@@ -138,6 +138,11 @@
   - 検討した代替案: project format でも `serde_json::Value` の配列を維持し、typed 化は後回しにする。
   - 理由: typed model と lenient/forward-compatible load を両立させるため。
   - 影響: domain は UI/renderer/export から使いやすい typed struct を保ちつつ、project file では entity-level unknown field を保持できる。
+- 2026-04-05T01:10:20+09:00
+  - 決定: typed project の編集 command は `domain` crate に置き、`AnnotationProject` を直接 mutate する reversible command として定義する。
+  - 検討した代替案: app state 層に command を置いて `domain` は pure data のみとする。
+  - 理由: UI 非依存の business rule と undo/redo を一体でテストでき、後続の playback/UI 実装から再利用しやすいため。
+  - 影響: `domain` は project editing API の中心になり、app/UI は command dispatch に徹する形へ寄る。
 
 ## 5. 作業ログ
 
@@ -231,6 +236,11 @@
   - 変更ファイル: `crates/domain/src/lib.rs`, `crates/domain/src/annotations.rs`, `crates/project_io/Cargo.toml`, `crates/project_io/src/lib.rs`, `progress.md`
   - 結果: stroke / glyph object / group / clear event / style / entrance の型が揃い、`.pauseink` の `strokes` / `objects` / `groups` / `clear_events` が typed roundtrip 可能になった。
   - 次の一手: project command と undo/redo を typed project model に接続する。
+- 2026-04-05T01:10:20+09:00
+  - 実施内容: `domain` に typed project command を追加し、`AnnotationProject` への insert / z-order 更新を history 経由で往復できるようにした。
+  - 変更ファイル: `crates/domain/src/lib.rs`, `crates/domain/src/annotations.rs`, `crates/domain/src/project_commands.rs`, `progress.md`
+  - 結果: stroke / object / group / clear event の挿入と z-order 更新が undo/redo と接続され、typed project model を前提にした編集 API ができた。
+  - 次の一手: Phase 10 の media import / playback state へ進む。
 
 ## 6. 検証ログ
 
@@ -337,6 +347,10 @@
   - 結果: exit 0。3 tests passed。typed wrapper の lenient load / canonical save / roundtrip を含む。
 - `cargo test --workspace`
   - 結果: exit 0。typed domain/project model 追加後の回帰確認を完了。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。14 tests passed。typed project command、page interval、style snapshot、z-order reversible update を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。typed project command 追加後の回帰確認を完了。
 - `cargo test --workspace`
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
 - `ffmpeg -version | sed -n '1,12p'`
@@ -420,10 +434,11 @@
 - portable sidecar runtime が未配置のため、mainline packaging 前提の import/export 実検証はまだできない。
 - Windows cross-build 環境は未整備。
 - `.pauseink` parse/save は typed wrapper まで入ったが、metadata/media/settings/pages/presets はまだ generic JSON のまま。
-- command history は generic 基盤のみ実装済みで、typed project editing command はまだ未接続。
+- typed project command は insert / z-order update までで、実 UI 操作との接続や削除/選択/batch edit はまだ未実装。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
 - media provider は discovery / probe / capability まで実装済みだが、import flow と playback 接続は未実装。
+- playback state、media import、座標変換、frame access はまだ未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 - export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
 

@@ -511,3 +511,25 @@ pub struct AnnotationProject {
     pub groups: Vec<Group>,
     pub clear_events: Vec<ClearEvent>,
 }
+
+impl AnnotationProject {
+    pub fn stroke_index(&self, stroke_id: &StrokeId) -> Option<usize> {
+        self.strokes.iter().position(|stroke| stroke.id == *stroke_id)
+    }
+
+    pub fn glyph_object_index(&self, object_id: &GlyphObjectId) -> Option<usize> {
+        self.glyph_objects
+            .iter()
+            .position(|object| object.id == *object_id)
+    }
+
+    pub fn group_index(&self, group_id: &GroupId) -> Option<usize> {
+        self.groups.iter().position(|group| group.id == *group_id)
+    }
+
+    pub fn clear_event_index(&self, clear_event_id: &ClearEventId) -> Option<usize> {
+        self.clear_events
+            .iter()
+            .position(|clear_event| clear_event.id == *clear_event_id)
+    }
+}

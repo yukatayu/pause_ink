@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 34% 前後。Phase 2/3 の typed 基盤を広げ、次は project command と undo 接続へ進む
-- 現在の即時マイルストーン: typed domain/project model を使う project command を追加し、編集操作を履歴へ載せる
+- 全体状態: 全体で概算 40% 前後。Phase 5 まで typed 基盤が繋がり、次は playback foundation に入る
+- 現在の即時マイルストーン: media import / playback state / seek / pause / play の骨格を追加する
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -28,6 +28,7 @@
   - `export` crate に bucket 解決付き concrete settings 計算と capability 判定を追加
   - stroke / glyph object / group / style snapshot などの typed domain model を追加
   - `.pauseink` の strokes / objects / groups / clear_events を typed wrapper 化
+  - typed project model を操作する insert / z-order project command を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -42,7 +43,7 @@
 | Phase 2 | 実行中 | 55% | domain model と clear/page 仕様を固定 | stroke / object / group / style / entrance の typed 基盤を追加 |
 | Phase 3 | 実行中 | 50% | `.pauseink` lenient load / normalized save | typed wrapper と entity-level unknown field 保持を追加 |
 | Phase 4 | 実行中 | 35% | portable root と設定保存 | 実行ファイル隣接ルールの最小実装あり |
-| Phase 5 | 実行中 | 30% | command model と bounded undo/redo | 既定深さ 256 の最小実装あり |
+| Phase 5 | 実行中 | 55% | command model と bounded undo/redo | typed project command と履歴接続を追加 |
 | Phase 6 | 実行中 | 60% | preset / export profile 基盤 | built-in family catalog と profile loader を追加 |
 | Phase 7 | 実行中 | 30% | local font / Google Fonts 基盤 | graceful failure の最小実装あり |
 | Phase 8 | 実行中 | 35% | template layout / guide geometry | grapheme-aware 最小実装あり |
@@ -59,6 +60,6 @@
 
 ## 次の具体的な一手
 
-1. stroke / object / group / clear event を操作する project command を追加する。
-2. typed project model と undo/redo の接続を作る。
-3. command 経由で page derivation と save/load が壊れないことをテストする。
+1. media import flow と playback state model を追加する。
+2. current time source と seek / pause / play を追加する。
+3. media loading の smoke と座標変換 math の足場を作る。
