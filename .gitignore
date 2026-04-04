@@ -5,3 +5,5 @@ pauseink_data/
 *.tmp
 *.temp
 *.log
+__pycache__/
+*.pyc
