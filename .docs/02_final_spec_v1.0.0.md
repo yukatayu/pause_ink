@@ -1,51 +1,51 @@
-# Final product specification — v1.0.0
+# 最終製品仕様 v1.0.0
 
-## 1. Core concept
+## 1. コアコンセプト
 
-PauseInk lets the user add hand-drawn overlays to video frames.  
-The overlays are tied to video time. They can appear with configurable reveal behaviors, stay visible across a page interval, and disappear through a manual screen-wide clear event.
+PauseInk は、動画フレームに手書きのオーバーレイを載せるためのアプリです。  
+オーバーレイは動画時刻に紐づき、設定可能な reveal 挙動で現れ、1 つの page 区間にわたって残り、手動の screen-wide clear event で消えます。
 
-The design goal is:
+設計目標は次の通りです。
 
-- preserve the charm of the user's handwriting,
-- provide just enough structure for readability,
-- avoid surprise destructive normalization,
-- keep the UI understandable.
+- ユーザー自身の手書きらしさを残す
+- 読みやすさに必要なぶんだけ構造を与える
+- 予期しない破壊的な正規化を避ける
+- UI を理解しやすく保つ
 
-## 2. Timeline model
+## 2. タイムラインモデル
 
-### 2.1 Video timeline
+### 2.1 動画タイムライン
 
-The project uses the source media timeline as the master time base.
+プロジェクトは、元メディアのタイムラインを主時間基準として使います。
 
-### 2.2 Page model
+### 2.2 ページモデル
 
-A **page** is the interval between two clear boundaries:
+**Page** は、2 つの clear 境界のあいだにある区間です。
 
-- start of project or immediately after a prior clear
-- until the next clear event or end of project
+- プロジェクト開始時、または直前の clear の直後
+- 次の clear event もしくはプロジェクト終了まで
 
-### 2.3 Clear event model
+### 2.3 Clear event モデル
 
-A clear event is:
+Clear event とは、次のものです。
 
-- inserted explicitly by the user while paused or playing
-- owned by the page-event track, not by individual strokes
-- screen-wide, affecting all alive annotation objects at that instant
+- pause 中でも再生中でも、利用者が明示的に挿入する
+- 個別 stroke ではなく page-event track が持つ
+- screen-wide で、その瞬間に生存している注釈 object 全体へ影響する
 
-v1.0 clear behaviors:
+v1.0 の clear 挙動は次の通りです。
 
 - instant clear
-- ordered clear by write order
-- reverse ordered clear
+- 書き込み順に従う ordered clear
+- 逆順の ordered clear
 - wipe out
 - dissolve out
 
-The clear event owns:
+Clear event が持つ内容は次の通りです。
 
 - clear kind
 - duration
-- target granularity for the effect algorithm
+- effect アルゴリズム向けの target granularity
   - object
   - group
   - stroke
@@ -55,96 +55,96 @@ The clear event owns:
   - reverse
   - parallel
 
-Even though the clear event is screen-wide, the *internal visual sequencing* may still work at object/group/stroke granularity.
+clear event は screen-wide ですが、内部的な見た目の順序付けは object/group/stroke 単位で行っても構いません。
 
-### 2.4 No partial clear in v1.0
+### 2.4 v1.0 では部分 clear をしない
 
-The UI must not expose:
+UI に次の機能を出してはいけません。
 
-- clear selected only
-- clear current group only
-- clear by tag
-- clear by region
+- 選択中だけ clear
+- 現在の group だけ clear
+- tag で clear
+- region で clear
 
-These stay in future work only.
+これらは future work に残します。
 
-## 3. Annotation object model
+## 3. 注釈 object モデル
 
-### 3.1 Stroke
+### 3.1 ストローク
 
-A stroke stores:
+Stroke は次を保持します。
 
 - raw input points
-- timestamped samples
-- derived/render path
+- timestamp 付き sample
+- 派生した render path
 - style snapshot
-- creation time anchor
+- 作成時刻の anchor
 
 ### 3.2 Glyph Object
 
-A glyph object is the main character-like annotation unit.
+Glyph object は、文字相当の主注釈単位です。
 
-It may contain:
+含みうるものは次の通りです。
 
-- one or more strokes
+- 1 本以上の stroke
 - style snapshot
-- entrance behavior
-- post-entrance behavior chain
+- entrance 挙動
+- post-entrance 挙動チェーン
 - geometry transform
 - z-order
-- capture/reveal order metadata
+- capture/reveal order のメタデータ
 
 ### 3.3 Group
 
-A group is a user-defined collection of glyph objects and/or strokes used for:
+Group は、利用者が定義する glyph object / stroke の集合で、次の用途に使います。
 
-- shared reveal behavior
-- shared post-action timing scope
-- batch editing
+- reveal 挙動の共有
+- post-action の timing scope の共有
+- 一括編集
 
 ### 3.4 Runs
 
-Runs are display-derived groupings in the outline panel for consecutive objects that share the same settings.  
-Runs are not the same as user-defined groups and must not replace explicit group data.
+Run は、同じ設定を共有する連続 object を outline panel 上でまとめた表示由来のグルーピングです。  
+Run は利用者定義 group とは別物であり、明示的な group データの代わりにはなりません。
 
-## 4. Input modes
+## 4. 入力モード
 
 ### 4.1 Free Ink
 
-The user draws directly on the canvas.
+利用者は canvas に直接描きます。
 
-- default mode: no guides
-- one pen-down to pen-up becomes one stroke
-- `Shift` groups consecutive strokes into one glyph object
+- 既定モードでは guide を使わない
+- 1 回の pen-down から pen-up が 1 つの stroke になる
+- `Shift` で連続 stroke を 1 つの glyph object にまとめる
 
-### 4.2 Guide Capture
+### 4.2 ガイドキャプチャ
 
-Normally guides are hidden.  
-When the guide modifier is held and the user writes a reference glyph object:
+通常、guide は非表示です。  
+guide modifier を押しながら、利用者が参照用 glyph object を書くと次のようになります。
 
-- the reference object defines guide geometry
-- guides appear for subsequent writing
-- guides are editor-only and not exported
+- その参照 object が guide geometry を決める
+- 後続の書き込みに guide が現れる
+- guide は editor 専用で、export されない
 
-Required guide appearance:
+必要な guide の見た目は次の通りです。
 
-- long horizontal 3-line system
-- 2 faint helper lines between them
-- next-character short vertical 3-line guide
-- 2 faint helper lines for the next-character cell
-- configurable upward slope angle
-- settings persisted across launches
+- 長い横 3 線システム
+- そのあいだの薄い補助線 2 本
+- 次文字用の短い縦 3 線ガイド
+- 次文字枠用の薄い補助線 2 本
+- 調整可能な上向き slope angle
+- 起動をまたいで設定が保持される
 
-Platform-default guide modifier:
+platform-default の guide modifier は次の通りです。
 
-- Windows/Linux: `Ctrl`
+- Windows / Linux: `Ctrl`
 - macOS: `Option`
 
-The modifier must remain remappable in settings.
+この modifier は settings から再割り当て可能でなければなりません。
 
-### 4.3 Template Placement
+### 4.3 テンプレート配置
 
-The user enters text and configures a template underlay:
+利用者はテキストを入力し、template underlay を設定します。
 
 - font family
 - font size
@@ -156,38 +156,38 @@ The user enters text and configures a template underlay:
 - slope angle
 - underlay mode
 
-Pressing “Place Template” enters placement mode:
+`Place Template` を押すと placement mode に入ります。
 
-- underlay follows the pointer
-- click to place
-- settings update the preview in real time
-- cancel exits placement mode
-- placement mode underlay disappears when cancelled or replaced by a new placement action
+- underlay はポインタに追従する
+- クリックで配置する
+- settings の変更は preview にリアルタイム反映される
+- cancel で placement mode を抜ける
+- cancel または新しい placement で、placement mode の underlay は消える
 
-The template defines **slots**, not final visible glyph substitution.
+template が定義するのは **slots** であり、最終見た目の glyph 置換そのものではありません。
 
-#### Underlay modes
+#### Underlay mode
 
-v1.0 supports:
+v1.0 が対応するのは次のものです。
 
 - outline underlay
 - faint fill underlay
 - slot box only
 - outline + slot box
 
-### 4.4 Template capture behavior
+### 4.4 テンプレートの capture 挙動
 
-When a template is active, the default interpretation is:
+template が有効なときの既定解釈は次の通りです。
 
-- multiple strokes contribute to the current slot's glyph object
-- commit advances to the next slot using explicit next-slot action or next-slot start
-- `Shift` remains available for force-group behaviors outside template mode
+- 複数 stroke が現在の slot の glyph object に寄与する
+- commit は明示的な next-slot action、または next-slot start により次 slot へ進む
+- `Shift` は template mode の外で force-group 挙動に使える
 
-## 5. Appearance settings
+## 5. 見た目設定
 
 ### 5.1 Base style
 
-Each visible object has base style fields:
+各 visible object は次の base style フィールドを持ちます。
 
 - thickness
 - color
@@ -195,36 +195,36 @@ Each visible object has base style fields:
 - outline
 - drop shadow
 - glow
-- blend mode (at minimum: normal, additive)
+- blend mode（最低でも normal, additive）
 
-### 5.2 Entrance behavior
+### 5.2 Entrance 挙動
 
-Built-in entrance kinds:
+組み込みの entrance kind は次の通りです。
 
 - path trace
 - instant
 - wipe
 - dissolve
 
-Entrance parameters include:
+Entrance パラメータには次が含まれます。
 
 - target scope: stroke / glyph object / group / run
 - order: serial / reverse / parallel
 - duration mode:
-  - proportional to stroke length
-  - fixed total duration
+  - stroke 長に比例
+  - 固定 total duration
 - speed scalar
 
 ### 5.3 Reveal-head effect
 
-Entrance may include an optional head effect:
+Entrance には任意で head effect を付けられます。
 
 - none
 - solid head
 - glow head
-- comet/tail head
+- comet / tail head
 
-Head effect parameters:
+Head effect のパラメータは次の通りです。
 
 - color source: preset accent / stroke color / custom
 - size multiplier
@@ -233,10 +233,10 @@ Head effect parameters:
 - persistence
 - blend mode
 
-### 5.4 Post-actions
+### 5.4 Post-action
 
-Post-actions are chained state changes after or during reveal.  
-Each chain entry specifies:
+Post-action は、reveal の後または途中で起きる状態変更チェーンです。  
+チェーンの各要素は次を指定します。
 
 - timing scope:
   - during reveal
@@ -251,39 +251,39 @@ Each chain entry specifies:
   - pulse
   - blink
 
-v1.0 built-ins are enough; arbitrary scripting is not required.
+v1.0 では組み込みだけで十分であり、任意スクリプトは不要です。
 
-## 6. Presets
+## 6. Preset
 
-### 6.1 Preset categories
+### 6.1 Preset category
 
-v1.0 includes:
+v1.0 に含めるのは次のものです。
 
 - base style presets
 - entrance presets
 - clear presets
 - combo presets
 
-### 6.2 Built-in vs user presets
+### 6.2 built-in と user preset の違い
 
-- built-in presets are read-only
-- user presets are editable and stored under the portable root
-- projects store **resolved snapshots** plus optional preset identifiers
-- projects must not depend on mutable live preset files to reproduce old visuals
+- built-in preset は読み取り専用
+- user preset は編集可能で、portable root に保存する
+- project には **resolved snapshot** と任意の preset ID を保存する
+- 古い見た目を再現するために、mutable な live preset file に project が依存してはいけない
 
-### 6.3 Reset behavior
+### 6.3 reset 挙動
 
-Each editable field can be:
+各編集可能フィールドは次のいずれかにできます。
 
-- inherited from preset
-- overridden
-- reset back to preset value
+- preset から継承
+- 上書き
+- preset 値へリセット
 
-## 7. Text layout and spacing behavior
+## 7. テキストレイアウトと spacing
 
-The template system must support:
+template system は次をサポートしなければなりません。
 
-- grapheme-aware slot creation
+- grapheme-aware な slot 生成
 - kana scale
 - latin scale
 - punctuation scale
@@ -292,124 +292,124 @@ The template system must support:
 - slope
 - mixed-script layout
 
-The handwritten output is placed into slots but is not forcibly reshaped unless the user opts into gentle fitting behaviors.
+手書き出力は slot に配置されますが、利用者が gentle fitting を選ばない限り、強制的には形を変えません。
 
-### 7.1 Slot fit options
+### 7.1 Slot fit オプション
 
-v1.0 supports:
+v1.0 が対応するのは次の通りです。
 
 - Off
 - Move only
 - Weak uniform scale
 
-Default: **Off**.
+既定値は **Off** です。
 
-## 8. Smoothing and stroke stabilization
+## 8. smoothing と stroke stabilization
 
-v1.0 includes adjustable stroke stabilization with these rules:
+v1.0 では、次のルールで調整可能な stroke stabilization を提供します。
 
-- raw points are preserved
-- render path is derived
-- corners should survive
-- smoothing must be user-adjustable with a single strength control
+- raw point を保持する
+- render path は派生させる
+- corner はなるべく残す
+- smoothing は 1 つの強さスライダーで調整できる
 
-Design target:
+設計目標は次の通りです。
 
-- adaptive One Euro style filtering
-- corner guard / curvature-aware smoothing reduction
-- explicit future hook for optional pseudo-pressure/taper
+- adaptive One Euro 風フィルタリング
+- corner guard / curvature-aware な smoothing 抑制
+- 将来の pseudo-pressure / taper 用の明示的な hook
 
-## 9. Selection, ordering, and editing
+## 9. 選択・順序・編集
 
-The user can:
+利用者は次を行えます。
 
-- select objects
-- multi-select
-- group
-- ungroup
-- reorder z-order
-- batch-edit styles/effects
+- object を選択する
+- 複数選択する
+- group 化する
+- ungroup する
+- z-order を並べ替える
+- style / effect を一括編集する
 
-The application must keep **capture/reveal order** conceptually separate from **z-order**.
+アプリは **capture/reveal order** と **z-order** を概念上きちんと分離しなければなりません。
 
-## 10. Panels
+## 10. パネル
 
 ### 10.1 Object Outline
 
-A tree-like panel showing:
+次のものを表示する tree 形式の panel です。
 
-- runs
-- groups
-- glyph objects
-- strokes
+- run
+- group
+- glyph object
+- stroke
 
-Must support:
+次をサポートしなければなりません。
 
-- expand/collapse
-- multi-select
-- batch edit
-- reorder
-- visibility/lock/solo
-- current alive highlighting
-- optional auto-follow-current
+- 展開 / 折りたたみ
+- 複数選択
+- 一括編集
+- 並べ替え
+- visibility / lock / solo
+- 現在生存中の強調表示
+- 任意の auto-follow-current
 
-### 10.2 Page Events
+### 10.2 ページイベント
 
-A separate timeline track for clear events only.
+clear event のみを扱う独立した timeline track です。
 
-### 10.3 Export Queue
+### 10.3 Export キュー
 
-A simple queue/status view for export jobs.
+export job の簡単な queue / status 表示です。
 
 ### 10.4 Logs
 
-An in-app view into recent log output is desirable for troubleshooting.
+トラブルシュート用に、最近の log 出力をアプリ内で見られると望ましいです。
 
-## 11. Save/load behavior
+## 11. save/load 挙動
 
-### 11.1 Project files
+### 11.1 プロジェクトファイル
 
-- extension: `.pauseink`
+- 拡張子: `.pauseink`
 - encoding: UTF-8
-- format: JSON5-style text
-- allow comments and trailing commas on load
-- canonical normalized save on write
+- 形式: JSON5 風テキスト
+- load 時にコメントと trailing comma を許可する
+- write 時には canonical に正規化して保存する
 
-### 11.2 Unknown fields
+### 11.2 未知フィールド
 
-Unknown fields should be preserved where practical to support hand editing and forward compatibility.
+手編集と forward compatibility を支えるため、未知フィールドは可能な範囲で保持します。
 
 ### 11.3 Autosave
 
-Autosave is required.
+autosave は必須です。
 
 ### 11.4 Crash recovery
 
-Recovery from recent autosave is required.
+直近 autosave からの recovery が必須です。
 
-## 12. Export behavior
+## 12. Export 挙動
 
 ### 12.1 Composite export
 
-Exports source video plus annotations.
+元動画と注釈を合わせて出力します。
 
 ### 12.2 Transparent export
 
-Exports annotation-only output.
+注釈だけを出力します。
 
-Required transparent families:
+必要な transparent family は次の通りです。
 
 - PNG Sequence RGBA
-- MOV / ProRes 4444 / PCM (or silent if no audio included)
+- MOV / ProRes 4444 / PCM（または、音声を含めないなら silent）
 
-### 12.3 Export profiles
+### 12.3 Export profile
 
-The UI must separate:
+UI は次の 2 層を分けて見せなければなりません。
 
 - **container/codec family**
 - **distribution preset**
 
-Distribution presets:
+distribution preset は次の通りです。
 
 - Low
 - Medium
@@ -421,49 +421,47 @@ Distribution presets:
 - Adobe Alpha
 - Custom
 
-For all non-Custom presets:
+非 Custom preset では次を行います。
 
-- show computed numeric values
-- keep numeric entry widgets disabled
+- 計算済みの数値を表示する
+- 数値入力 widget は無効にする
 
-For Custom:
+Custom では次を行います。
 
-- allow direct numeric editing
+- 直接数値を編集できる
 
-## 13. Import behavior
+## 13. Import 挙動
 
-Input media support is not restricted to the export families.  
-Import accepts whatever the active FFmpeg runtime can probe and decode.
+入力メディアの対応範囲は export family に限定されません。  
+Import は、アクティブな FFmpeg runtime が probe / decode できるものを受け付けます。
 
-The app should classify imports as:
+アプリは runtime probe の結果に基づいて、import を次のように分類します。
 
 - supported
 - supported with caveats
 - unsupported
 
-based on runtime probe results.
-
 ## 14. Preferences
 
-Must include at least:
+最低でも次を含めます。
 
 - undo history depth
-- portable root override (developer/test only, hidden/advanced is acceptable)
+- portable root override（developer/test 専用。hidden / advanced でよい）
 - guide modifier override
 - guide slope angle
 - guide persistence options
 - GPU preview toggle
 - media hardware acceleration toggle
 - autosave cadence
-- cache size guidance or cleanup actions
-- Google Fonts configured families
-- local font directories (optional extra roots)
+- cache size の目安表示または cleanup 操作
+- Google Fonts の configured families
+- local font directories（追加の任意 root）
 
-## 15. Out of scope for v1.0
+## 15. v1.0 の対象外
 
 - partial clear
-- auto scene-cut clear insertion
-- pen pressure
-- arbitrary effect scripting
-- automatic proxy generation
-- full NLE-grade media management
+- scene-cut を使った自動 clear 挿入
+- ペン圧
+- 任意の effect scripting
+- 自動 proxy 生成
+- NLE 級の完全な media 管理

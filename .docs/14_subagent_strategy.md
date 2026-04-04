@@ -1,47 +1,53 @@
-# Sub-agent strategy
+# サブエージェント方針
 
-The user wants sub-agents used deliberately, not spammed.
+利用者は、sub-agent をむやみに増やさず、意図して使うことを望んでいます。
 
-## Required sub-agent passes
+## 必須の sub-agent パス
 
-### Pass 1 — architecture sanity review
+### パス1 — architecture sanity review
 
-When:
-- after initial workspace/module plan exists
-- before heavy implementation begins
+タイミング:
 
-Ask for:
-- boundary sanity
-- concurrency/state ownership sanity
-- likely cross-platform pain points
+- 初期の workspace / module 方針ができた後
+- 重い実装を始める前
 
-### Pass 2 — media/export/licensing sanity review
+確認してもらう内容:
 
-When:
-- provider abstraction and export families are drafted
-- before export behavior is locked
+- 境界が妥当か
+- concurrency / state ownership が妥当か
+- クロスプラットフォームで痛みそうな点は何か
 
-Ask for:
-- runtime/provider separation sanity
-- export family sanity
-- likely compliance pitfalls
-- Adobe compatibility sanity
+### パス2 — media/export/licensing sanity review
 
-### Pass 3 — final QA/docs sanity review
+タイミング:
 
-When:
-- app is mostly complete
-- manuals and report are drafted
+- provider abstraction と export family のたたき台ができた後
+- export behavior を固定する前
 
-Ask for:
-- doc/code mismatch detection
-- likely missing tests
-- suspicious UX inconsistencies
-- incomplete implementation-report areas
+確認してもらう内容:
 
-## Rules
+- runtime / provider の分離が妥当か
+- export family の分離が妥当か
+- compliance 上の落とし穴は何か
+- Adobe compatibility は妥当か
 
-- keep concurrency low (1–2)
-- wait for results
-- terminate clearly orphaned unrelated sub-agents
-- record findings in the implementation report
+### パス3 — final QA/docs sanity review
+
+タイミング:
+
+- アプリがほぼ完成した段階
+- manuals と report の下書きができた段階
+
+確認してもらう内容:
+
+- docs と code の不一致検出
+- 足りない test の可能性
+- UI の不自然な不整合
+- implementation report の未完部分
+
+## ルール
+
+- concurrency は低く保つ（1〜2）
+- 結果を待つ
+- 明らかに無関係な orphan sub-agent は終了する
+- 見つかった内容は implementation report に記録する

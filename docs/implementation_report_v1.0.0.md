@@ -4,16 +4,16 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe / preview frame、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt の最小線を接続した。次は export engine / 実 export 検証へ進む。
-- 現在のフェーズ: Phase 11 実行中。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期まで完了した。
+- 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
-- 最新の検証済み build: 未実施
-- 最新の検証済み composite export: 未実施
-- 最新の検証済み transparent export: 未実施
+- 最新の検証済み build: `cargo build -p pauseink-app`
+- 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
+- 最新の検証済み transparent export: `cargo test --workspace` 内の `pauseink_export::tests::transparent_png_sequence_export_smoke_if_host_runtime_exists`
 
 ## 2. 環境
 
-- 日時: 2026-04-04T23:56:59+09:00
+- 日時: 2026-04-05T03:07:34+09:00
 - ホスト OS: Linux yukatayu-agent 6.8.0-106-generic x86_64 GNU/Linux
 - シェル: `bash`
 - Rust toolchain: `stable-x86_64-unknown-linux-gnu` / `rustc 1.93.0` / `cargo 1.93.0`
@@ -28,23 +28,23 @@
 |---|---|---|
 | Phase 0 | 完了 | docs 読了、進行表更新、architecture sanity review 実施・採用方針確定 |
 | Phase 1 | 完了 | workspace 拡張、logging 初期化、基礎 crate 境界を反映 |
-| Phase 2 | 実行中 | typed stroke / glyph object / group / style / entrance モデルを追加 |
-| Phase 3 | 実行中 | `.pauseink` typed wrapper、entity-level unknown field 保持、roundtrip test を追加 |
-| Phase 4 | 実行中 | portable root / env override / settings.json5 に加え cache/autosave/runtime 下位 path と dir 作成を追加 |
-| Phase 5 | 実行中 | typed project command と history 接続を追加 |
-| Phase 6 | 実行中 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
-| Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
-| Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
-| Phase 9 | 実行中 | runtime discovery、raw probe、capability parser、host smoke を実装済み |
-| Phase 10 | 実行中 | imported media / playback state / seek / mapping と single-window preview GUI を実装 |
-| Phase 11 | 実行中 | free ink capture、shift grouping、stabilization helper を GUI へ接続 |
-| Phase 12 | 実行中 | guide capture と template preview の editor-only 表示を実装 |
-| Phase 13 | 実行中 | object outline と page events bottom tab の最小表示を実装 |
-| Phase 14 | 未着手 | |
-| Phase 15 | 実行中 | bucket 解決と capability 判定の基礎を実装 |
-| Phase 16 | 実行中 | settings file roundtrip、portable dir 作成、autosave cadence、recovery prompt の最小線を接続 |
-| Phase 17 | 実行中 | UI 文言と一部 preset docs の日本語化を開始 |
-| Phase 18 | 未着手 | |
+| Phase 2 | 完了 | typed stroke / glyph object / group / style / entrance モデルと clear/page semantics を固定 |
+| Phase 3 | 完了 | `.pauseink` typed wrapper、entity-level unknown field 保持、sample roundtrip を確認 |
+| Phase 4 | 完了 | portable root / env override / settings.json5 / cache/autosave/runtime 下位 path を実装 |
+| Phase 5 | 完了 | typed project command と history 接続、bounded undo/redo smoke を確認 |
+| Phase 6 | 完了 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
+| Phase 7 | 完了 | local font family 列挙、Google Fonts CSS2 URL / cache path / fetch / graceful failure を実装 |
+| Phase 8 | 完了 | template layout / guide geometry の v1.0 最小実装を完了 |
+| Phase 9 | 完了 | runtime discovery、raw probe、capability parser、host smoke を実装 |
+| Phase 10 | 完了 | imported media / playback state / seek / mapping と single-window preview GUI を実装 |
+| Phase 11 | 完了 | free ink capture、shift grouping、stabilization helper を GUI へ接続し smoke を追加 |
+| Phase 12 | 完了 | guide capture と template preview の editor-only 表示を実装 |
+| Phase 13 | 完了 | object outline と page events bottom tab の v1.0 最小表示を実装 |
+| Phase 14 | 完了 | renderer 側 built-in effect に加え、base style preset loader / apply を実装 |
+| Phase 15 | 完了 | export UI、custom 編集、queue、transparent/composite 実行を接続 |
+| Phase 16 | 完了 | settings file roundtrip、portable dir 作成、autosave cadence、recovery prompt、preferences / cache manager / diagnostics を接続 |
+| Phase 17 | 完了 | README / manual / tutorials / `.docs/` / samples を現実へ同期 |
+| Phase 18 | 完了 | host build/test/export、Windows build 試行、final QA/docs review 反映を完了 |
 
 ## 4. 決定ログ
 
@@ -306,6 +306,21 @@
   - 変更ファイル: `crates/portable_fs/src/lib.rs`, `crates/app/Cargo.toml`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `progress.md`
   - 結果: host 上で build 可能な single-window GUI、preview canvas、object outline、page events、guide/template preview の最小縦断が揃った。
   - 次の一手: autosave/recovery、Google Fonts 実取得、export queue/engine、実 export 検証を進める。
+- 2026-04-05T07:10:00+09:00
+  - 実施内容: `presets_core` に family/profile accessors と base style preset loader を追加し、`portable_fs` に autosave interval と cache size / cleanup helper を追加、`app` lib に export snapshot builder を追加、`export` に direct execution API と HW try / software fallback を追加した。
+  - 変更ファイル: `crates/presets_core/src/lib.rs`, `crates/portable_fs/src/lib.rs`, `crates/app/src/lib.rs`, `crates/export/src/lib.rs`
+  - 結果: GUI が business rule を抱え込まずに export settings / snapshot / cache 管理へ接続できる下地が揃い、transparent/composite smoke export と fallback 判定 test を継続的に回せるようになった。
+  - 次の一手: export queue / preferences / cache manager / runtime diagnostics を GUI へ接続する。
+- 2026-04-05T08:20:00+09:00
+  - 実施内容: `app` binary に preferences、cache manager、runtime diagnostics、Google Fonts fetch/caching、export queue、custom profile 編集、built-in base style preset 適用 UI を追加し、`README.md`、`manual/`、`presets/style_presets/README.md` を日本語で現実へ合わせて更新した。
+  - 変更ファイル: `crates/app/src/main.rs`, `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`, `README.md`, `manual/*`, `presets/style_presets/*`, `progress.md`
+  - 結果: v1.0 の main window から設定・診断・cache cleanup・Google Fonts 管理・style preset・export job 実行まで完結する導線が整った。ユーザー文書と開発者文書も現在の UI へ追随した。
+  - 次の一手: workspace 全体 test、Windows build 試行、final QA/docs review を行う。
+- 2026-04-05T09:00:00+09:00
+  - 実施内容: final QA/docs review の指摘を反映し、`.docs/` を日本語へ統一、`samples/minimal_project.pauseink` を現行 schema へ更新、`portable_root_override` を settings schema / sample / manual から除去、`create -> save -> reopen -> compare` と `import -> annotate -> clear -> save` の smoke test を追加した。
+  - 変更ファイル: `.docs/*`, `samples/minimal_project.pauseink`, `samples/settings.example.json5`, `manual/developer_guide.md`, `crates/portable_fs/src/lib.rs`, `crates/project_io/src/lib.rs`, `crates/app/src/lib.rs`, `progress.md`
+  - 結果: docs / code / sample / tutorial の不整合を解消し、done criteria に必要な integration smoke と final QA 証跡が揃った。
+  - 次の一手: workspace 全体回帰、tutorial validation、Windows build 試行結果を report/progress に確定する。
 
 ## 6. 検証ログ
 
@@ -436,6 +451,22 @@
   - 結果: exit 0。`pauseink-portable-fs` 7 tests、`pauseink-renderer` 5 tests が通過。settings file roundtrip と renderer 角保持ケースを確認。
 - `cargo check -p pauseink-app --all-targets`
   - 結果: exit 0。single-window GUI を含む全 target が compile。`eframe::egui::Panel` 系の deprecation warning が 8 件残るが、動作を止めるものではない。
+- `cargo test -p pauseink-presets-core -p pauseink-portable-fs -p pauseink-app -p pauseink-export`
+  - 結果: exit 0。`pauseink-presets-core` 6 tests、`pauseink-portable-fs` 8 tests、`pauseink-app` 9 tests、`pauseink-export` 8 tests が通過。export snapshot、cache cleanup、family/profile filtering、transparent/composite export smoke を確認。
+- `cargo check -p pauseink-app --all-targets && cargo test -p pauseink-fonts`
+  - 結果: exit 0。GUI を含む app 全 target compile と `pauseink-fonts` 6 tests が通過。Google Fonts empty family graceful failure と cache presence helper を確認。
+- `cargo test -p pauseink-presets-core -p pauseink-app`
+  - 結果: exit 0。base style preset loader の repository load と、GUI 統合後の app regression が通過。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-domain` 15 tests、`pauseink-media` 12 tests、`pauseink-export` 8 tests、`pauseink-fonts` 6 tests、`pauseink-portable-fs` 8 tests、`pauseink-project-io` 4 tests、`pauseink-renderer` 5 tests、`pauseink-template-layout` 3 tests、`pauseink-ui` 1 test、`pauseink-app` 9 tests が通過。workspace 全体の回帰確認を完了。
+- `cargo test -p pauseink-fonts empty_google_font_family_is_rejected_before_network_access`
+  - 結果: exit 0。Google Fonts empty family graceful failure を個別再確認。
+- `cargo check --workspace --target x86_64-pc-windows-gnu`
+  - 結果: exit 101。`can't find crate for core`、`x86_64-pc-windows-gnu target may not be installed`。この Linux ホストでは Windows target std component 未導入が blocker。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。debug binary の生成まで完了。`eframe::egui::Panel` 系 deprecation warning 8 件あり。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set`。現ホストでは display server が無く、GUI 実表示起動は blocker。
 - `cargo test -p pauseink-domain -p pauseink-project-io -p pauseink-renderer`
   - 結果: exit 0。append stroke command、annotation sync、renderer clear/path trace/stabilization tests を含めて通過。
 - `cargo test -p pauseink-app`
@@ -454,6 +485,20 @@
   - 結果: host runtime では `webm`、`mp4`、`mov`、`avi`、`image2` muxer を確認。
 - `ffmpeg -hwaccels`
   - 結果: host runtime では `vdpau`、`cuda`、`vaapi`、`qsv`、`drm`、`opencl`、`vulkan` が列挙された。実使用可否は別途 runtime probe が必要。
+- `cargo test -p pauseink-project-io -p pauseink-app -p pauseink-portable-fs`
+  - 結果: exit 0。`pauseink-app` 11 tests、`pauseink-portable-fs` 8 tests、`pauseink-project-io` 5 tests が通過。`.pauseink` sample roundtrip、`create -> save -> reopen -> compare`、`import -> annotate -> clear -> save`、portable settings roundtrip を確認。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。開発者チュートリアル検証用の一時 export profile / style preset を `presets/` へ配置した状態で 8 tests が通過。repository loader が tutorial 手順どおりの追加ファイルを受理することを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。開発者チュートリアル検証用の一時 export profile / style preset を配置した状態でも app 全 target compile が通過。deprecation warning 8 件は継続。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-app` 11、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 6、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 5、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。transparent/composite export smoke、Google Fonts failure path、sample/tutorial 反映後の回帰確認を完了。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。`pauseink-app` debug build が 1m32s で完了。deprecation warning 8 件あり。
+- `cargo check --workspace --target x86_64-pc-windows-gnu`
+  - 結果: exit 101。`can't find crate for core`、`x86_64-pc-windows-gnu` target 未導入が blocker。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`WAYLAND_DISPLAY` / `DISPLAY` 不在のため headless host では GUI 実表示起動 smoke を実行できない。
 
 ## 7. 失敗と修正
 
@@ -465,6 +510,10 @@
   - 事象: `progress.md` と本レポートの一部に host `ffmpeg` / `ffprobe` 未配置という古い記述が残っていた。
   - 影響: host 検証 runtime と mainline sidecar 方針の区別が読み取りづらく、review 証跡として不正確。
   - 暫定対応: host の Ubuntu apt runtime 利用可能を明記しつつ、release packaging とは分離して扱う方針に統一した。
+- 2026-04-05T09:00:00+09:00
+  - 事象: final QA/docs review で、`progress.md` と本レポートの done/not-done 不整合、`portable_root_override` の doc/code mismatch、古い `.pauseink` sample、integration smoke / tutorial validation / Google Fonts 証跡不足が指摘された。
+  - 影響: `AGENTS.md` の完了条件に対して「done と言い切れない」状態だった。
+  - 対応: settings から `portable_root_override` を除去して env override のみに統一し、sample と `.docs/05` を現行 schema へ更新、必要な smoke test と tutorial validation を追加、`progress.md` / report / `.docs/` を同期した。
 
 ## 8. Sub-agent メモ
 
@@ -507,11 +556,29 @@
     - `main.rs` で扱う GUI 修正を最小に留め、session / persistence / renderer / media API を `app` lib 側で先に整える方針を維持
   - 見送った提案:
     - この段階で widget tree 全体を `ui` crate へ全面移送する。理由: 先に export/autosave 完成度を上げる方が done criteria への寄与が大きいため
+- Pass 3 — final QA/docs sanity review
+  - 目的: done criteria 直前で docs / code / tests / sample / tutorial / report の不整合を洗い切る。
+  - 要約:
+    - `progress.md` と本レポートの done/not-done が食い違っていた
+    - `portable_root_override` は docs と sample に存在したが、起動時には実際に使われていなかった
+    - `samples/minimal_project.pauseink` が旧 schema のままで、`.docs/05` と現行 loader/save と一致していなかった
+    - integration smoke、tutorial validation、Google Fonts graceful failure、export/profile 記録の証跡が弱かった
+  - 採用した変更:
+    - `portable_root_override` を settings schema / sample / manual から削除し、portable root override は環境変数のみに統一
+    - `samples/minimal_project.pauseink` と `.docs/05_project_file_format.md` を現行 schema へ更新し、sample roundtrip test を追加
+    - `create -> save -> reopen -> compare` と `import -> annotate -> clear -> save` の smoke test を `pauseink-app` に追加
+    - 開発者チュートリアル検証用の一時 profile / preset を実際に置いて loader / app compile を確認し、検証後に削除
+    - `.docs/` を日本語へ統一し、`progress.md` と本レポートを最終状態へ同期
+  - 見送った提案:
+    - settings file 起動時 override を新規実装する。理由: 起動順序を複雑化させるより、env override のみへ揃える方が portable-state ルールと実装実態に対して安全だった
 
 ## 9. Export / profile メモ
 
-- 公式ページの再確認は未実施。
-- YouTube / X / Instagram / Adobe の最終値は export 実装前に official source を見直して記録する。
+- 2026-04-05 に export profile の参照元を再確認した。
+- YouTube: `https://support.google.com/youtube/answer/1722171` を再確認。AAC-LC / Opus、48kHz、GOP はフレームレートの半分、SDR の推奨ビットレートは 720p が 5 / 7.5 Mbps、1080p が 8 / 12 Mbps、1440p が 16 / 24 Mbps、2160p が 35-45 / 53-68 Mbps で、現在の `youtube` profile はこの範囲に沿う。
+- X: `https://help.x.com/en/using-x/media-studio-faqs` を再確認。Media Studio の推奨は MP4 / MOV、H.264、AAC-LC、最大 60 FPS、推奨ビットレート 5-8 Mbps、推奨解像度 1280x720、最大 1920x1080 で、現在の `x` profile はこれに沿う。
+- Instagram: preset の `source_urls` に official/public URL は保持しているが、このホストからの自動取得では login / block の影響で数値の機械確認ができなかった。そのため `instagram` は引き続き safety-side の `app_authored` preset として扱い、public constraints だけを記録する。
+- Adobe Edit / Adobe Alpha は SNS 公開ガイドの追従ではなく、編集ワークフロー向けの app-authored preset として扱う。
 
 ## 10. パッケージング / ライセンスメモ
 
@@ -525,39 +592,46 @@
 
 ## 11. 開発者チュートリアル
 
-- 対象チュートリアル: 未確定
-- 実行 / 検証コマンド: 未実施
-- 結果: 未実施
+- 対象チュートリアル:
+  - `manual/tutorials/01_add_export_profile.md`
+  - `manual/tutorials/02_add_builtin_preset.md`
+- 実行 / 検証コマンド:
+  - `presets/export_profiles/tutorial_validation_profile.json5` を一時追加
+  - `presets/style_presets/tutorial_validation_preset.json5` を一時追加
+  - `cargo test -p pauseink-presets-core`
+  - `cargo check -p pauseink-app --all-targets`
+  - 一時追加ファイルを削除
+- 結果:
+  - export profile tutorial は、チュートリアルと同等の一時 profile file を `presets/export_profiles/` へ追加し、catalog loader がそのまま受理することを確認した
+  - built-in preset tutorial は、チュートリアルと同等の一時 style preset file を `presets/style_presets/` へ追加し、style preset loader と app compile が通ることを確認した
+  - GUI 上の目視確認は現ホストに display server が無いため未実施
 
 ## 12. 既知の問題 / 制約
 
-- 現在の repository は最小 scaffold のみで、実アプリ機能は未実装。
-- portable sidecar runtime が未配置のため、mainline packaging 前提の import/export 実検証はまだできない。
-- Windows cross-build 環境は未整備。
-- `.pauseink` parse/save は typed wrapper まで入ったが、metadata/media/settings/pages/presets はまだ generic JSON のまま。
-- typed project command は insert / z-order update までで、実 UI 操作との接続や削除/選択/batch edit はまだ未実装。
-- settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
-- Google Fonts は URL / cache path / CSS parser と GUI 上の一覧表示まではあるが、実ダウンロードと template への適用はまだ未接続。
-- media provider は import/playback foundation と app/ui status skeleton まで実装済みだが、実 frame access と GUI preview は未実装。
-- frame access、実 preview 更新、free ink capture、transport GUI 接続は実装済みだが、thumbnails/probe cache と autosave/recovery は未実装。
-- `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
-- export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
-- autosave cadence と recovery prompt の最小線は入ったが、複数 autosave slot、復旧差分表示、cache manager UI はまだ未実装。
-- GUI は `eframe/egui 0.34.1` の API に合わせて build しているが、現時点では `Panel::*` の deprecation warning が残っている。動作には影響しないが、後続で `show_inside` / `default_size` へ揃える余地がある。
-- 現ホストには `xvfb-run` が無いため、headless の GUI 起動 smoke はまだ取れていない。GUI の build は通っているが、表示付き起動確認は後続で実施する。
+- portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
+- Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
+- `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
+- selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
+- built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。
+- Google Fonts は configured family 管理、portable cache、fetch、graceful failure まで実装済みだが、download 済み font binary を template preview へ厳密反映する部分は今後の改善余地がある。
+- thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
+- autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。
+- `.pauseink` save は comment 保持を行わず canonical JSON へ正規化する。
+- GUI は `eframe/egui 0.34.1` の API に合わせて build しているが、`Panel::*` 系 deprecation warning が残っている。
+- 現ホストには `xvfb-run` が無く、`DISPLAY` / `WAYLAND_DISPLAY` も無いため GUI 実表示起動 smoke は未実施。
 
 ## 13. 最終受け入れチェックリスト
 
-- [ ] Host build passes
-- [ ] Core tests pass
-- [ ] Save/load works
-- [ ] Manual clear works
-- [ ] Composite export validated
-- [ ] Transparent export validated
-- [ ] Portable-state rule validated
-- [ ] Google Fonts graceful-failure behavior validated
-- [ ] Export-profile computation validated
-- [ ] Developer tutorial sample validated
-- [ ] Windows build attempted and documented
-- [ ] Manuals updated
-- [ ] `progress.md` updated
+- [x] Host build passes
+- [x] Core tests pass
+- [x] Save/load works
+- [x] Manual clear works
+- [x] Composite export validated
+- [x] Transparent export validated
+- [x] Portable-state rule validated
+- [x] Google Fonts graceful-failure behavior validated
+- [x] Export-profile computation validated
+- [x] Developer tutorial sample validated
+- [x] Windows build attempted and documented
+- [x] Manuals updated
+- [x] `progress.md` updated

@@ -1,49 +1,49 @@
-# Project file format
+# プロジェクトファイル形式
 
-## 1. Extension and encoding
+## 1. 拡張子と encoding
 
-- extension: `.pauseink`
+- 拡張子: `.pauseink`
 - encoding: UTF-8 text
 
-## 2. Syntax target
+## 2. 構文の前提
 
-The project format is JSON5-style text:
+project 形式は JSON5 風テキストです。
 
-- comments accepted on load
-- trailing commas accepted on load
-- unquoted keys may be accepted if the chosen parser supports them
-- normalized save produces stable canonical formatting
+- load 時にコメントを受け付ける
+- load 時に trailing comma を受け付ける
+- 選んだ parser が対応していれば、unquoted key も許容してよい
+- 正規化された save は安定した canonical formatting を出す
 
-## 3. Guiding principles
+## 3. 基本方針
 
-- human-readable
-- human-editable
-- tolerant on load
-- predictable on save
-- preserve unknown fields where practical
+- 人間が読める
+- 人間が編集できる
+- load 時は寛容
+- save 時は予測可能
+- 可能な範囲で未知フィールドを保持する
 
-## 4. Save normalization goals
+## 4. Save 正規化の目標
 
-On save:
+save 時には次を行います。
 
-- sort or stabilize fields in a documented order
-- normalize numeric formatting where appropriate
-- remove transient runtime-only state
-- keep comments only if the chosen preservation model supports them; otherwise document the limitation honestly
-- produce deterministic output
+- フィールドを文書化された順序にそろえる、または安定化する
+- 必要に応じて数値表現を正規化する
+- 一時的な runtime-only state を取り除く
+- コメント保持に対応した保存モデルなら残し、そうでなければ制約を明記する
+- 決定的な output を出す
 
-## 5. Unknown fields
+## 5. 未知フィールド
 
-Unknown field preservation is desirable.
+未知フィールドの保持は望ましいです。
 
-Minimum requirement:
+最低要件は次の通りです。
 
-- do not crash on unknown fields
-- keep unknown fields in memory when practical
-- write them back if feasible
-- if some unknown fields cannot be preserved, document the exact limitation
+- 未知フィールドで crash しない
+- 可能なら memory 上に保持する
+- できるなら書き戻す
+- 保持できない未知フィールドがあるなら、その制約を正確に記録する
 
-## 6. Top-level shape (target)
+## 6. 現行 top-level shape
 
 ```json
 {
@@ -53,30 +53,35 @@ Minimum requirement:
     "media": {},
     "settings": {},
     "pages": [],
-    "objects": [],
+    "strokes": [],
+    "objects": [
+      {
+        "id": "object_0001",
+        "stroke_ids": ["stroke_0001"]
+      }
+    ],
     "groups": [],
     "clear_events": [],
-    "presets": {},
-    "unknown": {}
+    "presets": {}
   }
 }
 ```
 
-This is illustrative, not final locked syntax.
+これは例示であり、最終固定の syntax そのものではありません。
 
-## 7. Autosave/recovery
+## 7. Autosave / recovery
 
-Autosaves are separate files under the portable root and must not overwrite the main project path without explicit save.
+autosave は portable root 配下の別ファイルとして扱い、明示的な save がない限り main project path を上書きしてはいけません。
 
 ## 8. Settings
 
-Settings are separate from project data and stored under portable config.  
-Project-specific settings that affect reproducibility belong in the project file.
+settings は project data とは別で、portable config に保存します。  
+再現性に関わる project-specific settings は project file 側に置きます。
 
 ## 9. History depth
 
-The runtime settings file must contain a configurable bounded history depth, default 256.
+runtime settings file には、設定可能な bounded history depth を含めなければなりません。既定値は 256 です。
 
-## 10. Example file
+## 10. 例
 
-See `samples/minimal_project.pauseink`.
+`samples/minimal_project.pauseink` を参照してください。

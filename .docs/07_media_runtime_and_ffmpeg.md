@@ -1,10 +1,10 @@
-# Media runtime, FFmpeg provider, and codec policy
+# メディア runtime、FFmpeg provider、codec policy
 
-## 1. Mainline runtime strategy
+## 1. mainline のランタイム方針
 
-v1.0 mainline uses a **portable sidecar runtime**.
+v1.0 の mainline は **portable sidecar runtime** を使います。
 
-Expected layout concept:
+想定する配置は次のようなものです。
 
 ```text
 pauseink_data/
@@ -16,119 +16,119 @@ pauseink_data/
         manifest.json
 ```
 
-Alternative development-time repository-local layout is acceptable if documented.
+repository-local な development-time layout も、明記されているなら許容します。
 
-## 2. Why not in-app first-run downloader as the mainline
+## 2. なぜ first-run 自動ダウンロードを mainline にしないのか
 
-Do not make the mainline app depend on automatic FFmpeg binary download on first run.
+mainline のアプリを、初回起動時の FFmpeg バイナリ自動ダウンロードに依存させてはいけません。
 
-Reasons:
+理由は次の通りです。
 
-- provenance/compliance concerns
-- unreliable third-party binary sourcing
-- harder offline behavior
-- harder test reproducibility
-- more moving parts in the most failure-prone path
+- provenance / compliance の懸念
+- third-party binary の入手元が不安定
+- オフライン時の挙動が難しくなる
+- テスト再現性が下がる
+- 最も失敗しやすい経路に複雑さが増える
 
-Helper tooling may be added later, but it should not be the critical path in v1.0.
+補助ツールを後で追加することはできますが、v1.0 の critical path にしてはいけません。
 
-## 3. Capability-based behavior
+## 3. capability ベースの挙動
 
-The app must discover runtime capabilities at execution time, including:
+アプリは実行時に runtime capability を発見しなければなりません。対象は次の通りです。
 
-- available decoders
-- available encoders
-- available muxers
-- available pixel formats
-- possible hardware acceleration support
+- 利用可能な decoder
+- 利用可能な encoder
+- 利用可能な muxer
+- 利用可能な pixel format
+- hardware acceleration の可能性
 
-Do not hard-code broad assumptions from container extension alone.
+container extension だけで広い前提を hard-code しないでください。
 
-## 4. Import stance
+## 4. import の考え方
 
-Import support is intentionally broader than export-family support.
+import の対応範囲は、export family より広くて構いません。
 
-The app may attempt to import any file the active runtime can probe/decode.
+アプリは、active runtime が probe / decode できるファイルを import してよいです。
 
-At import time, classify the media as:
+import 時には media を次のように分類します。
 
 - supported
 - supported with caveats
 - unsupported
 
-Possible caveat examples:
+考えうる caveat の例は次の通りです。
 
 - variable frame rate
-- unsupported alpha
-- unusual timebase
-- codec readable but not efficiently seekable
+- alpha 非対応
+- 特殊な timebase
+- decode はできるが seek が非効率
 
-## 5. GPU / media acceleration stance
+## 5. GPU / media acceleration の考え方
 
-Media acceleration is optional and separately configurable from UI preview GPU use.
+media acceleration は任意機能であり、UI preview の GPU 利用とは別に設定可能にします。
 
-Preferred algorithm:
+推奨アルゴリズムは次の通りです。
 
-1. if media HW acceleration is enabled and plausible, try it
-2. if not possible or it fails, fall back to software
-3. keep the app working
+1. media HW acceleration が有効で、かつ可能そうなら試す
+2. 無理なら、または失敗したら software に落とす
+3. アプリ自体は動き続ける
 
-Never fail the whole product just because hardware acceleration is missing.
+hardware acceleration がないだけで、製品全体を失敗にしてはいけません。
 
-## 6. Main built-in export families
+## 6. 主な組み込み export family
 
-Mainline built-ins:
+mainline の組み込みは次の通りです。
 
 - WebM / VP9 / Opus
 - WebM / AV1 / Opus
-- MP4 / AV1 / AAC-LC (Advanced)
+- MP4 / AV1 / AAC-LC（Advanced）
 - MOV / ProRes 422 HQ / PCM
 - MOV / ProRes 4444 / PCM
 - PNG Sequence / RGBA
-- AVI / MJPEG / PCM (Legacy rescue)
+- AVI / MJPEG / PCM（Legacy rescue）
 
-## 7. Optional codec-pack territory
+## 7. optional codec-pack 領域
 
-These are intentionally treated as optional/future codec-pack territory:
+次のものは、意図的に optional / future codec-pack 領域として扱います。
 
 - H.264 encode
 - HEVC encode
 
-Reasons:
+理由は次の通りです。
 
-- licensing/patent/compliance complexity
-- desire to keep the core app MIT-friendly
-- desire to avoid forcing GPL-only FFmpeg builds into the mainline assumption
+- licensing / patent / compliance が複雑
+- core app を MIT-friendly に保ちたい
+- GPL-only の FFmpeg build を mainline 前提にしたくない
 
-## 8. H.264 / HEVC import note
+## 8. H.264 / HEVC import の注意
 
-The user explicitly asked whether reading H.264 material can also raise licensing concerns.
+利用者は、H.264 素材を読むことにも licensing の懸念があるのか、という点を明示的に気にしています。
 
-Design consequence:
+設計上の結論は次の通りです。
 
-- keep codec runtime policy separate from app license policy
-- keep media provider and packaging decisions well documented
-- do not present H.264 ingest as legally “free of concern” in docs
-- state clearly that release packaging may require separate legal review
+- codec runtime policy と app license policy を分ける
+- media provider と packaging の判断を十分に文書化する
+- H.264 ingest を docs 上で「法的に心配不要」とは書かない
+- release packaging には別の legal review が必要になりうると明記する
 
-## 9. Adobe-focused deliverables
+## 9. Adobe 寄りの成果物
 
-For Adobe interoperability, v1.0 must include:
+Adobe との相互運用のため、v1.0 には次を含めます。
 
 - MOV / ProRes 422 HQ / PCM
 - MOV / ProRes 4444 / PCM
 - PNG Sequence / RGBA
 
-These are the safest declared editing/intermediate outputs for Adobe-centric workflows.
+これらは、Adobe 中心のワークフローで最も安全な編集 / intermediate 出力です。
 
 ## 10. Logging
 
-Every export should log:
+すべての export では次を log します。
 
-- chosen export family
-- chosen distribution profile
-- computed concrete bitrates/settings
+- 選ばれた export family
+- 選ばれた distribution profile
+- 計算された具体的 bitrate / settings
 - runtime path
-- whether hardware path was attempted
-- whether fallback occurred
-- provider stderr/stdout summaries if useful
+- hardware path を試したかどうか
+- fallback が起きたかどうか
+- 必要に応じた provider の stderr / stdout 要約

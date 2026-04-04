@@ -1,82 +1,82 @@
-# Stroke processing, stabilization, and future taper
+# ストローク処理、stabilization、将来の taper
 
-## 1. v1.0 requirements
+## 1. v1.0 の要件
 
-- no pen pressure pipeline
-- yes to user-adjustable stabilization
-- raw samples must be preserved
-- render path must be derived
-- corners must survive reasonably well
-- implementation must remain compatible with future pressure/taper work
+- ペン圧 pipeline は持たない
+- 利用者が調整できる stabilization は持つ
+- raw sample は保持する
+- render path は派生させる
+- corner はできるだけ残す
+- 将来の pressure / taper 作業と両立できる実装にする
 
-## 2. Recommended v1.0 stabilization design
+## 2. v1.0 に推奨する stabilization 設計
 
-### 2.1 Input storage
+### 2.1 入力の保存
 
-Store raw points with timestamps.
+raw point は timestamp 付きで保存します。
 
-### 2.2 Derived path
+### 2.2 派生 path
 
-Generate a stabilized path from raw points using:
+raw point から stabilization 済み path を生成する際は、次のような手法を使います。
 
-- adaptive One Euro style filtering or equivalent
-- corner/curvature guard to reduce smoothing near sharp turns
-- optional streamline/resampling pass for mesh/path generation
+- adaptive One Euro 風フィルタ、または同等の方法
+- 急カーブ付近で smoothing を弱める corner / curvature guard
+- mesh / path 生成向けの streamline / resampling の任意ステップ
 
 ### 2.3 UI
 
-Single numeric control in v1.0:
+v1.0 の UI は 1 つの数値コントロールで足ります。
 
-- `Stroke stabilization strength` (e.g. 0–100)
+- `Stroke stabilization strength`（例: 0–100）
 
-Implementation may internally map this to:
+実装内部では次のような値に対応付けても構いません。
 
 - min cutoff
-- beta/adaptation strength
+- beta / adaptation strength
 - resampling tolerance
 - corner guard threshold
 
-## 3. Why not plain heavy smoothing
+## 3. なぜ単純な強い smoothing ではだめか
 
-A simple heavy low-pass filter:
+強い単純 low-pass filter には次の問題があります。
 
-- kills corners
-- makes kana/kanji structure mushy
-- creates lag at faster movements
-- makes handwriting feel “rubbery”
+- corner を潰す
+- かな / 漢字の構造が曖昧になる
+- 速い動きで遅れが見える
+- 手書きが「ゴムっぽく」なる
 
-So v1.0 should not use a naive fixed smoothing pass alone.
+そのため v1.0 では、雑な固定 smoothing だけに頼るべきではありません。
 
-## 4. Future automatic taper / pseudo-pressure
+## 4. 将来の自動 taper / pseudo-pressure
 
-A future “Auto taper” checkbox is explicitly planned.
+将来の `Auto taper` チェックボックスは、明示的に予定されています。
 
-Recommended future signal mix:
+推奨する将来の signal は次の通りです。
 
-- start taper based on distance from stroke start
-- end taper based on distance to stroke end
-- synthetic pressure influenced by speed
-- curvature/corner protection so corners do not collapse
-- optional post-corner recovery
+- stroke 開始からの距離に基づく start taper
+- stroke 終端までの距離に基づく end taper
+- speed の影響を受ける synthetic pressure
+- corner が潰れないようにする curvature / corner 保護
+- 任意の post-corner recovery
 
-### 4.1 Important conclusion
+### 4.1 重要な結論
 
-“Distance since the last big curve” alone is **not enough**.  
-Use it only as a supporting signal, not the main signal.
+「最後の大きなカーブからどれだけ進んだか」だけでは **不十分** です。  
+これは主 signal ではなく、補助 signal としてだけ使います。
 
-### 4.2 Better heuristic mix
+### 4.2 より良い heuristic の組み合わせ
 
-Preferred future heuristic:
+将来の推奨 heuristic は次の通りです。
 
 - speed
-- normalized path progress
-- local curvature
-- start/end proximity
+- 正規化された path 進行度
+- 局所 curvature
+- 開始 / 終端への近さ
 
-## 5. Useful prior art to study during implementation
+## 5. 実装時に参照するとよい先行例
 
 - One Euro Filter
 - Google Ink Stroke Modeler
 - perfect-freehand
 
-Codex should note in the implementation report which parts influenced the final v1.0 implementation.
+Codex は、最終的な v1.0 実装にどの先行例が影響したかを implementation report に記録してください。
