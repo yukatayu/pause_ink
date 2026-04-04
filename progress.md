@@ -16,6 +16,7 @@
   - `MediaTime`、portable root、family/profile 二層 schema の初期実装とテストを追加
   - `.pauseink` の lenient load / canonical save / unknown field 保持の最小実装とテストを追加
   - generic command history と bounded undo/redo の基礎実装を追加
+  - portable settings と env override の最小実装を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - ホスト環境に `ffmpeg` / `ffprobe` が未配置
@@ -47,6 +48,6 @@
 
 ## 次の具体的な一手
 
-1. settings 永続化と env override 実利用の failing test を追加する。
-2. portable config 保存と履歴深さ設定を実装する。
-3. その後 local font / Google Fonts 基盤へ進む。
+1. local font / Google Fonts 基盤の failing test を追加する。
+2. font catalog と graceful failure の最小実装に着手する。
+3. その後 template layout / guide geometry へ進む。

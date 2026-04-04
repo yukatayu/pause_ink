@@ -3,3 +3,9 @@ name = "pauseink-portable-fs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+json5 = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

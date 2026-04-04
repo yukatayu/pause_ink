@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: Phase 5 の generic command history まで実装。次は settings 永続化と env override 実利用。
-- 現在のフェーズ: Phase 5 実行中。
+- 現在の状態: portable settings と env override の最小版まで実装。次は fonts 基盤。
+- 現在のフェーズ: Phase 7 着手準備中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -30,7 +30,7 @@
 | Phase 1 | 完了 | workspace 拡張、logging 初期化、基礎 crate 境界を反映 |
 | Phase 2 | 実行中 | `MediaTime` と clear 境界 semantics を最小実装 |
 | Phase 3 | 実行中 | `.pauseink` schema / lenient load / canonical save / unknown field 保持の最小版を実装 |
-| Phase 4 | 実行中 | portable root と主要ディレクトリ解決を最小実装 |
+| Phase 4 | 実行中 | portable root / env override / settings.json5 の最小実装を完了 |
 | Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
 | Phase 6 | 未着手 | |
 | Phase 7 | 未着手 | |
@@ -88,6 +88,11 @@
   - 検討した代替案: 最初から `ProjectCommand` enum を作って history を密結合にする。
   - 理由: grouped command、redo invalidation、bounded history を先に検証しつつ、後から domain command を載せ替えやすくするため。
   - 影響: UI / domain の実編集操作は後続でこの generic history に乗せる。
+- 2026-04-05T01:20:00+09:00
+  - 決定: settings は `settings.json5` を lenient load / canonical JSON save で扱い、既定値は sample に合わせて `history_depth=256`、GPU preview / media HW accel は有効、Google Fonts は有効とする。
+  - 検討した代替案: settings 保存を後回しにして app 起動時のハードコード設定だけで進める。
+  - 理由: portable-state ルールと履歴深さ設定を早い段階で実コードに落とし込むため。
+  - 影響: fonts / UI / export は以後この settings 構造を参照できる。
 
 ## 5. 作業ログ
 
@@ -136,6 +141,11 @@
   - 変更ファイル: `crates/domain/Cargo.toml`, `crates/domain/src/history.rs`, `crates/domain/src/lib.rs`
   - 結果: bounded history、redo invalidation、grouped command undo の基礎がテストで固定された。
   - 次の一手: settings 永続化と env override 実利用へ広げる。
+- 2026-04-05T01:20:00+09:00
+  - 実施内容: portable settings と env override の failing test を追加し、`Settings` と `settings.json5` 保存基盤を実装。
+  - 変更ファイル: `crates/portable_fs/Cargo.toml`, `crates/portable_fs/src/lib.rs`
+  - 結果: env override 付き root 解決、settings ファイル位置、既定値 roundtrip をテストで固定した。
+  - 次の一手: local fonts / Google Fonts catalog と graceful failure を実装する。
 
 ## 6. 検証ログ
 
@@ -185,6 +195,12 @@
   - 結果: exit 0。4 tests passed。
 - `cargo test --workspace`
   - 結果: exit 0。generic history 追加後の回帰確認を完了。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 101。`from_override_or_executable_dir` / `Settings` / settings load-save API 未定義で red。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。portable settings 追加後の回帰確認を完了。
 
 ## 7. 失敗と修正
 
@@ -234,6 +250,7 @@
 - Windows cross-build 環境は未整備。
 - `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
 - command history は generic 基盤のみ実装済みで、実 project editing command はまだ未接続。
+- settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 
 ## 13. 最終受け入れチェックリスト
