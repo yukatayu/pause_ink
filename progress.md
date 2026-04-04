@@ -27,12 +27,18 @@
   - `samples/minimal_project.pauseink` を現行 `.pauseink` schema へ更新
   - integration / smoke として `create -> save -> reopen -> compare`、`import -> annotate -> clear -> save` を追加し通過
   - tutorial validation を一時 preset/profile 追加で実施し、loader / app compile を通過
+  - `.github/workflows/ci.yml` を追加し、`main` push と `pull_request` で `cargo check` / `cargo test --workspace` を走らせる構成を追加
+  - `.github/workflows/release.yml` を追加し、tag push または tag 付き commit の `main` 流入時に Linux / macOS / Windows build を作って GitHub Release へ添付する構成を追加
+  - `scripts/package_release_asset.py` を追加し、release asset の archive 化を workflow から再利用できる形にした
+  - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
   - `cargo test --workspace` を通過
   - `cargo build -p pauseink-app` を通過
+  - `cargo build --release -p pauseink-app` を通過
   - `cargo check --workspace --target x86_64-pc-windows-gnu` は target 未導入で失敗し、blocker を記録
   - `timeout 5s ./target/debug/pauseink-app` は display server 不在で失敗し、headless host 制約として記録
 - 現在の未解決制約:
   - release 用 portable sidecar runtime の同梱 / provenance 整備は未着手
+  - GitHub Release workflow が生成する成果物は現時点では app binary archive で、FFmpeg sidecar 同梱はまだ含まれない
   - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
   - style preset は base style 適用中心で、entrance / clear / combo の UI binding は今後拡張余地がある
   - headless host では GUI 実表示 smoke を実行できない

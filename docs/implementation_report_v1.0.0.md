@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期まで完了した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo build -p pauseink-app`
@@ -13,7 +13,7 @@
 
 ## 2. 環境
 
-- 日時: 2026-04-05T03:07:34+09:00
+- 日時: 2026-04-05T07:48:03+09:00
 - ホスト OS: Linux yukatayu-agent 6.8.0-106-generic x86_64 GNU/Linux
 - シェル: `bash`
 - Rust toolchain: `stable-x86_64-unknown-linux-gnu` / `rustc 1.93.0` / `cargo 1.93.0`
@@ -321,6 +321,11 @@
   - 変更ファイル: `.docs/*`, `samples/minimal_project.pauseink`, `samples/settings.example.json5`, `manual/developer_guide.md`, `crates/portable_fs/src/lib.rs`, `crates/project_io/src/lib.rs`, `crates/app/src/lib.rs`, `progress.md`
   - 結果: docs / code / sample / tutorial の不整合を解消し、done criteria に必要な integration smoke と final QA 証跡が揃った。
   - 次の一手: workspace 全体回帰、tutorial validation、Windows build 試行結果を report/progress に確定する。
+- 2026-04-05T07:48:03+09:00
+  - 実施内容: `.github/workflows/ci.yml` と `.github/workflows/release.yml`、`scripts/package_release_asset.py` を追加し、`main` push / PR CI と、tag push または tag 付き commit の `main` 流入時 release build を実装した。review 指摘を受け、release workflow は `main` push 側でも未 release の tag を拾うようにし、workflow 全体を直列化、既存 release は 3 OS 分の asset 完全性で判定、packager は staging directory を毎回掃除して archive 後に削除するよう修正した。
+  - 変更ファイル: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/package_release_asset.py`, `manual/developer_guide.md`, `progress.md`
+  - 結果: `main` の全 commit と PR に対する test 導線、および Linux / macOS / Windows release build を GitHub Release へ添付する導線が repository に入った。現 release asset は binary archive までで、FFmpeg sidecar bundling は別タスクとして残る。
+  - 次の一手: workflow 構文とローカル packaging を検証し、実装レポートへ記録する。
 
 ## 6. 検証ログ
 
@@ -499,6 +504,24 @@
   - 結果: exit 101。`can't find crate for core`、`x86_64-pc-windows-gnu` target 未導入が blocker。
 - `timeout 5s ./target/debug/pauseink-app`
   - 結果: exit 1。`WAYLAND_DISPLAY` / `DISPLAY` 不在のため headless host では GUI 実表示起動 smoke を実行できない。
+- `python3 - <<'PY' ... yaml.safe_load('.github/workflows/*.yml') ... PY`
+  - 結果: exit 0。review 指摘反映後の `.github/workflows/ci.yml` と `.github/workflows/release.yml` の YAML 構文が通ることを確認。
+- `python3 -m py_compile scripts/package_release_asset.py`
+  - 結果: exit 0。release packager script の構文が通ることを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。CI workflow が呼ぶ compile step を再確認。deprecation warning 8 件は継続。
+- `cargo test --workspace`
+  - 結果: exit 0。CI workflow が呼ぶ workspace test を再確認。`pauseink-app` 11、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 6、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 5、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。
+- `cargo build --release -p pauseink-app`
+  - 結果: exit 0。release workflow が呼ぶ optimized build をローカルで再確認。`pauseink-app` release binary を生成できた。
+- `python3 scripts/package_release_asset.py --binary target/release/pauseink-app --platform linux-x86_64 --version v0.1.0-test --format tar.gz --output-dir /tmp/pauseink-ci-packaging`
+  - 結果: exit 0。`pauseink-v0.1.0-test-linux-x86_64.tar.gz` を生成。
+- `python3 scripts/package_release_asset.py --binary target/release/pauseink-app --platform windows-x86_64 --version release/test --format zip --output-dir /tmp/pauseink-ci-packaging`
+  - 結果: exit 0。tag 名の `/` が `-` に正規化され、`pauseink-release-test-windows-x86_64.zip` を生成。連続実行後も staging directory が残らないことを確認。
+- `tar -tzf /tmp/pauseink-ci-packaging/pauseink-v0.1.0-test-linux-x86_64.tar.gz`
+  - 結果: exit 0。archive 内に `README.md` と `pauseink-app` が入っていることを確認。
+- `python3 - <<'PY' ... zipfile.ZipFile('/tmp/pauseink-ci-packaging/pauseink-release-test-windows-x86_64.zip') ... PY`
+  - 結果: exit 0。zip archive 内に `README.md` と `pauseink-app` が入っていることを確認。これは Linux 上で packager の zip 出力を検証したもので、Windows binary 自体は GitHub Actions matrix build に委ねる。
 
 ## 7. 失敗と修正
 
@@ -609,6 +632,7 @@
 ## 12. 既知の問題 / 制約
 
 - portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
+- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive と `README.md` までで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
 - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
