@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 24% 前後。Phase 6 と Phase 9 の土台を一段進め、次は export concrete settings 計算へ進む
-- 現在の即時マイルストーン: `export` crate に bucket 解決付き concrete settings 計算を実装し、family/profile/runtime capability 判定へ繋ぐ
+- 全体状態: 全体で概算 28% 前後。Phase 15 の基礎計算まで着手し、次は Phase 2 の domain model 拡充へ戻る
+- 現在の即時マイルストーン: stroke / glyph object / group / style snapshot を domain に追加し、project format と undo に繋げる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -25,6 +25,7 @@
   - sidecar/system runtime discovery と host `ffprobe` smoke test を追加
   - built-in export family catalog、profile loader、`settings_buckets` schema を追加
   - `presets/export_profiles/` を stable schema と日本語説明へ更新
+  - `export` crate に bucket 解決付き concrete settings 計算と capability 判定を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -49,13 +50,13 @@
 | Phase 12 | 未着手 | 0% | guide system | 非 export を保証 |
 | Phase 13 | 未着手 | 0% | outline / groups / page events | run 表示を分離 |
 | Phase 14 | 未着手 | 0% | style / entrance / clear effects | built-in effects のみ |
-| Phase 15 | 未着手 | 0% | export UI と export engine | CPU-safe baseline を優先 |
+| Phase 15 | 実行中 | 20% | export UI と export engine | bucket 解決と capability 判定の基礎を追加 |
 | Phase 16 | 未着手 | 0% | preferences / cache manager / recovery | autosave と復旧を検証 |
 | Phase 17 | 未着手 | 0% | README / manuals / tutorials / polish | 全文書を日本語へ統一 |
 | Phase 18 | 未着手 | 0% | 最終 build / test / export / Windows build 試行 | done criteria を満たすまで終了しない |
 
 ## 次の具体的な一手
 
-1. `export` crate に concrete settings 計算と bucket 解決ロジックを追加する。
-2. family/profile/runtime capability の整合チェックを追加する。
-3. export request / snapshot 境界を固めて playback foundation へ進む。
+1. stroke / glyph object / group / style snapshot の domain model を追加する。
+2. `.pauseink` schema を domain model に合わせて広げる。
+3. project command と undo/redo の接続点を作る。
