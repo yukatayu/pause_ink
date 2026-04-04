@@ -218,16 +218,14 @@ mod tests {
     #[test]
     fn clear_boundary_belongs_to_next_page_even_with_mixed_time_bases() {
         let ntsc_tick = TimeBase::new(1, 30_000);
-        let clears = vec![
-            ClearEvent {
-                id: ClearEventId::new("clear-1"),
-                time: MediaTime::new(1001, ntsc_tick),
-                kind: ClearKind::Instant,
-                duration: MediaDuration::from_millis(0),
-                granularity: ClearTargetGranularity::AllParallel,
-                ordering: ClearOrdering::Parallel,
-            },
-        ];
+        let clears = vec![ClearEvent {
+            id: ClearEventId::new("clear-1"),
+            time: MediaTime::new(1001, ntsc_tick),
+            kind: ClearKind::Instant,
+            duration: MediaDuration::from_millis(0),
+            granularity: ClearTargetGranularity::AllParallel,
+            ordering: ClearOrdering::Parallel,
+        }];
 
         let just_before = MediaTime::new(1000, ntsc_tick);
         let exactly_on_clear = MediaTime::new(1, TimeBase::new(1001, 30_000));
@@ -323,7 +321,10 @@ mod tests {
 
         assert_eq!(stroke.raw_samples[0], raw_sample);
         assert_eq!(stroke.stabilized_samples[0], stabilized_sample);
-        assert_ne!(stroke.raw_samples[0].position, stroke.stabilized_samples[0].position);
+        assert_ne!(
+            stroke.raw_samples[0].position,
+            stroke.stabilized_samples[0].position
+        );
         assert_eq!(stroke.derived_path.points.len(), 1);
     }
 
@@ -516,7 +517,10 @@ mod tests {
 
         assert!(history.undo(&mut project).expect("undo should succeed"));
         assert_eq!(project.strokes.len(), 1);
-        assert_eq!(project.glyph_objects[0].stroke_ids, vec![StrokeId::new("stroke-1")]);
+        assert_eq!(
+            project.glyph_objects[0].stroke_ids,
+            vec![StrokeId::new("stroke-1")]
+        );
     }
 
     #[test]
@@ -554,7 +558,10 @@ mod tests {
 
         assert_eq!(project.groups.len(), 1);
         assert_eq!(project.clear_events.len(), 1);
-        assert_eq!(page_index_for_time(&project.clear_events, MediaTime::from_millis(600)), 1);
+        assert_eq!(
+            page_index_for_time(&project.clear_events, MediaTime::from_millis(600)),
+            1
+        );
     }
 
     #[test]

@@ -80,6 +80,14 @@ pub struct DistributionProfile {
     pub settings_buckets: BTreeMap<String, ConcreteExportSettingsTemplate>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct BaseStylePreset {
+    pub id: String,
+    pub display_name: String,
+    pub thickness: Option<f32>,
+    pub color_rgba: Option<[u8; 4]>,
+}
+
 impl DistributionProfile {
     pub fn is_compatible_with(&self, family_id: &str) -> bool {
         match &self.compatibility {
@@ -141,10 +149,21 @@ impl ExportCatalog {
         Ok(ResolvedExportSelection { family, profile })
     }
 
+    pub fn family(&self, family_id: &str) -> Option<&ExportFamily> {
+        self.families.get(family_id)
+    }
+
     pub fn families_for_tier(&self, runtime_tier: RuntimeTier) -> Vec<&ExportFamily> {
         self.families
             .values()
             .filter(|family| family.runtime_tier == runtime_tier)
+            .collect()
+    }
+
+    pub fn profiles_for_family(&self, family_id: &str) -> Vec<&DistributionProfile> {
+        self.profiles
+            .values()
+            .filter(|profile| profile.is_compatible_with(family_id))
             .collect()
     }
 
@@ -169,7 +188,10 @@ pub enum ResolveError {
     #[error("unknown distribution profile: {0}")]
     UnknownProfile(String),
     #[error("incompatible family/profile selection: {family_id} x {profile_id}")]
-    IncompatibleSelection { family_id: String, profile_id: String },
+    IncompatibleSelection {
+        family_id: String,
+        profile_id: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -177,10 +199,7 @@ pub enum ProfileLoadError {
     #[error("profile read failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("profile parse failed in {path}: {source}")]
-    Parse {
-        path: PathBuf,
-        source: json5::Error,
-    },
+    Parse { path: PathBuf, source: json5::Error },
     #[error("invalid profile compatibility in {path}: {value}")]
     InvalidCompatibility { path: PathBuf, value: String },
     #[error("invalid bitrate in {path} for bucket {bucket}: {mbps}")]
@@ -191,6 +210,14 @@ pub enum ProfileLoadError {
     },
     #[error("duplicate profile id: {0}")]
     DuplicateProfileId(String),
+}
+
+#[derive(Debug, Error)]
+pub enum StylePresetLoadError {
+    #[error("style preset read failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("style preset parse failed in {path}: {source}")]
+    Parse { path: PathBuf, source: json5::Error },
 }
 
 pub fn built_in_export_families() -> Vec<ExportFamily> {
@@ -354,6 +381,34 @@ pub fn load_distribution_profile_from_path(
     load_distribution_profile_from_str_with_path(&raw, path)
 }
 
+pub fn load_base_style_presets_from_dir(
+    preset_dir: &Path,
+) -> Result<Vec<BaseStylePreset>, StylePresetLoadError> {
+    let mut paths = fs::read_dir(preset_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut presets = Vec::new();
+    for path in paths {
+        presets.push(load_base_style_preset_from_path(&path)?);
+    }
+    Ok(presets)
+}
+
+pub fn load_base_style_preset_from_path(
+    path: &Path,
+) -> Result<BaseStylePreset, StylePresetLoadError> {
+    let raw = fs::read_to_string(path)?;
+    let file: BaseStylePresetFile =
+        json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file.into_preset())
+}
+
 pub fn load_distribution_profile_from_str(
     raw: &str,
 ) -> Result<DistributionProfile, ProfileLoadError> {
@@ -364,12 +419,11 @@ fn load_distribution_profile_from_str_with_path(
     raw: &str,
     path: &Path,
 ) -> Result<DistributionProfile, ProfileLoadError> {
-    let file: DistributionProfileFile = json5::from_str(raw).map_err(|source| {
-        ProfileLoadError::Parse {
+    let file: DistributionProfileFile =
+        json5::from_str(raw).map_err(|source| ProfileLoadError::Parse {
             path: path.to_path_buf(),
             source,
-        }
-    })?;
+        })?;
 
     file.into_profile(path)
 }
@@ -394,6 +448,32 @@ struct DistributionProfileFile {
     #[serde(default)]
     app_safe_defaults: BTreeMap<String, LegacySafeDefault>,
     audio: Option<LegacyAudioDefaults>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BaseStylePresetFile {
+    id: String,
+    display_name: String,
+    #[serde(default)]
+    base_style: BaseStylePresetStyleFile,
+}
+
+impl BaseStylePresetFile {
+    fn into_preset(self) -> BaseStylePreset {
+        BaseStylePreset {
+            id: self.id,
+            display_name: self.display_name,
+            thickness: self.base_style.thickness,
+            color_rgba: self.base_style.color_rgba.map(normalize_color_rgba),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct BaseStylePresetStyleFile {
+    thickness: Option<f32>,
+    color_rgba: Option<[f32; 4]>,
 }
 
 impl DistributionProfileFile {
@@ -452,7 +532,10 @@ enum CompatibilityFile {
 }
 
 impl CompatibilityFile {
-    fn into_profile_compatibility(self, path: &Path) -> Result<ProfileCompatibility, ProfileLoadError> {
+    fn into_profile_compatibility(
+        self,
+        path: &Path,
+    ) -> Result<ProfileCompatibility, ProfileLoadError> {
         match self {
             Self::Keyword(value) if value.eq_ignore_ascii_case("any") => {
                 Ok(ProfileCompatibility::Any)
@@ -529,6 +612,10 @@ fn mbps_to_kbps(path: &Path, bucket: &str, mbps: f64) -> Result<u32, ProfileLoad
     Ok((mbps * 1000.0).round() as u32)
 }
 
+fn normalize_color_rgba(raw: [f32; 4]) -> [u8; 4] {
+    raw.map(|component| (component.clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -578,9 +665,7 @@ mod tests {
                 display_name: "Adobe Alpha".into(),
                 source_kind: ProfileSourceKind::AppAuthored,
                 source_urls: vec![],
-                compatibility: ProfileCompatibility::Only(vec![
-                    "mov_prores_4444_pcm".into(),
-                ]),
+                compatibility: ProfileCompatibility::Only(vec!["mov_prores_4444_pcm".into()]),
                 notes: "Adobe-focused intermediate preset".into(),
                 public_constraints: ProfilePublicConstraints::default(),
                 settings_buckets: BTreeMap::new(),
@@ -696,5 +781,100 @@ mod tests {
         );
 
         assert!(catalog.resolve("png_sequence_rgba", "youtube").is_err());
+    }
+
+    #[test]
+    fn profiles_for_family_filters_incompatible_profiles_and_keeps_sorted_order() {
+        let catalog = ExportCatalog::new(
+            vec![ExportFamily {
+                id: "mov_prores_4444_pcm".into(),
+                display_name: "MOV / ProRes 4444 / PCM".into(),
+                container: "mov".into(),
+                video_codec: Some("prores_ks".into()),
+                audio_codec: Some("pcm_s16le".into()),
+                supports_alpha: true,
+                allows_audio: true,
+                output_kind: OutputKind::TransparentOrComposite,
+                required_muxers: vec!["mov".into()],
+                required_video_encoders: vec!["prores_ks".into()],
+                required_audio_encoders: vec!["pcm_s16le".into()],
+                runtime_tier: RuntimeTier::Mainline,
+            }],
+            vec![
+                DistributionProfile {
+                    id: "adobe_alpha".into(),
+                    display_name: "Adobe アルファ".into(),
+                    source_kind: ProfileSourceKind::AppAuthored,
+                    source_urls: vec![],
+                    compatibility: ProfileCompatibility::Only(vec!["mov_prores_4444_pcm".into()]),
+                    notes: String::new(),
+                    public_constraints: ProfilePublicConstraints::default(),
+                    settings_buckets: BTreeMap::new(),
+                },
+                DistributionProfile {
+                    id: "custom".into(),
+                    display_name: "カスタム".into(),
+                    source_kind: ProfileSourceKind::AppAuthored,
+                    source_urls: vec![],
+                    compatibility: ProfileCompatibility::Any,
+                    notes: String::new(),
+                    public_constraints: ProfilePublicConstraints::default(),
+                    settings_buckets: BTreeMap::new(),
+                },
+                DistributionProfile {
+                    id: "youtube".into(),
+                    display_name: "YouTube".into(),
+                    source_kind: ProfileSourceKind::Official,
+                    source_urls: vec![],
+                    compatibility: ProfileCompatibility::Only(vec!["webm_vp9_opus".into()]),
+                    notes: String::new(),
+                    public_constraints: ProfilePublicConstraints::default(),
+                    settings_buckets: BTreeMap::new(),
+                },
+            ],
+        );
+
+        let profile_ids = catalog
+            .profiles_for_family("mov_prores_4444_pcm")
+            .into_iter()
+            .map(|profile| profile.id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            profile_ids,
+            vec!["adobe_alpha".to_owned(), "custom".to_owned()]
+        );
+        assert_eq!(
+            catalog
+                .family("mov_prores_4444_pcm")
+                .map(|family| family.display_name.clone()),
+            Some("MOV / ProRes 4444 / PCM".to_owned())
+        );
+    }
+
+    #[test]
+    fn repository_style_presets_load_from_json5_files() {
+        let preset_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/style_presets");
+        let presets =
+            load_base_style_presets_from_dir(&preset_dir).expect("style presets should load");
+
+        assert!(presets.iter().any(|preset| preset.id == "marker_highlight"));
+        assert!(presets
+            .iter()
+            .any(|preset| preset.id == "white_pen_fastwrite"));
+    }
+
+    #[test]
+    fn style_preset_color_is_normalized_into_rgba_bytes() {
+        let preset = load_base_style_preset_from_path(Path::new(
+            "presets/style_presets/marker_highlight.json5",
+        ));
+        assert!(preset.is_err());
+
+        assert_eq!(
+            normalize_color_rgba([1.0, 0.5, 0.0, 0.25]),
+            [255, 128, 0, 64]
+        );
     }
 }

@@ -388,7 +388,9 @@ impl Default for PostActionTimingScope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PostActionKind {
     NoOp,
-    StyleChange { style: StyleSnapshot },
+    StyleChange {
+        style: StyleSnapshot,
+    },
     InterpolatedStyleChange {
         style: StyleSnapshot,
         duration: MediaDuration,
@@ -514,7 +516,9 @@ pub struct AnnotationProject {
 
 impl AnnotationProject {
     pub fn stroke_index(&self, stroke_id: &StrokeId) -> Option<usize> {
-        self.strokes.iter().position(|stroke| stroke.id == *stroke_id)
+        self.strokes
+            .iter()
+            .position(|stroke| stroke.id == *stroke_id)
     }
 
     pub fn glyph_object_index(&self, object_id: &GlyphObjectId) -> Option<usize> {

@@ -1,93 +1,115 @@
-# PauseInk Codex handoff repository
+# PauseInk ハンドオフ実装リポジトリ
 
-Provisional product name: **PauseInk**  
-Locked project extension: **`.pauseink`**
+製品名: **PauseInk**  
+プロジェクト拡張子: **`.pauseink`**
 
-This repository is a **Codex handoff package**. Its purpose is to let Codex read one repository, understand the final locked product direction, and then implement the application in a careful, test-heavy, low-regression way.
+この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理まで接続されています。
 
-## Product summary
+## PauseInk とは
 
-PauseInk is a portable desktop application for:
+PauseInk は、ローカル動画を一時停止しながら手書き注釈を重ね、必要に応じて再生し、そのまま動画合成または注釈レイヤー単体として書き出すための desktop-first アプリです。
 
-- opening a local video,
-- pausing or playing it,
-- writing hand-drawn annotations onto frames,
-- replaying them with controlled reveal effects,
-- clearing them with **manual screen-wide clear events**, and
-- exporting either:
-  - a composite video, or
-  - annotation-only transparent output.
+想定用途:
 
-The target style is Vlog / relaxed commentary / VOICEROID-like annotation overlays.
+- Vlog への手書き補足
+- ゆるい実況や commentary overlay
+- VOICEROID 風の手書き説明
+- シーン局所の素早い scribble annotation
 
-## What is already decided
+whiteboard アプリでも、通常フォント置換アプリでもありません。  
+最終表示はユーザー自身の stroke data を主とします。
 
-The following are no longer open questions:
+## 現在の実装範囲
 
-- **Desktop-first v1.0**: Linux, macOS, Windows.
-- **Single-window UI**.
-- **Manual clear only** in v1.0. There is no automatic scene-cut insertion in v1.0.
-- A clear event is **screen-wide**, inserted when the user triggers Clear while paused or playing.
-- **Partial clear is out of scope for v1.0**.
-- Final visible output remains primarily the **user's own stroke data**.
-- Fonts are used for **template slots, underlays, spacing, and kana/latin/punctuation scaling**.
-- Project files are **human-readable text** in a **lenient-load / normalized-save** style.
-- All mutable state must stay **next to the executable** inside a portable data directory.
-- **Google Fonts support is required**.
-- **Pen pressure is not implemented in v1.0**.
-- v1.0 uses **built-in effects + declarative presets**, not arbitrary scripting in the hot render path.
-- Media import/export is abstracted behind an **FFmpeg runtime provider**.
-- GPU use is **configurable** and must **fall back cleanly** when unavailable.
+- `.pauseink` の lenient load / normalized save / entity-level unknown field 保持
+- bounded undo/redo
+- free ink capture と shift grouping
+- manual clear event による screen-wide clear
+- guide capture と template slot preview
+- single-window GUI
+- autosave cadence と recovery prompt
+- portable root (`pauseink_data/`) 配下への状態集約
+- local font discovery
+- Google Fonts configured family 管理と portable cache
+- export family / distribution profile の分離
+- transparent PNG sequence export
+- composite AVI smoke export
+- ProRes 4444 / PNG sequence 向け alpha export path
+- cache manager / runtime diagnostics / preferences UI
+- built-in base style preset 読み込みと適用
 
-## Repository map
+## まだ mainline packaging に含めていないもの
 
-- `AGENTS.md` — Codex operating contract
-- `.docs/` — locked design, architecture, export rules, test strategy, implementation plan
-- `docs/implementation_report_v1.0.0.md` — live implementation report that must be updated throughout the run
-- `progress.md` — current phase and checkpoint log
-- `manual/` — user and developer guides plus tutorial stubs
-- `presets/` — declarative preset examples and expected schema direction
-- `samples/` — example project/settings files
-- `runtime/README.md` — expected FFmpeg sidecar layout
-- `crates/` — minimal Rust workspace scaffold
+- FFmpeg sidecar runtime 自体の同梱
+- optional codec pack の正式導線
+- Windows 向け release packaging
+- style preset の entrance / clear / combo UI 適用
+- partial clear
+- pen pressure
 
-## Recommended Codex workflow
+## repository 構成
 
-1. Read `AGENTS.md`.
-2. Read **all** files under `.docs/`.
-3. Skim `README.md`, `progress.md`, `manual/`, `presets/`, `samples/`, and `docs/implementation_report_v1.0.0.md`.
-4. Rewrite `progress.md` into an execution-ready plan.
-5. Launch sub-agents at the required checkpoints.
-6. Implement in phases, with tests and report updates throughout.
+- `AGENTS.md`
+  PauseInk 実装時の最優先運用ルール
+- `.docs/`
+  仕様、architecture、testing、implementation plan
+- `crates/domain`
+  typed domain model、command history、clear/page semantics
+- `crates/project_io`
+  `.pauseink` load/save と unknown field 保持
+- `crates/portable_fs`
+  portable root、settings、cache/autosave/runtime path
+- `crates/presets_core`
+  export profile catalog と base style preset loader
+- `crates/fonts`
+  local font discovery、Google Fonts CSS/cache helper
+- `crates/template_layout`
+  template slot / guide geometry
+- `crates/media`
+  FFmpeg runtime discovery、probe、preview frame
+- `crates/renderer`
+  CPU-safe overlay renderer
+- `crates/export`
+  export planning と transparent/composite 実行
+- `crates/app`
+  app session と eframe/egui GUI
+- `manual/`
+  user / developer guide と tutorials
+- `presets/`
+  export profile / style preset 定義
+- `samples/`
+  sample project / settings
+- `docs/implementation_report_v1.0.0.md`
+  実装ログと検証ログ
+- `progress.md`
+  フェーズ進捗と概算率
 
-## Important packaging stance
+## 使い方の最短経路
 
-The app binary is intended to be **MIT-licensed**.  
-Codec/runtime concerns must stay isolated behind the FFmpeg provider layer.
+1. `cargo run -p pauseink-app`
+2. アプリ上部の `メディア読込` で動画を開く
+3. 中央キャンバスへ直接描く
+4. `全消去` で page 境界を追加する
+5. 必要なら右ペインの built-in style preset を適用する
+6. `保存` で `.pauseink` を保存する
+7. 右ペインの `書き出し` から family / profile を選び、transparent または composite export を実行する
 
-The baseline project should work without requiring a GPL-only FFmpeg build. Optional codec packs may exist later.
+## build / test
 
-## Notable output families
+主要コマンド:
 
-Built-in target families for v1.0:
+- `cargo check -p pauseink-app --all-targets`
+- `cargo test --workspace`
+- `cargo test -p pauseink-export`
+- `cargo test -p pauseink-fonts`
 
-- WebM / VP9 / Opus
-- WebM / AV1 / Opus
-- MP4 / AV1 / AAC-LC (**Advanced**)
-- MOV / ProRes 422 HQ / PCM
-- MOV / ProRes 4444 / PCM
-- PNG Sequence / RGBA
-- AVI / MJPEG / PCM (**Legacy rescue**)
+実 export smoke は `pauseink-export` の test で行っています。  
+詳細な検証ログは [docs/implementation_report_v1.0.0.md](/home/yukatayu/dev/pause_ink/docs/implementation_report_v1.0.0.md) を参照してください。
 
-Optional future codec pack:
+## portable data
 
-- MP4 / H.264 / AAC-LC
-- MP4 or MOV / HEVC / AAC-LC
-
-## End-user state locality rule
-
-PauseInk must not scatter state across OS app-data directories by default.  
-Expected layout is under:
+既定の mutable state は executable 直下の `pauseink_data/` に集約します。
 
 ```text
 <executable dir>/
@@ -97,31 +119,52 @@ Expected layout is under:
     logs/
     autosave/
     runtime/
+    temp/
 ```
 
-For tests or development, an override environment variable may redirect this root, but the default remains executable-local.
+開発/テストでは環境変数 `PAUSEINK_PORTABLE_ROOT` で上書きできます。
 
-## Current status of this repository
+## export 方針
 
-This handoff repository contains:
+PauseInk は export を次の 2 層に分けます。
 
-- the locked product definition,
-- a detailed phased implementation plan,
-- acceptance criteria,
-- future work planning,
-- developer manual targets,
-- sample data,
-- and a minimal workspace scaffold.
+- family: container / codec family
+- profile: distribution / delivery preset
 
-It is **not** the finished application.
+mainline family:
 
+- WebM / VP9 / Opus
+- WebM / AV1 / Opus
+- MP4 / AV1 / AAC-LC
+- MOV / ProRes 422 HQ / PCM
+- MOV / ProRes 4444 / PCM
+- PNG Sequence / RGBA
+- AVI / MJPEG / PCM
 
-## Packaging preference
+profile:
 
-Preferred release shape:
+- 低
+- 中
+- 高
+- YouTube
+- X
+- Instagram
+- Adobe 編集
+- Adobe アルファ
+- カスタム
 
-- one main application binary when practical
-- portable `pauseink_data/` beside it
-- optional media/runtime sidecars kept clearly separated
+非 `カスタム` profile では数値欄は計算結果の表示のみ、`カスタム` では直接編集できます。
 
-Do not optimize for a monolithic all-codecs bundle if that would make licensing/compliance or portability worse.
+## ライセンス / runtime
+
+- app core は MIT-friendly な構成を維持する
+- FFmpeg は provider abstraction の後ろに置く
+- host の apt `ffmpeg` は検証用であり、mainline release 前提にはしない
+- H.264 / HEVC は optional codec pack 扱いを維持する
+
+## 参照
+
+- 実装進捗: [progress.md](/home/yukatayu/dev/pause_ink/progress.md)
+- 実装レポート: [docs/implementation_report_v1.0.0.md](/home/yukatayu/dev/pause_ink/docs/implementation_report_v1.0.0.md)
+- ユーザーガイド: [manual/user_guide.md](/home/yukatayu/dev/pause_ink/manual/user_guide.md)
+- 開発者ガイド: [manual/developer_guide.md](/home/yukatayu/dev/pause_ink/manual/developer_guide.md)

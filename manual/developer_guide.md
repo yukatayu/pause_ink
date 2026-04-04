@@ -1,39 +1,158 @@
-# Developer guide
+# PauseInk 開発者ガイド
 
-This guide must be updated to match the actual implementation.
+## 1. 基本方針
 
-## 1. Architectural principles
+PauseInk は次の分離を守る前提で組んでいます。
 
-- domain logic independent from UI
-- project I/O independent from rendering
-- portable filesystem logic centralized
-- FFmpeg behind a provider abstraction
-- raw strokes preserved non-destructively
-- export profile rules data-driven where practical
+- UI は business rule を持ち込みすぎない
+- `.pauseink` の parse/save は renderer に依存しない
+- FFmpeg は provider abstraction の後ろへ置く
+- export worker は immutable snapshot を受ける
+- portable state は `pauseink_data/` に閉じる
 
-## 2. Topics this guide must cover before completion
+## 2. crate 構成
 
-1. workspace/crate overview
-2. command model and undo/redo
-3. `.pauseink` parsing and normalized save
-4. portable root enforcement
-5. preset registration and resolution
-6. export profile registration
-7. FFmpeg runtime/provider discovery
-8. how GPU and media acceleration fallbacks work
-9. how to add a built-in effect
-10. how to add a new export profile
-11. how to run tests
-12. how to reproduce smoke validations
+- `pauseink-domain`
+  clear/page semantics、stroke/object/group、style、command history
+- `pauseink-project-io`
+  `.pauseink` lenient load / normalized save / unknown field preservation
+- `pauseink-portable-fs`
+  portable root、settings、cache/autosave/runtime path、cache cleanup helper
+- `pauseink-presets-core`
+  export family/profile catalog、base style preset loader
+- `pauseink-fonts`
+  local font discovery、Google Fonts CSS/cache helper
+- `pauseink-template-layout`
+  slot generation と guide geometry
+- `pauseink-media`
+  FFmpeg runtime discovery、probe、preview frame、capability parsing
+- `pauseink-renderer`
+  CPU-safe overlay render
+- `pauseink-export`
+  plan/export 実行、transparent/composite、HW try / software fallback
+- `pauseink-app`
+  app session と eframe/egui GUI
 
-## 3. Developer tutorial requirements
+依存方向の基本:
 
-Codex must provide at least one validated tutorial with a working sample.
+`app -> {domain, project_io, portable_fs, presets_core, fonts, template_layout, media, renderer, export}`
 
-Recommended topics:
+## 3. `.pauseink` の扱い
 
-- add a built-in style preset
-- add a new export profile
-- validate that the UI/profile catalog sees it
+- load は JSON5 ベースで comments / trailing commas を許容
+- save は canonical JSON に正規化
+- project metadata / media / settings / presets は generic JSON を残しつつ、strokes / objects / groups / clear_events は typed wrapper 化
+- unknown field は可能な範囲で entity 単位に保持
 
-See `manual/tutorials/01_add_export_profile.md` and `manual/tutorials/02_add_builtin_preset.md`.
+主要テスト:
+
+- `cargo test -p pauseink-project-io`
+- `cargo test -p pauseink-app`
+
+## 4. portable state
+
+既定 layout:
+
+```text
+pauseink_data/
+  config/
+  cache/
+    google_fonts/
+    font_index/
+    media_probe/
+    thumbnails/
+  logs/
+  autosave/
+  runtime/
+    ffmpeg/
+  temp/
+```
+
+override:
+
+- 環境変数 `PAUSEINK_PORTABLE_ROOT`
+
+主要テスト:
+
+- `cargo test -p pauseink-portable-fs`
+
+## 5. export family / profile
+
+PauseInk は family と profile を分離しています。
+
+- family
+  codec / container / alpha / audio / required muxer / required encoder
+- profile
+  distribution preset、bucket ごとの bitrate / sample rate / keyframe
+
+主な API:
+
+- `ExportCatalog::load_builtin_from_dir`
+- `ExportCatalog::profiles_for_family`
+- `plan_export`
+- `execute_export_with_settings`
+
+主要テスト:
+
+- `cargo test -p pauseink-presets-core`
+- `cargo test -p pauseink-export`
+
+## 6. built-in style preset
+
+現実装では `presets/style_presets/*.json5` から base style preset を読み込みます。  
+現在 UI で適用しているのは次の項目です。
+
+- thickness
+- color_rgba
+
+entrance / clear / combo preset の宣言フィールドは将来拡張余地として保持していますが、v1.0 実装ではまだ active UI binding を絞っています。
+
+## 7. FFmpeg runtime
+
+runtime は mainline では sidecar provider 前提ですが、開発・検証では host runtime も使えます。
+
+- `discover_runtime`
+- `discover_sidecar_runtime`
+- `discover_system_runtime`
+- `FfprobeMediaProvider`
+
+注意:
+
+- host apt build は local validation 用
+- release packaging の既定 runtime と同一視しない
+- optional codec pack は mainline に混ぜない
+
+## 8. HW fallback
+
+現在の export 実装では composite path で次を行います。
+
+1. `media_hwaccel_enabled` が有効か
+2. runtime capability に hwaccel が見えているか
+3. 条件を満たすと `-hwaccel auto` 付きで一度試行
+4. 失敗時は software path へ fallback
+
+対応テスト:
+
+- `cargo test -p pauseink-export hardware_fallback_is_only_attempted_when_enabled_and_available`
+
+## 9. テストと検証コマンド
+
+日常コマンド:
+
+- `cargo check -p pauseink-app --all-targets`
+- `cargo test --workspace`
+- `cargo test -p pauseink-export`
+- `cargo test -p pauseink-fonts`
+
+代表的な smoke:
+
+- transparent export: `cargo test -p pauseink-export transparent_png_sequence_export_smoke_if_host_runtime_exists`
+- composite export: `cargo test -p pauseink-export composite_avi_export_smoke_if_host_runtime_exists`
+
+## 10. 新しい export profile を追加する
+
+手順は [manual/tutorials/01_add_export_profile.md](/home/yukatayu/dev/pause_ink/manual/tutorials/01_add_export_profile.md) を参照してください。
+
+## 11. 新しい built-in preset を追加する
+
+手順は [manual/tutorials/02_add_builtin_preset.md](/home/yukatayu/dev/pause_ink/manual/tutorials/02_add_builtin_preset.md) を参照してください。

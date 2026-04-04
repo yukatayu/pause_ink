@@ -1,4 +1,8 @@
+use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+use thiserror::Error;
 
 pub fn google_fonts_css_url(family: &str) -> String {
     format!(
@@ -9,6 +13,10 @@ pub fn google_fonts_css_url(family: &str) -> String {
 
 pub fn google_font_cache_file(cache_root: &Path, family: &str) -> PathBuf {
     cache_root.join(format!("{}.font", slugify_family_name(family)))
+}
+
+pub fn google_font_is_cached(cache_root: &Path, family: &str) -> bool {
+    google_font_cache_file(cache_root, family).is_file()
 }
 
 pub fn extract_font_url_from_css(css: &str) -> Option<String> {
@@ -41,6 +49,51 @@ pub fn discover_local_font_families(extra_dirs: &[PathBuf]) -> Vec<String> {
     families.sort();
     families.dedup();
     families
+}
+
+#[derive(Debug, Error)]
+pub enum GoogleFontFetchError {
+    #[error("Google Fonts family name is empty")]
+    EmptyFamily,
+    #[error("Google Fonts CSS request failed: {0}")]
+    CssRequest(String),
+    #[error("Google Fonts CSS did not include a downloadable font URL")]
+    CssMissingFontUrl,
+    #[error("Google Fonts asset request failed: {0}")]
+    AssetRequest(String),
+    #[error("Google Fonts cache I/O failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub fn fetch_google_font_to_cache(
+    cache_root: &Path,
+    family: &str,
+) -> Result<PathBuf, GoogleFontFetchError> {
+    let family = family.trim();
+    if family.is_empty() {
+        return Err(GoogleFontFetchError::EmptyFamily);
+    }
+
+    fs::create_dir_all(cache_root)?;
+
+    let css = ureq::get(&google_fonts_css_url(family))
+        .set("User-Agent", "PauseInk/1.0")
+        .call()
+        .map_err(|error| GoogleFontFetchError::CssRequest(error.to_string()))?
+        .into_string()?;
+    let font_url =
+        extract_font_url_from_css(&css).ok_or(GoogleFontFetchError::CssMissingFontUrl)?;
+
+    let response = ureq::get(&font_url)
+        .set("User-Agent", "PauseInk/1.0")
+        .call()
+        .map_err(|error| GoogleFontFetchError::AssetRequest(error.to_string()))?;
+    let mut bytes = Vec::new();
+    response.into_reader().read_to_end(&mut bytes)?;
+
+    let cache_path = google_font_cache_file(cache_root, family);
+    fs::write(&cache_path, bytes)?;
+    Ok(cache_path)
 }
 
 fn encode_query_component(value: &str) -> String {
@@ -116,5 +169,25 @@ mod tests {
             discover_local_font_families(&[PathBuf::from("/tmp/pauseink-this-dir-does-not-exist")]);
 
         assert!(families.is_sorted());
+    }
+
+    #[test]
+    fn empty_google_font_family_is_rejected_before_network_access() {
+        let error = fetch_google_font_to_cache(Path::new("/tmp"), "   ")
+            .expect_err("empty family should be rejected");
+
+        assert!(matches!(error, GoogleFontFetchError::EmptyFamily));
+    }
+
+    #[test]
+    fn cache_presence_checks_the_expected_file() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let cache_root = temp_dir.path();
+        let cache_file = google_font_cache_file(cache_root, "Noto Sans JP");
+        assert!(!google_font_is_cached(cache_root, "Noto Sans JP"));
+
+        std::fs::write(&cache_file, b"font").expect("cache file");
+
+        assert!(google_font_is_cached(cache_root, "Noto Sans JP"));
     }
 }

@@ -17,7 +17,10 @@ impl Command<AnnotationProject> for InsertStrokeCommand {
             )));
         }
 
-        let index = self.index.unwrap_or(state.strokes.len()).min(state.strokes.len());
+        let index = self
+            .index
+            .unwrap_or(state.strokes.len())
+            .min(state.strokes.len());
         state.strokes.insert(index, self.stroke.clone());
         Ok(())
     }
@@ -50,11 +53,9 @@ impl Command<AnnotationProject> for InsertGlyphObjectCommand {
     }
 
     fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
-        remove_by_id(
-            &mut state.glyph_objects,
-            &self.object.id,
-            |object| &object.id,
-        )
+        remove_by_id(&mut state.glyph_objects, &self.object.id, |object| {
+            &object.id
+        })
     }
 }
 
@@ -72,7 +73,10 @@ impl Command<AnnotationProject> for InsertGroupCommand {
             )));
         }
 
-        let index = self.index.unwrap_or(state.groups.len()).min(state.groups.len());
+        let index = self
+            .index
+            .unwrap_or(state.groups.len())
+            .min(state.groups.len());
         state.groups.insert(index, self.group.clone());
         Ok(())
     }
@@ -153,7 +157,11 @@ pub struct AppendStrokeToGlyphObjectCommand {
 impl Command<AnnotationProject> for AppendStrokeToGlyphObjectCommand {
     fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
         let object = find_object_mut(state, &self.object_id)?;
-        if object.stroke_ids.iter().any(|stroke_id| stroke_id == &self.stroke_id) {
+        if object
+            .stroke_ids
+            .iter()
+            .any(|stroke_id| stroke_id == &self.stroke_id)
+        {
             return Err(CommandError::new(format!(
                 "stroke {} is already attached to glyph object {}",
                 self.stroke_id.0, self.object_id.0
@@ -186,7 +194,9 @@ where
     F: Fn(&T) -> &Id,
 {
     let Some(index) = items.iter().position(|item| id_of(item) == target_id) else {
-        return Err(CommandError::new(format!("entity not found during undo: {target_id}")));
+        return Err(CommandError::new(format!(
+            "entity not found during undo: {target_id}"
+        )));
     };
     items.remove(index);
     Ok(())

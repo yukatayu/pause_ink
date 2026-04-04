@@ -126,9 +126,21 @@ impl PauseInkProject {
 
     pub fn to_annotation_project(&self) -> AnnotationProject {
         AnnotationProject {
-            strokes: self.strokes.iter().map(|entry| entry.stroke.clone()).collect(),
-            glyph_objects: self.objects.iter().map(|entry| entry.object.clone()).collect(),
-            groups: self.groups.iter().map(|entry| entry.group.clone()).collect(),
+            strokes: self
+                .strokes
+                .iter()
+                .map(|entry| entry.stroke.clone())
+                .collect(),
+            glyph_objects: self
+                .objects
+                .iter()
+                .map(|entry| entry.object.clone())
+                .collect(),
+            groups: self
+                .groups
+                .iter()
+                .map(|entry| entry.group.clone())
+                .collect(),
             clear_events: self
                 .clear_events
                 .iter()
@@ -403,6 +415,30 @@ mod tests {
     }
 
     #[test]
+    fn repository_minimal_sample_loads_and_roundtrips() {
+        let source = include_str!("../../../samples/minimal_project.pauseink");
+
+        let document = load_from_str(source).expect("repository sample should load");
+        assert_eq!(document.project.strokes.len(), 1);
+        assert_eq!(document.project.objects.len(), 1);
+        assert_eq!(document.project.clear_events.len(), 1);
+        assert_eq!(document.project.strokes[0].stroke.id.0, "stroke_0001");
+        assert_eq!(
+            document.project.objects[0].object.stroke_ids,
+            vec![pauseink_domain::StrokeId::new("stroke_0001")]
+        );
+        assert_eq!(
+            document.project.clear_events[0].clear_event.time,
+            pauseink_domain::MediaTime::from_millis(4_000)
+        );
+
+        let saved = save_to_string(&document).expect("repository sample should save");
+        let reloaded = load_from_str(&saved).expect("saved sample should reload");
+
+        assert_eq!(reloaded, document);
+    }
+
+    #[test]
     fn sync_annotation_project_preserves_known_entity_extra_fields() {
         let mut project = PauseInkProject {
             strokes: vec![ProjectStroke {
@@ -446,7 +482,10 @@ mod tests {
         assert_eq!(project.strokes.len(), 2);
         assert_eq!(project.strokes[0].extra.get("keep_me"), Some(&json!(true)));
         assert!(project.strokes[1].extra.is_empty());
-        assert_eq!(project.objects[0].extra.get("custom"), Some(&json!("value")));
+        assert_eq!(
+            project.objects[0].extra.get("custom"),
+            Some(&json!("value"))
+        );
         assert_eq!(project.to_annotation_project(), annotations);
     }
 }

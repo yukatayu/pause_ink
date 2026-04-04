@@ -88,10 +88,7 @@ pub fn portable_root(executable_dir: &Path) -> PathBuf {
     portable_root_with_override(executable_dir, None)
 }
 
-pub fn portable_root_with_override(
-    executable_dir: &Path,
-    override_root: Option<&Path>,
-) -> PathBuf {
+pub fn portable_root_with_override(executable_dir: &Path, override_root: Option<&Path>) -> PathBuf {
     override_root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| executable_dir.join("pauseink_data"))
@@ -124,10 +121,10 @@ pub struct Settings {
     pub guide_slope_degrees: f32,
     pub gpu_preview_enabled: bool,
     pub media_hwaccel_enabled: bool,
+    pub autosave_interval_seconds: u64,
     pub stroke_stabilization_default: u8,
     pub google_fonts: GoogleFontsSettings,
     pub local_font_dirs: Vec<PathBuf>,
-    pub portable_root_override: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -138,10 +135,10 @@ impl Default for Settings {
             guide_slope_degrees: 0.0,
             gpu_preview_enabled: true,
             media_hwaccel_enabled: true,
+            autosave_interval_seconds: 10,
             stroke_stabilization_default: 35,
             google_fonts: GoogleFontsSettings::default(),
             local_font_dirs: Vec::new(),
-            portable_root_override: None,
         }
     }
 }
@@ -165,7 +162,9 @@ pub fn save_settings_to_string(settings: &Settings) -> Result<String, PortableFs
 }
 
 pub fn load_settings_from_file(paths: &PortablePaths) -> Result<Settings, PortableFsError> {
-    Ok(load_settings_from_str(&std::fs::read_to_string(paths.settings_file())?)?)
+    Ok(load_settings_from_str(&std::fs::read_to_string(
+        paths.settings_file(),
+    )?)?)
 }
 
 pub fn load_settings_or_default(paths: &PortablePaths) -> Result<Settings, PortableFsError> {
@@ -185,6 +184,41 @@ pub fn save_settings_to_file(
     Ok(())
 }
 
+pub fn directory_size(path: &Path) -> Result<u64, PortableFsError> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let metadata = std::fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        total += directory_size(&entry.path())?;
+    }
+    Ok(total)
+}
+
+pub fn clear_directory_contents(path: &Path) -> Result<(), PortableFsError> {
+    if !path.exists() {
+        std::fs::create_dir_all(path)?;
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        if entry.file_type()?.is_dir() {
+            std::fs::remove_dir_all(entry_path)?;
+        } else {
+            std::fs::remove_file(entry_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,8 +228,14 @@ mod tests {
         let paths = PortablePaths::from_executable_dir(Path::new("/tmp/demo"));
 
         assert_eq!(paths.root, Path::new("/tmp/demo/pauseink_data"));
-        assert_eq!(paths.config_dir, Path::new("/tmp/demo/pauseink_data/config"));
-        assert_eq!(paths.autosave_dir, Path::new("/tmp/demo/pauseink_data/autosave"));
+        assert_eq!(
+            paths.config_dir,
+            Path::new("/tmp/demo/pauseink_data/config")
+        );
+        assert_eq!(
+            paths.autosave_dir,
+            Path::new("/tmp/demo/pauseink_data/autosave")
+        );
     }
 
     #[test]
@@ -231,6 +271,7 @@ mod tests {
         assert_eq!(loaded.history_depth, 256);
         assert!(loaded.gpu_preview_enabled);
         assert!(loaded.media_hwaccel_enabled);
+        assert_eq!(loaded.autosave_interval_seconds, 10);
         assert!(loaded.google_fonts.enabled);
     }
 
@@ -273,5 +314,21 @@ mod tests {
         let loaded = load_settings_or_default(&paths).expect("default settings should load");
 
         assert_eq!(loaded.history_depth, 256);
+    }
+
+    #[test]
+    fn directory_size_counts_nested_files_and_clear_keeps_root() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let root = temp_dir.path().join("cache");
+        std::fs::create_dir_all(root.join("nested")).expect("nested dir");
+        std::fs::write(root.join("a.bin"), vec![0u8; 7]).expect("top file");
+        std::fs::write(root.join("nested").join("b.bin"), vec![0u8; 5]).expect("nested file");
+
+        assert_eq!(directory_size(&root).expect("size should compute"), 12);
+
+        clear_directory_contents(&root).expect("cache clear should work");
+
+        assert!(root.is_dir());
+        assert_eq!(directory_size(&root).expect("size should recompute"), 0);
     }
 }

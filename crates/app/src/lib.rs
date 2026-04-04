@@ -5,15 +5,16 @@ use std::path::{Path, PathBuf};
 use anyhow::Result as AnyhowResult;
 use pauseink_domain::{
     AnnotationProject, AppendStrokeToGlyphObjectCommand, ClearEvent, ClearEventId, ClearKind,
-    ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory, DEFAULT_HISTORY_DEPTH,
-    DerivedStrokePath, GlyphObject, GlyphObjectId, InsertClearEventCommand,
-    InsertGlyphObjectCommand, InsertStrokeCommand, MediaTime, OrderingMetadata, Point2, Stroke,
-    StrokeId, StrokeSample, StyleSnapshot,
+    ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath,
+    GlyphObject, GlyphObjectId, InsertClearEventCommand, InsertGlyphObjectCommand,
+    InsertStrokeCommand, MediaTime, OrderingMetadata, Point2, Stroke, StrokeId, StrokeSample,
+    StyleSnapshot, DEFAULT_HISTORY_DEPTH,
 };
+use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
 use pauseink_project_io::{
-    load_from_str, save_to_string, PauseInkDocument, ProjectClearEvent,
-    ProjectGlyphObject, ProjectGroup, ProjectStroke,
+    load_from_str, save_to_string, PauseInkDocument, ProjectClearEvent, ProjectGlyphObject,
+    ProjectGroup, ProjectStroke,
 };
 use serde_json::{Map, Value};
 
@@ -245,7 +246,9 @@ impl AppSession {
     }
 
     pub fn append_stroke_point(&mut self, point: Point2, at: MediaTime) {
-        let draft = self.stroke_draft.get_or_insert_with(|| StrokeDraft { samples: Vec::new() });
+        let draft = self.stroke_draft.get_or_insert_with(|| StrokeDraft {
+            samples: Vec::new(),
+        });
         draft.samples.push(StrokeSample {
             position: point,
             at,
@@ -283,13 +286,17 @@ impl AppSession {
             .first()
             .map(|sample| sample.at)
             .unwrap_or_else(|| self.current_time());
-        let stabilized_samples = stabilize_samples(&draft.samples, self.active_style.stabilization_strength);
+        let stabilized_samples =
+            stabilize_samples(&draft.samples, self.active_style.stabilization_strength);
         let stroke = Stroke {
             id: stroke_id.clone(),
             raw_samples: draft.samples.clone(),
             stabilized_samples: stabilized_samples.clone(),
             derived_path: DerivedStrokePath {
-                points: stabilized_samples.iter().map(|sample| sample.position).collect(),
+                points: stabilized_samples
+                    .iter()
+                    .map(|sample| sample.position)
+                    .collect(),
             },
             style: self.active_style.clone(),
             created_at,
@@ -372,7 +379,11 @@ impl AppSession {
                         .map(|sample| sample.position)
                         .collect()
                 } else {
-                    stroke.raw_samples.iter().map(|sample| sample.position).collect()
+                    stroke
+                        .raw_samples
+                        .iter()
+                        .map(|sample| sample.position)
+                        .collect()
                 }
             });
         let first = points.next()?;
@@ -442,6 +453,75 @@ impl AppSession {
         )
     }
 
+    pub fn set_history_limit(&mut self, history_limit: usize) {
+        self.history = CommandHistory::with_limit(history_limit);
+    }
+
+    pub fn build_export_snapshot(&self) -> ExportSnapshot {
+        let width = self
+            .imported_media
+            .as_ref()
+            .and_then(|media| media.probe.width)
+            .or_else(|| {
+                self.document
+                    .project
+                    .media
+                    .get("width")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32)
+            })
+            .unwrap_or(1280);
+        let height = self
+            .imported_media
+            .as_ref()
+            .and_then(|media| media.probe.height)
+            .or_else(|| {
+                self.document
+                    .project
+                    .media
+                    .get("height")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32)
+            })
+            .unwrap_or(720);
+        let frame_rate = self
+            .imported_media
+            .as_ref()
+            .and_then(|media| media.probe.frame_rate)
+            .or_else(|| {
+                self.document
+                    .project
+                    .media
+                    .get("fps_hint")
+                    .and_then(Value::as_f64)
+            })
+            .filter(|value| *value > 0.0)
+            .unwrap_or(30.0);
+        let duration = self
+            .imported_media
+            .as_ref()
+            .and_then(ImportedMedia::duration)
+            .unwrap_or_else(|| project_duration_hint(&self.project));
+
+        ExportSnapshot {
+            project: self.project.clone(),
+            width,
+            height,
+            frame_rate,
+            duration,
+            source_media_path: self
+                .imported_media
+                .as_ref()
+                .map(|media| media.source_path.clone())
+                .or_else(|| self.media_source_hint()),
+            has_audio: self
+                .imported_media
+                .as_ref()
+                .map(|media| media.probe.has_audio)
+                .unwrap_or(false),
+        }
+    }
+
     fn update_document_media_metadata(&mut self, source_path: &Path, imported: &ImportedMedia) {
         let mut media = self
             .document
@@ -471,18 +551,12 @@ impl AppSession {
     }
 
     fn synchronize_document_from_project(&mut self) {
-        self.document.project.strokes = sync_stroke_wrappers(
-            &self.project.strokes,
-            &self.document.project.strokes,
-        );
-        self.document.project.objects = sync_object_wrappers(
-            &self.project.glyph_objects,
-            &self.document.project.objects,
-        );
-        self.document.project.groups = sync_group_wrappers(
-            &self.project.groups,
-            &self.document.project.groups,
-        );
+        self.document.project.strokes =
+            sync_stroke_wrappers(&self.project.strokes, &self.document.project.strokes);
+        self.document.project.objects =
+            sync_object_wrappers(&self.project.glyph_objects, &self.document.project.objects);
+        self.document.project.groups =
+            sync_group_wrappers(&self.project.groups, &self.document.project.groups);
         self.document.project.clear_events = sync_clear_event_wrappers(
             &self.project.clear_events,
             &self.document.project.clear_events,
@@ -591,17 +665,17 @@ fn sync_clear_event_wrappers(
         .iter()
         .map(|clear_event| ProjectClearEvent {
             clear_event: clear_event.clone(),
-            extra: extras
-                .get(&clear_event.id.0)
-                .cloned()
-                .unwrap_or_default(),
+            extra: extras.get(&clear_event.id.0).cloned().unwrap_or_default(),
         })
         .collect()
 }
 
 fn seed_next_id_counter(project: &AnnotationProject) -> u64 {
-    (project.strokes.len() + project.glyph_objects.len() + project.groups.len() + project.clear_events.len() + 1)
-        as u64
+    (project.strokes.len()
+        + project.glyph_objects.len()
+        + project.groups.len()
+        + project.clear_events.len()
+        + 1) as u64
 }
 
 fn seed_next_capture_order(project: &AnnotationProject) -> u64 {
@@ -612,6 +686,23 @@ fn seed_next_capture_order(project: &AnnotationProject) -> u64 {
         .max()
         .unwrap_or(0)
         + 1
+}
+
+fn project_duration_hint(project: &AnnotationProject) -> pauseink_domain::MediaDuration {
+    let last_tick = project
+        .strokes
+        .iter()
+        .flat_map(|stroke| stroke.raw_samples.iter().map(|sample| sample.at.ticks))
+        .chain(project.clear_events.iter().map(|clear| clear.time.ticks))
+        .chain(
+            project
+                .glyph_objects
+                .iter()
+                .map(|object| object.created_at.ticks),
+        )
+        .max()
+        .unwrap_or(500);
+    pauseink_domain::MediaDuration::from_millis((last_tick + 500).max(1_000))
 }
 
 fn stabilize_samples(raw_samples: &[StrokeSample], strength: f32) -> Vec<StrokeSample> {
@@ -693,6 +784,7 @@ mod tests {
     use pauseink_media::{
         MediaProbe, MediaProvider, MediaRuntime, MediaSupport, PreviewFrame, RuntimeCapabilities,
     };
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -762,7 +854,10 @@ mod tests {
             Some(PathBuf::from("sample.mp4"))
         );
         assert_eq!(
-            session.playback.as_ref().map(|playback| playback.current_time),
+            session
+                .playback
+                .as_ref()
+                .map(|playback| playback.current_time),
             Some(MediaTime::from_millis(0))
         );
     }
@@ -879,7 +974,10 @@ mod tests {
             .expect("clear event should insert");
 
         assert_eq!(session.project.clear_events.len(), 1);
-        assert_eq!(session.project.clear_events[0].time, MediaTime::from_millis(2_500));
+        assert_eq!(
+            session.project.clear_events[0].time,
+            MediaTime::from_millis(2_500)
+        );
     }
 
     #[test]
@@ -930,5 +1028,183 @@ mod tests {
         assert!(session.project.strokes.is_empty());
         assert!(session.redo().expect("redo should succeed"));
         assert_eq!(session.project.strokes.len(), 1);
+    }
+
+    #[test]
+    fn export_snapshot_prefers_imported_media_probe() {
+        let session = AppSession {
+            imported_media: Some(ImportedMedia {
+                source_path: PathBuf::from("sample.mp4"),
+                probe: MediaProbe {
+                    format_name: Some("mp4".into()),
+                    duration_seconds: Some(3.5),
+                    duration_raw: Some("3.500000".into()),
+                    width: Some(1920),
+                    height: Some(1080),
+                    frame_rate: Some(60.0),
+                    avg_frame_rate_raw: Some("60/1".into()),
+                    r_frame_rate_raw: Some("60/1".into()),
+                    pix_fmt: Some("yuv420p".into()),
+                    has_alpha: false,
+                    has_audio: true,
+                    video_codec: Some("h264".into()),
+                    audio_codec: Some("aac".into()),
+                    support: MediaSupport::Supported,
+                },
+            }),
+            ..AppSession::default()
+        };
+
+        let snapshot = session.build_export_snapshot();
+
+        assert_eq!(snapshot.width, 1920);
+        assert_eq!(snapshot.height, 1080);
+        assert_eq!(snapshot.frame_rate, 60.0);
+        assert_eq!(
+            snapshot.duration,
+            pauseink_domain::MediaDuration::from_millis(3_500)
+        );
+        assert_eq!(
+            snapshot.source_media_path,
+            Some(PathBuf::from("sample.mp4"))
+        );
+        assert!(snapshot.has_audio);
+    }
+
+    #[test]
+    fn export_snapshot_falls_back_to_project_timeline_when_media_is_missing() {
+        let mut session = AppSession::default();
+        session.project.clear_events.push(ClearEvent {
+            time: MediaTime::from_millis(2_000),
+            ..ClearEvent::default()
+        });
+        session.project.strokes.push(Stroke {
+            id: StrokeId::new("stroke-1"),
+            raw_samples: vec![
+                StrokeSample {
+                    position: Point2 { x: 10.0, y: 10.0 },
+                    at: MediaTime::from_millis(1_200),
+                    pressure: None,
+                },
+                StrokeSample {
+                    position: Point2 { x: 20.0, y: 30.0 },
+                    at: MediaTime::from_millis(1_800),
+                    pressure: None,
+                },
+            ],
+            created_at: MediaTime::from_millis(1_200),
+            ..Stroke::default()
+        });
+
+        let snapshot = session.build_export_snapshot();
+
+        assert_eq!(snapshot.width, 1280);
+        assert_eq!(snapshot.height, 720);
+        assert_eq!(snapshot.frame_rate, 30.0);
+        assert_eq!(
+            snapshot.duration,
+            pauseink_domain::MediaDuration::from_millis(2_500)
+        );
+        assert_eq!(snapshot.source_media_path, None);
+        assert!(!snapshot.has_audio);
+    }
+
+    #[test]
+    fn create_save_reopen_compare_smoke() {
+        let temp_dir = tempdir().expect("temp dir");
+        let path = temp_dir.path().join("create-save-reopen.pauseink");
+        let mut session = AppSession::default();
+        session.set_project_title("保存再読込スモーク");
+        session.begin_stroke(Point2 { x: 16.0, y: 24.0 }, MediaTime::from_millis(100));
+        session.append_stroke_point(Point2 { x: 42.0, y: 48.0 }, MediaTime::from_millis(120));
+        session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed");
+
+        let expected_project = session.project.clone();
+        let expected_title = session.project_title();
+
+        session
+            .save_project_to_path(&path)
+            .expect("project save should succeed");
+
+        let reopened = AppSession::load_project_from_path(&path).expect("project reload");
+
+        assert_eq!(reopened.project, expected_project);
+        assert_eq!(reopened.project_title(), expected_title);
+        assert_eq!(reopened.document_path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn import_annotate_clear_save_smoke() {
+        let temp_dir = tempdir().expect("temp dir");
+        let path = temp_dir.path().join("import-annotate-clear.pauseink");
+        let provider = MockMediaProvider {
+            probe: MediaProbe {
+                format_name: Some("mp4".into()),
+                duration_seconds: Some(8.0),
+                duration_raw: Some("8.000000".into()),
+                width: Some(1280),
+                height: Some(720),
+                frame_rate: Some(30.0),
+                avg_frame_rate_raw: Some("30/1".into()),
+                r_frame_rate_raw: Some("30/1".into()),
+                pix_fmt: Some("yuv420p".into()),
+                has_alpha: false,
+                has_audio: true,
+                video_codec: Some("h264".into()),
+                audio_codec: Some("aac".into()),
+                support: MediaSupport::Supported,
+            },
+        };
+        let mut session = AppSession::default();
+        session
+            .import_media(&provider, Path::new("sample.mp4"))
+            .expect("media import should succeed");
+        session.seek(MediaTime::from_millis(1_200));
+        session.begin_stroke(Point2 { x: 20.0, y: 30.0 }, MediaTime::from_millis(1_050));
+        session.append_stroke_point(Point2 { x: 70.0, y: 88.0 }, MediaTime::from_millis(1_100));
+        session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed");
+        session
+            .insert_clear_event(ClearKind::Instant)
+            .expect("clear event should insert");
+
+        session
+            .save_project_to_path(&path)
+            .expect("project save should succeed");
+
+        let reopened = AppSession::load_project_from_path(&path).expect("project reload");
+
+        assert_eq!(
+            reopened.media_source_hint(),
+            Some(PathBuf::from("sample.mp4"))
+        );
+        assert_eq!(reopened.project.strokes.len(), 1);
+        assert_eq!(reopened.project.glyph_objects.len(), 1);
+        assert_eq!(reopened.project.clear_events.len(), 1);
+        assert_eq!(
+            reopened.project.clear_events[0].time,
+            MediaTime::from_millis(1_200)
+        );
+        assert_eq!(
+            reopened
+                .document
+                .project
+                .media
+                .get("width")
+                .and_then(Value::as_u64),
+            Some(1280)
+        );
+        assert_eq!(
+            reopened
+                .document
+                .project
+                .media
+                .get("duration_seconds")
+                .and_then(Value::as_f64),
+            Some(8.0)
+        );
     }
 }

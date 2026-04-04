@@ -83,8 +83,8 @@ pub fn discover_sidecar_runtime(
     ensure_file_exists(&manifest_path, "runtime manifest")?;
 
     let manifest_raw = fs::read_to_string(&manifest_path)?;
-    let manifest: RuntimeManifest = serde_json::from_str(&manifest_raw)
-        .map_err(MediaError::ManifestParse)?;
+    let manifest: RuntimeManifest =
+        serde_json::from_str(&manifest_raw).map_err(MediaError::ManifestParse)?;
 
     Ok(MediaRuntime {
         ffmpeg_path,
@@ -259,15 +259,19 @@ impl MediaProvider for FfprobeMediaProvider {
         max_height: u32,
     ) -> Result<PreviewFrame, MediaError> {
         let mut command = Command::new(&self.runtime.ffmpeg_path);
-        command.args(["-loglevel", "error", "-ss", &format_media_time_seconds(time), "-i"]);
+        command.args([
+            "-loglevel",
+            "error",
+            "-ss",
+            &format_media_time_seconds(time),
+            "-i",
+        ]);
         command.arg(source_path);
         command.args(["-frames:v", "1"]);
         if max_width > 0 && max_height > 0 {
             command.args([
                 "-vf",
-                &format!(
-                    "scale={max_width}:{max_height}:force_original_aspect_ratio=decrease"
-                ),
+                &format!("scale={max_width}:{max_height}:force_original_aspect_ratio=decrease"),
             ]);
         }
         command.args(["-f", "image2pipe", "-vcodec", "png", "pipe:1"]);
@@ -294,9 +298,9 @@ pub struct ImportedMedia {
 
 impl ImportedMedia {
     pub fn duration(&self) -> Option<MediaDuration> {
-        self.probe.duration_seconds.map(|seconds| {
-            MediaDuration::from_millis((seconds * 1_000.0).round() as i64)
-        })
+        self.probe
+            .duration_seconds
+            .map(|seconds| MediaDuration::from_millis((seconds * 1_000.0).round() as i64))
     }
 }
 
@@ -437,10 +441,15 @@ pub fn frame_point_to_canvas(
 }
 
 pub fn parse_ffprobe_output(json: &str) -> Result<MediaProbe, MediaError> {
-    let payload: FfprobePayload =
-        serde_json::from_str(json).map_err(MediaError::ProbeParse)?;
-    let video_stream = payload.streams.iter().find(|stream| stream.codec_type == "video");
-    let audio_stream = payload.streams.iter().find(|stream| stream.codec_type == "audio");
+    let payload: FfprobePayload = serde_json::from_str(json).map_err(MediaError::ProbeParse)?;
+    let video_stream = payload
+        .streams
+        .iter()
+        .find(|stream| stream.codec_type == "video");
+    let audio_stream = payload
+        .streams
+        .iter()
+        .find(|stream| stream.codec_type == "audio");
 
     let frame_rate = video_stream
         .and_then(|stream| stream.avg_frame_rate.as_deref())
@@ -622,7 +631,11 @@ impl RuntimeManifest {
     fn build_summary(&self) -> Option<String> {
         self.build_summary
             .clone()
-            .or_else(|| self.version.as_ref().map(|version| format!("sidecar runtime {version}")))
+            .or_else(|| {
+                self.version
+                    .as_ref()
+                    .map(|version| format!("sidecar runtime {version}"))
+            })
             .or_else(|| self.source.clone())
     }
 }
@@ -658,8 +671,8 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
-    use pauseink_domain::MediaTime;
     use super::*;
+    use pauseink_domain::MediaTime;
     use tempfile::tempdir;
 
     struct MockMediaProvider {
@@ -827,7 +840,10 @@ mod tests {
             discover_runtime(temp_dir.path(), platform_id, true).expect("runtime should resolve");
 
         assert_eq!(runtime.origin, RuntimeOrigin::Sidecar);
-        assert_eq!(runtime.build_summary.as_deref(), Some("sidecar runtime 1.0.0"));
+        assert_eq!(
+            runtime.build_summary.as_deref(),
+            Some("sidecar runtime 1.0.0")
+        );
     }
 
     #[test]
@@ -883,7 +899,9 @@ cuda
 "#,
         );
 
-        assert!(capabilities.video_encoders.contains(&"libvpx-vp9".to_owned()));
+        assert!(capabilities
+            .video_encoders
+            .contains(&"libvpx-vp9".to_owned()));
         assert!(capabilities.video_encoders.contains(&"libx264".to_owned()));
         assert!(capabilities.audio_encoders.contains(&"libopus".to_owned()));
         assert!(capabilities.muxers.contains(&"webm".to_owned()));
@@ -921,7 +939,10 @@ cuda
             imported.probe.support,
             MediaSupport::SupportedWithCaveats(vec!["vfr".into()])
         );
-        assert_eq!(imported.duration(), Some(MediaDuration::from_millis(12_000)));
+        assert_eq!(
+            imported.duration(),
+            Some(MediaDuration::from_millis(12_000))
+        );
     }
 
     #[test]
@@ -977,13 +998,9 @@ cuda
         assert!((frame_rect.width - 1000.0).abs() < 0.01);
         assert!((frame_rect.height - 562.5).abs() < 0.01);
 
-        let canvas_point = frame_point_to_canvas(
-            Point2 { x: 960.0, y: 540.0 },
-            frame_rect,
-            1920,
-            1080,
-        )
-        .expect("frame point should map");
+        let canvas_point =
+            frame_point_to_canvas(Point2 { x: 960.0, y: 540.0 }, frame_rect, 1920, 1080)
+                .expect("frame point should map");
         let roundtrip = canvas_point_to_frame(canvas_point, frame_rect, 1920, 1080)
             .expect("canvas point should roundtrip");
 
@@ -1074,6 +1091,9 @@ cuda
 
         assert!(frame.width > 0);
         assert!(frame.height > 0);
-        assert_eq!(frame.rgba_pixels.len(), (frame.width * frame.height * 4) as usize);
+        assert_eq!(
+            frame.rgba_pixels.len(),
+            (frame.width * frame.height * 4) as usize
+        );
     }
 }

@@ -1,6 +1,6 @@
 {
   id: "marker_highlight",
-  display_name: "Marker Highlight",
+  display_name: "マーカーハイライト",
   base_style: {
     thickness: 16.0,
     color_rgba: [1.0, 0.92, 0.1, 0.45],

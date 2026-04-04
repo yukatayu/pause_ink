@@ -4,7 +4,9 @@ use pauseink_domain::{
     AnnotationProject, BlendMode, ClearKind, DerivedStrokePath, GeometryTransform, GlyphObject,
     MediaTime, Point2, RgbaColor, Stroke, StrokeSample, StyleSnapshot, TimeBase,
 };
-use tiny_skia::{BlendMode as SkBlendMode, Paint, PathBuilder, Pixmap, Stroke as SkStroke, Transform};
+use tiny_skia::{
+    BlendMode as SkBlendMode, Paint, PathBuilder, Pixmap, Stroke as SkStroke, Transform,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderRequest<'a> {
@@ -121,7 +123,11 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
         left.ordering
             .z_index
             .cmp(&right.ordering.z_index)
-            .then_with(|| left.ordering.capture_order.cmp(&right.ordering.capture_order))
+            .then_with(|| {
+                left.ordering
+                    .capture_order
+                    .cmp(&right.ordering.capture_order)
+            })
             .then_with(|| left.id.0.cmp(&right.id.0))
     });
 
@@ -140,12 +146,19 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 continue;
             };
 
-            let visibility = evaluate_visibility(request.project, Some(object), stroke, request.time);
+            let visibility =
+                evaluate_visibility(request.project, Some(object), stroke, request.time);
             if !visibility.is_visible() {
                 continue;
             }
 
-            render_stroke(&mut pixmap, stroke, &object.style, &object.transform, visibility);
+            render_stroke(
+                &mut pixmap,
+                stroke,
+                &object.style,
+                &object.transform,
+                visibility,
+            );
         }
     }
 
@@ -234,7 +247,9 @@ fn evaluate_clear(
     stroke: &Stroke,
     time: MediaTime,
 ) -> VisibilityState {
-    let anchor = object.map(|item| item.created_at).unwrap_or(stroke.created_at);
+    let anchor = object
+        .map(|item| item.created_at)
+        .unwrap_or(stroke.created_at);
     let Some(clear_event) = project
         .clear_events
         .iter()
@@ -381,7 +396,11 @@ fn transformed_visible_points(
             .map(|sample| sample.position)
             .collect()
     } else {
-        stroke.raw_samples.iter().map(|sample| sample.position).collect()
+        stroke
+            .raw_samples
+            .iter()
+            .map(|sample| sample.position)
+            .collect()
     };
 
     partial_polyline(&source, path_fraction)
@@ -501,8 +520,8 @@ fn draw_stroked_path(
     blend_mode: BlendMode,
 ) {
     let mut paint = Paint::default();
-    let alpha = ((color.a as f32 / 255.0) * opacity_multiplier.clamp(0.0, 1.0) * 255.0).round()
-        as u8;
+    let alpha =
+        ((color.a as f32 / 255.0) * opacity_multiplier.clamp(0.0, 1.0) * 255.0).round() as u8;
     paint.set_color_rgba8(color.r, color.g, color.b, alpha);
     paint.anti_alias = true;
     paint.blend_mode = to_tiny_blend_mode(blend_mode);
