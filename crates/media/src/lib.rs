@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use pauseink_domain::{MediaDuration, MediaTime, Point2};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -240,6 +241,156 @@ impl MediaProvider for FfprobeMediaProvider {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedMedia {
+    pub source_path: PathBuf,
+    pub probe: MediaProbe,
+}
+
+impl ImportedMedia {
+    pub fn duration(&self) -> Option<MediaDuration> {
+        self.probe.duration_seconds.map(|seconds| {
+            MediaDuration::from_millis((seconds * 1_000.0).round() as i64)
+        })
+    }
+}
+
+pub fn import_media(
+    provider: &dyn MediaProvider,
+    source_path: &Path,
+) -> Result<ImportedMedia, MediaError> {
+    Ok(ImportedMedia {
+        source_path: source_path.to_path_buf(),
+        probe: provider.probe(source_path)?,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaybackState {
+    pub media: ImportedMedia,
+    pub current_time: MediaTime,
+    pub is_playing: bool,
+}
+
+impl PlaybackState {
+    pub fn new(media: ImportedMedia) -> Self {
+        Self {
+            media,
+            current_time: MediaTime::from_millis(0),
+            is_playing: false,
+        }
+    }
+
+    pub fn play(&mut self) {
+        self.is_playing = true;
+    }
+
+    pub fn pause(&mut self) {
+        self.is_playing = false;
+    }
+
+    pub fn seek(&mut self, time: MediaTime) {
+        let clamped = if time.ticks < 0 {
+            MediaTime::new(0, time.time_base)
+        } else if let Some(duration) = self.media.duration() {
+            let duration_time = MediaTime::new(duration.ticks, duration.time_base);
+            if time > duration_time {
+                duration_time
+            } else {
+                time
+            }
+        } else {
+            time
+        };
+
+        self.current_time = clamped;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasSize {
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanvasRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+pub fn fit_frame_to_canvas(
+    frame_width: u32,
+    frame_height: u32,
+    canvas: CanvasSize,
+) -> Option<CanvasRect> {
+    if frame_width == 0 || frame_height == 0 || canvas.width <= 0.0 || canvas.height <= 0.0 {
+        return None;
+    }
+
+    let frame_width = frame_width as f32;
+    let frame_height = frame_height as f32;
+    let scale = (canvas.width / frame_width).min(canvas.height / frame_height);
+    let width = frame_width * scale;
+    let height = frame_height * scale;
+
+    Some(CanvasRect {
+        x: (canvas.width - width) / 2.0,
+        y: (canvas.height - height) / 2.0,
+        width,
+        height,
+    })
+}
+
+pub fn canvas_point_to_frame(
+    point: Point2,
+    frame_rect: CanvasRect,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<Point2> {
+    if point.x < frame_rect.x
+        || point.y < frame_rect.y
+        || point.x > frame_rect.x + frame_rect.width
+        || point.y > frame_rect.y + frame_rect.height
+        || frame_rect.width <= 0.0
+        || frame_rect.height <= 0.0
+    {
+        return None;
+    }
+
+    let normalized_x = (point.x - frame_rect.x) / frame_rect.width;
+    let normalized_y = (point.y - frame_rect.y) / frame_rect.height;
+
+    Some(Point2 {
+        x: normalized_x * frame_width as f32,
+        y: normalized_y * frame_height as f32,
+    })
+}
+
+pub fn frame_point_to_canvas(
+    point: Point2,
+    frame_rect: CanvasRect,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<Point2> {
+    if frame_width == 0
+        || frame_height == 0
+        || point.x < 0.0
+        || point.y < 0.0
+        || point.x > frame_width as f32
+        || point.y > frame_height as f32
+    {
+        return None;
+    }
+
+    Some(Point2 {
+        x: frame_rect.x + (point.x / frame_width as f32) * frame_rect.width,
+        y: frame_rect.y + (point.y / frame_height as f32) * frame_rect.height,
+    })
+}
+
 pub fn parse_ffprobe_output(json: &str) -> Result<MediaProbe, MediaError> {
     let payload: FfprobePayload =
         serde_json::from_str(json).map_err(MediaError::ProbeParse)?;
@@ -444,8 +595,29 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
+    use pauseink_domain::MediaTime;
     use super::*;
     use tempfile::tempdir;
+
+    struct MockMediaProvider {
+        probe: MediaProbe,
+        capabilities: RuntimeCapabilities,
+        diagnostics: MediaRuntime,
+    }
+
+    impl MediaProvider for MockMediaProvider {
+        fn probe(&self, _source_path: &Path) -> Result<MediaProbe, MediaError> {
+            Ok(self.probe.clone())
+        }
+
+        fn capabilities(&self) -> Result<RuntimeCapabilities, MediaError> {
+            Ok(self.capabilities.clone())
+        }
+
+        fn diagnostics(&self) -> MediaRuntime {
+            self.diagnostics.clone()
+        }
+    }
 
     #[test]
     fn probe_parser_extracts_video_summary() {
@@ -642,6 +814,107 @@ cuda
     }
 
     #[test]
+    fn import_media_keeps_probe_and_support_classification() {
+        let provider = MockMediaProvider {
+            probe: MediaProbe {
+                format_name: Some("mov,mp4,m4a,3gp,3g2,mj2".into()),
+                duration_seconds: Some(12.0),
+                duration_raw: Some("12.000000".into()),
+                width: Some(1920),
+                height: Some(1080),
+                frame_rate: Some(30.0),
+                avg_frame_rate_raw: Some("30/1".into()),
+                r_frame_rate_raw: Some("30/1".into()),
+                pix_fmt: Some("yuv420p".into()),
+                has_alpha: false,
+                has_audio: true,
+                video_codec: Some("h264".into()),
+                audio_codec: Some("aac".into()),
+                support: MediaSupport::SupportedWithCaveats(vec!["vfr".into()]),
+            },
+            capabilities: RuntimeCapabilities::default(),
+            diagnostics: MediaRuntime::from_system_path(),
+        };
+
+        let imported =
+            import_media(&provider, Path::new("sample.mp4")).expect("import should succeed");
+
+        assert_eq!(imported.source_path, PathBuf::from("sample.mp4"));
+        assert_eq!(
+            imported.probe.support,
+            MediaSupport::SupportedWithCaveats(vec!["vfr".into()])
+        );
+        assert_eq!(imported.duration(), Some(MediaDuration::from_millis(12_000)));
+    }
+
+    #[test]
+    fn playback_state_clamps_seek_and_toggles_play_pause() {
+        let imported = ImportedMedia {
+            source_path: PathBuf::from("sample.mp4"),
+            probe: MediaProbe {
+                format_name: Some("mp4".into()),
+                duration_seconds: Some(5.0),
+                duration_raw: Some("5.000000".into()),
+                width: Some(1280),
+                height: Some(720),
+                frame_rate: Some(30.0),
+                avg_frame_rate_raw: Some("30/1".into()),
+                r_frame_rate_raw: Some("30/1".into()),
+                pix_fmt: Some("yuv420p".into()),
+                has_alpha: false,
+                has_audio: true,
+                video_codec: Some("h264".into()),
+                audio_codec: Some("aac".into()),
+                support: MediaSupport::Supported,
+            },
+        };
+        let mut playback = PlaybackState::new(imported);
+
+        playback.play();
+        assert!(playback.is_playing);
+
+        playback.seek(MediaTime::from_millis(7_000));
+        assert_eq!(playback.current_time, MediaTime::from_millis(5_000));
+
+        playback.seek(MediaTime::from_millis(-100));
+        assert_eq!(playback.current_time, MediaTime::from_millis(0));
+
+        playback.pause();
+        assert!(!playback.is_playing);
+    }
+
+    #[test]
+    fn frame_canvas_mapping_letterboxes_and_roundtrips_points() {
+        let frame_rect = fit_frame_to_canvas(
+            1920,
+            1080,
+            CanvasSize {
+                width: 1000.0,
+                height: 1000.0,
+            },
+        )
+        .expect("mapping should exist");
+
+        assert!(frame_rect.x.abs() < 0.01);
+        assert!((frame_rect.y - 218.75).abs() < 0.01);
+        assert!((frame_rect.width - 1000.0).abs() < 0.01);
+        assert!((frame_rect.height - 562.5).abs() < 0.01);
+
+        let canvas_point = frame_point_to_canvas(
+            Point2 { x: 960.0, y: 540.0 },
+            frame_rect,
+            1920,
+            1080,
+        )
+        .expect("frame point should map");
+        let roundtrip = canvas_point_to_frame(canvas_point, frame_rect, 1920, 1080)
+            .expect("canvas point should roundtrip");
+
+        assert!((roundtrip.x - 960.0).abs() < 0.01);
+        assert!((roundtrip.y - 540.0).abs() < 0.01);
+    }
+
+    #[test]
     fn host_ffprobe_smoke_if_host_runtime_exists() {
         let runtime = match discover_system_runtime() {
             Ok(runtime) => runtime,
@@ -677,9 +950,11 @@ cuda
         let probe = provider
             .probe(&sample_path)
             .expect("generated fixture should be probeable");
+        let imported = import_media(&provider, &sample_path).expect("import should succeed");
 
         assert_eq!(probe.width, Some(320));
         assert_eq!(probe.height, Some(180));
         assert_eq!(probe.video_codec.as_deref(), Some("mjpeg"));
+        assert_eq!(imported.probe.width, Some(320));
     }
 }

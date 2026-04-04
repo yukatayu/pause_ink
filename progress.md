@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 40% 前後。Phase 5 まで typed 基盤が繋がり、次は playback foundation に入る
-- 現在の即時マイルストーン: media import / playback state / seek / pause / play の骨格を追加する
+- 全体状態: 全体で概算 46% 前後。Phase 10 の playback foundation を着手し、次は app/ui 側へ載せる
+- 現在の即時マイルストーン: imported media と playback state を app/ui の状態へ接続し、最低限の import/playback skeleton を見せる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -29,6 +29,7 @@
   - stroke / glyph object / group / style snapshot などの typed domain model を追加
   - `.pauseink` の strokes / objects / groups / clear_events を typed wrapper 化
   - typed project model を操作する insert / z-order project command を追加
+  - imported media / playback state / seek clamp / frame-canvas mapping を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -48,7 +49,7 @@
 | Phase 7 | 実行中 | 30% | local font / Google Fonts 基盤 | graceful failure の最小実装あり |
 | Phase 8 | 実行中 | 35% | template layout / guide geometry | grapheme-aware 最小実装あり |
 | Phase 9 | 実行中 | 75% | FFmpeg provider / probe / capability | runtime discovery と host smoke を追加 |
-| Phase 10 | 未着手 | 0% | 再生基盤 | import / seek / pause / play |
+| Phase 10 | 実行中 | 30% | 再生基盤 | import / playback state / seek / mapping の基礎を追加 |
 | Phase 11 | 未着手 | 0% | free ink capture と stabilization | raw points を保持 |
 | Phase 12 | 未着手 | 0% | guide system | 非 export を保証 |
 | Phase 13 | 未着手 | 0% | outline / groups / page events | run 表示を分離 |
@@ -60,6 +61,6 @@
 
 ## 次の具体的な一手
 
-1. media import flow と playback state model を追加する。
-2. current time source と seek / pause / play を追加する。
-3. media loading の smoke と座標変換 math の足場を作る。
+1. imported media と playback state を app/ui 状態へ接続する。
+2. import / seek / pause / play の最小 skeleton UI を日本語で出す。
+3. frame-canvas mapping を preview/editor の足場へ繋ぐ。

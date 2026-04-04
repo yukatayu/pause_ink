@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算に加え、`domain` に stroke / glyph object / group / style / entrance の typed model と project command を追加し、`project_io` で `strokes` / `objects` / `groups` / `clear_events` を typed wrapper 化した。次は playback foundation に入る。
+- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper に加え、`media` に imported media / playback state / seek clamp / frame-canvas mapping を追加した。次は app/ui 側へ playback foundation を載せる。
 - 現在のフェーズ: Phase 9 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
@@ -36,7 +36,7 @@
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
 | Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
 | Phase 9 | 実行中 | runtime discovery、raw probe、capability parser、host smoke を実装済み |
-| Phase 10 | 未着手 | |
+| Phase 10 | 実行中 | imported media / playback state / seek / mapping の基礎を実装 |
 | Phase 11 | 未着手 | |
 | Phase 12 | 未着手 | |
 | Phase 13 | 未着手 | |
@@ -143,6 +143,11 @@
   - 検討した代替案: app state 層に command を置いて `domain` は pure data のみとする。
   - 理由: UI 非依存の business rule と undo/redo を一体でテストでき、後続の playback/UI 実装から再利用しやすいため。
   - 影響: `domain` は project editing API の中心になり、app/UI は command dispatch に徹する形へ寄る。
+- 2026-04-05T01:18:32+09:00
+  - 決定: playback foundation の最小責務は `media` crate に置き、import 結果、playback state、seek clamp、frame-canvas mapping を UI から独立にテストする。
+  - 検討した代替案: app/UI 層に playback state を置き、`media` は probe だけに留める。
+  - 理由: import classification と座標変換 math は UI 非依存であり、ここを先に固定した方が preview/export 両方へ再利用しやすいため。
+  - 影響: `ui` は transport 操作と表示に集中し、`media` は playback foundation の計算責務を持つ。
 
 ## 5. 作業ログ
 
@@ -241,6 +246,11 @@
   - 変更ファイル: `crates/domain/src/lib.rs`, `crates/domain/src/annotations.rs`, `crates/domain/src/project_commands.rs`, `progress.md`
   - 結果: stroke / object / group / clear event の挿入と z-order 更新が undo/redo と接続され、typed project model を前提にした編集 API ができた。
   - 次の一手: Phase 10 の media import / playback state へ進む。
+- 2026-04-05T01:18:32+09:00
+  - 実施内容: `media` に imported media、playback state、seek clamp、frame-canvas mapping、import smoke を追加した。
+  - 変更ファイル: `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `progress.md`
+  - 結果: import classification、play/pause、duration clamp、letterbox 座標変換の基礎が揃い、host runtime では import smoke も通るようになった。
+  - 次の一手: app/ui の状態と結び、最小の import/playback skeleton を出す。
 
 ## 6. 検証ログ
 
@@ -351,6 +361,10 @@
   - 結果: exit 0。14 tests passed。typed project command、page interval、style snapshot、z-order reversible update を含む。
 - `cargo test --workspace`
   - 結果: exit 0。typed project command 追加後の回帰確認を完了。
+- `cargo test -p pauseink-media`
+  - 結果: exit 0。11 tests passed。import media、playback state、frame-canvas mapping、host import smoke を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。playback foundation 追加後の回帰確認を完了。
 - `cargo test --workspace`
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
 - `ffmpeg -version | sed -n '1,12p'`
@@ -437,8 +451,8 @@
 - typed project command は insert / z-order update までで、実 UI 操作との接続や削除/選択/batch edit はまだ未実装。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
-- media provider は discovery / probe / capability まで実装済みだが、import flow と playback 接続は未実装。
-- playback state、media import、座標変換、frame access はまだ未実装。
+- media provider は import/playback foundation まで実装済みだが、実 frame access と UI 接続は未実装。
+- frame access、実 preview 更新、transport UI 接続はまだ未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 - export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
 
