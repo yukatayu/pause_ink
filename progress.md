@@ -14,6 +14,7 @@
   - `prototype` ブランチを作成
   - workspace を `ui` / `fonts` / `template_layout` / `media` / `renderer` / `export` を含む形へ拡張
   - `MediaTime`、portable root、family/profile 二層 schema の初期実装とテストを追加
+  - `.pauseink` の lenient load / canonical save / unknown field 保持の最小実装とテストを追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - ホスト環境に `ffmpeg` / `ffprobe` が未配置
@@ -45,6 +46,6 @@
 
 ## 次の具体的な一手
 
-1. `.pauseink` project schema と lenient load / normalized save の最初の failing test を追加する。
-2. unknown field 保持を含む `project_io` の基礎実装に着手する。
-3. その後 command model / undo-redo の bounded history へ進む。
+1. command model / undo-redo の failing test を追加する。
+2. bounded history 256 既定値と redo invalidation を実装する。
+3. その後 settings 永続化と env override 実利用へ進む。

@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: Phase 1 の基礎 scaffolding を完了。crate 境界、`MediaTime`、portable root、family/profile schema の初期土台を実装。
-- 現在のフェーズ: Phase 1 完了直前。次は Phase 3 の `.pauseink` 形式へ進む。
+- 現在の状態: Phase 3 の最小 `.pauseink` loader / saver まで実装。次は command model / undo-redo。
+- 現在のフェーズ: Phase 5 着手準備中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -27,11 +27,11 @@
 | フェーズ | 状態 | メモ |
 |---|---|---|
 | Phase 0 | 完了 | docs 読了、進行表更新、architecture sanity review 実施・採用方針確定 |
-| Phase 1 | 実行中 | workspace 拡張、logging 初期化、基礎 crate 境界を反映済み。commit 前の記録更新中 |
+| Phase 1 | 完了 | workspace 拡張、logging 初期化、基礎 crate 境界を反映 |
 | Phase 2 | 実行中 | `MediaTime` と clear 境界 semantics を最小実装 |
-| Phase 3 | 着手準備中 | `.pauseink` schema / lenient load / canonical save を次に実装 |
+| Phase 3 | 実行中 | `.pauseink` schema / lenient load / canonical save / unknown field 保持の最小版を実装 |
 | Phase 4 | 実行中 | portable root と主要ディレクトリ解決を最小実装 |
-| Phase 5 | 未着手 | |
+| Phase 5 | 着手準備中 | command model / bounded undo-redo を次に実装 |
 | Phase 6 | 未着手 | |
 | Phase 7 | 未着手 | |
 | Phase 8 | 未着手 | |
@@ -78,6 +78,11 @@
   - 検討した代替案: profile 単一 schema に family 制約を混在させる。
   - 理由: special case 分岐を減らし、後から profile を追加しやすくするため。
   - 影響: `presets/export_profiles/` のサンプル定義も後続で更新する。
+- 2026-04-05T00:45:00+09:00
+  - 決定: `.pauseink` の初期実装は `json5` による lenient load と、known field 順を固定した canonical JSON save を採用する。コメントは load できるが save 時には保持しない。
+  - 検討した代替案: コメント保持付きの完全 JSON5 roundtrip serializer を初手で実装する。
+  - 理由: v1.0 の determinism と unknown field 保持を先に満たし、comment preservation は limitation として明示する方が安全なため。
+  - 影響: `docs/implementation_report_v1.0.0.md` と manuals に save 時のコメント消失を明記する必要がある。
 
 ## 5. 作業ログ
 
@@ -116,6 +121,11 @@
   - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`
   - 結果: family/profile 二層 schema の最小 API ができた。
   - 次の一手: preset file の loader と実際の JSON5 schema を揃える。
+- 2026-04-05T00:45:00+09:00
+  - 実施内容: `.pauseink` の failing test を追加し、lenient load / canonical save / unknown field 保持の最小実装を追加。
+  - 変更ファイル: `Cargo.toml`, `crates/project_io/Cargo.toml`, `crates/project_io/src/lib.rs`
+  - 結果: comments / trailing commas を許可する loader と deterministic save が動作した。
+  - 次の一手: command model / undo-redo と portable settings を実装する。
 
 ## 6. 検証ログ
 
@@ -149,6 +159,16 @@
   - 結果: exit 0。2 tests passed。
 - `cargo test --workspace`
   - 結果: exit 0。workspace 全体の回帰確認を完了。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。`PauseInkDocument` / `PauseInkProject` / `load_from_str` / `save_to_string` 未定義で red。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。`serde_json` manifest 重複定義で失敗。manifest を修正。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。canonical save の順序が alphabetic になり golden と不一致。`serde_json` を `preserve_order` で固定。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 0。2 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。`project_io` 追加後の回帰確認を完了。
 
 ## 7. 失敗と修正
 
@@ -197,6 +217,7 @@
 - FFmpeg runtime が未配置のため、import/export 実検証はまだできない。
 - Windows cross-build 環境は未整備。
 - `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
+- `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 
 ## 13. 最終受け入れチェックリスト
 
