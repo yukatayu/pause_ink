@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 json5 = "0.4"
+pauseink-domain = { path = "../domain" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

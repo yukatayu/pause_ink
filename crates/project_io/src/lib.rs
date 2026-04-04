@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use pauseink_domain::{ClearEvent, GlyphObject, Group, Stroke};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -53,11 +54,13 @@ pub struct PauseInkProject {
     #[serde(default)]
     pub pages: Vec<Value>,
     #[serde(default)]
-    pub objects: Vec<Value>,
+    pub strokes: Vec<ProjectStroke>,
     #[serde(default)]
-    pub groups: Vec<Value>,
+    pub objects: Vec<ProjectGlyphObject>,
     #[serde(default)]
-    pub clear_events: Vec<Value>,
+    pub groups: Vec<ProjectGroup>,
+    #[serde(default)]
+    pub clear_events: Vec<ProjectClearEvent>,
     #[serde(default = "empty_object")]
     pub presets: Value,
     #[serde(flatten, default)]
@@ -71,6 +74,7 @@ impl Default for PauseInkProject {
             media: empty_object(),
             settings: empty_object(),
             pages: Vec::new(),
+            strokes: Vec::new(),
             objects: Vec::new(),
             groups: Vec::new(),
             clear_events: Vec::new(),
@@ -91,16 +95,25 @@ impl PauseInkProject {
             Value::Array(self.pages.iter().map(canonicalize_value).collect()),
         );
         object.insert(
+            "strokes".to_owned(),
+            Value::Array(self.strokes.iter().map(canonicalize_serializable).collect()),
+        );
+        object.insert(
             "objects".to_owned(),
-            Value::Array(self.objects.iter().map(canonicalize_value).collect()),
+            Value::Array(self.objects.iter().map(canonicalize_serializable).collect()),
         );
         object.insert(
             "groups".to_owned(),
-            Value::Array(self.groups.iter().map(canonicalize_value).collect()),
+            Value::Array(self.groups.iter().map(canonicalize_serializable).collect()),
         );
         object.insert(
             "clear_events".to_owned(),
-            Value::Array(self.clear_events.iter().map(canonicalize_value).collect()),
+            Value::Array(
+                self.clear_events
+                    .iter()
+                    .map(canonicalize_serializable)
+                    .collect(),
+            ),
         );
         object.insert("presets".to_owned(), canonicalize_value(&self.presets));
 
@@ -110,6 +123,38 @@ impl PauseInkProject {
 
         Value::Object(object)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ProjectStroke {
+    #[serde(flatten, default)]
+    pub stroke: Stroke,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ProjectGlyphObject {
+    #[serde(flatten, default)]
+    pub object: GlyphObject,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ProjectGroup {
+    #[serde(flatten, default)]
+    pub group: Group,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ProjectClearEvent {
+    #[serde(flatten, default)]
+    pub clear_event: ClearEvent,
+    #[serde(flatten, default)]
+    pub extra: ExtraFields,
 }
 
 #[derive(Debug, Error)]
@@ -154,6 +199,12 @@ fn canonicalize_value(value: &Value) -> Value {
     }
 }
 
+fn canonicalize_serializable<T: Serialize>(value: &T) -> Value {
+    canonicalize_value(
+        &serde_json::to_value(value).expect("project value should serialize canonically"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -174,6 +225,14 @@ mod tests {
               source_path: "sample.mp4",
             },
             settings: {},
+            strokes: [
+              {
+                id: "stroke-1",
+                custom_block: {
+                  keep_me_too: true,
+                },
+              },
+            ],
             objects: [],
             groups: [],
             clear_events: [],
@@ -194,6 +253,10 @@ mod tests {
             document.project.extra.get("custom_block"),
             Some(&json!({ "keep_me": true }))
         );
+        assert_eq!(
+            document.project.strokes[0].extra.get("custom_block"),
+            Some(&json!({ "keep_me_too": true }))
+        );
     }
 
     #[test]
@@ -204,6 +267,7 @@ mod tests {
                 metadata: json!({ "title": "demo" }),
                 media: json!({ "source_path": "sample.mp4" }),
                 settings: json!({}),
+                strokes: vec![],
                 objects: vec![],
                 groups: vec![],
                 clear_events: vec![],
@@ -218,7 +282,47 @@ mod tests {
 
         assert_eq!(
             saved,
-            "{\n  \"format_version\": \"1.0.0\",\n  \"project\": {\n    \"metadata\": {\n      \"title\": \"demo\"\n    },\n    \"media\": {\n      \"source_path\": \"sample.mp4\"\n    },\n    \"settings\": {},\n    \"pages\": [],\n    \"objects\": [],\n    \"groups\": [],\n    \"clear_events\": [],\n    \"presets\": {}\n  }\n}"
+            "{\n  \"format_version\": \"1.0.0\",\n  \"project\": {\n    \"metadata\": {\n      \"title\": \"demo\"\n    },\n    \"media\": {\n      \"source_path\": \"sample.mp4\"\n    },\n    \"settings\": {},\n    \"pages\": [],\n    \"strokes\": [],\n    \"objects\": [],\n    \"groups\": [],\n    \"clear_events\": [],\n    \"presets\": {}\n  }\n}"
         );
+    }
+
+    #[test]
+    fn typed_entities_roundtrip_through_canonical_save() {
+        let document = PauseInkDocument {
+            format_version: "1.0.0".into(),
+            project: PauseInkProject {
+                strokes: vec![ProjectStroke {
+                    stroke: Stroke {
+                        id: pauseink_domain::StrokeId::new("stroke-1"),
+                        ..Stroke::default()
+                    },
+                    extra: Default::default(),
+                }],
+                objects: vec![ProjectGlyphObject {
+                    object: GlyphObject {
+                        id: pauseink_domain::GlyphObjectId::new("object-1"),
+                        stroke_ids: vec![pauseink_domain::StrokeId::new("stroke-1")],
+                        ..GlyphObject::default()
+                    },
+                    extra: Default::default(),
+                }],
+                clear_events: vec![ProjectClearEvent {
+                    clear_event: ClearEvent {
+                        id: pauseink_domain::ClearEventId::new("clear-1"),
+                        ..ClearEvent::default()
+                    },
+                    extra: Default::default(),
+                }],
+                ..PauseInkProject::default()
+            },
+            extra: Default::default(),
+        };
+
+        let saved = save_to_string(&document).expect("save should succeed");
+        let loaded = load_from_str(&saved).expect("load should succeed");
+
+        assert_eq!(loaded.project.strokes[0].stroke.id.0, "stroke-1");
+        assert_eq!(loaded.project.objects[0].object.id.0, "object-1");
+        assert_eq!(loaded.project.clear_events[0].clear_event.id.0, "clear-1");
     }
 }

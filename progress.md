@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 28% 前後。Phase 15 の基礎計算まで着手し、次は Phase 2 の domain model 拡充へ戻る
-- 現在の即時マイルストーン: stroke / glyph object / group / style snapshot を domain に追加し、project format と undo に繋げる
+- 全体状態: 全体で概算 34% 前後。Phase 2/3 の typed 基盤を広げ、次は project command と undo 接続へ進む
+- 現在の即時マイルストーン: typed domain/project model を使う project command を追加し、編集操作を履歴へ載せる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -26,6 +26,8 @@
   - built-in export family catalog、profile loader、`settings_buckets` schema を追加
   - `presets/export_profiles/` を stable schema と日本語説明へ更新
   - `export` crate に bucket 解決付き concrete settings 計算と capability 判定を追加
+  - stroke / glyph object / group / style snapshot などの typed domain model を追加
+  - `.pauseink` の strokes / objects / groups / clear_events を typed wrapper 化
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -37,8 +39,8 @@
 |---|---|---|---|---|
 | Phase 0 | 完了 | 100% | 進行表・実装レポート初期化、最初の sub-agent review 完了 | 必読 docs 読了、review 結果取り込み方針確定 |
 | Phase 1 | 完了 | 100% | workspace / crate 骨格を実装可能な形へ拡張 | `app` を薄くし `ui` を独立境界にした |
-| Phase 2 | 実行中 | 30% | domain model と clear/page 仕様を固定 | `MediaTime` と clear/page semantics の最小実装あり |
-| Phase 3 | 実行中 | 30% | `.pauseink` lenient load / normalized save | unknown field 保持の最小実装あり |
+| Phase 2 | 実行中 | 55% | domain model と clear/page 仕様を固定 | stroke / object / group / style / entrance の typed 基盤を追加 |
+| Phase 3 | 実行中 | 50% | `.pauseink` lenient load / normalized save | typed wrapper と entity-level unknown field 保持を追加 |
 | Phase 4 | 実行中 | 35% | portable root と設定保存 | 実行ファイル隣接ルールの最小実装あり |
 | Phase 5 | 実行中 | 30% | command model と bounded undo/redo | 既定深さ 256 の最小実装あり |
 | Phase 6 | 実行中 | 60% | preset / export profile 基盤 | built-in family catalog と profile loader を追加 |
@@ -57,6 +59,6 @@
 
 ## 次の具体的な一手
 
-1. stroke / glyph object / group / style snapshot の domain model を追加する。
-2. `.pauseink` schema を domain model に合わせて広げる。
-3. project command と undo/redo の接続点を作る。
+1. stroke / object / group / clear event を操作する project command を追加する。
+2. typed project model と undo/redo の接続を作る。
+3. command 経由で page derivation と save/load が壊れないことをテストする。
