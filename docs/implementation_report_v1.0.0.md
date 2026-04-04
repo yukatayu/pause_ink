@@ -1,131 +1,204 @@
-# Implementation report — v1.0.0
+# 実装レポート — v1.0.0
 
-> This document must be updated continuously during implementation.  
-> Do not leave it until the end.
+> この文書は実装中ずっと更新し続ける。最後にまとめて書かないこと。
 
-## 1. Executive summary
+## 1. 要約
 
-- Current status:
-- Current phase:
-- Host environment:
-- Latest validated build:
-- Latest validated composite export:
-- Latest validated transparent export:
+- 現在の状態: Phase 1 の基礎 scaffolding を完了。crate 境界、`MediaTime`、portable root、family/profile schema の初期土台を実装。
+- 現在のフェーズ: Phase 1 完了直前。次は Phase 3 の `.pauseink` 形式へ進む。
+- ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
+- 最新の検証済み build: 未実施
+- 最新の検証済み composite export: 未実施
+- 最新の検証済み transparent export: 未実施
 
-## 2. Environment
+## 2. 環境
 
-- Date/time:
-- Host OS:
-- Shell:
-- Rust toolchain:
-- FFmpeg runtime state:
-- Cross-build tooling state:
-- GPU/driver notes:
-- Available disk/memory notes if relevant:
+- 日時: 2026-04-04T23:56:59+09:00
+- ホスト OS: Linux yukatayu-agent 6.8.0-106-generic x86_64 GNU/Linux
+- シェル: `bash`
+- Rust toolchain: `stable-x86_64-unknown-linux-gnu` / `rustc 1.93.0` / `cargo 1.93.0`
+- FFmpeg runtime 状態: ホストに `ffmpeg` / `ffprobe` なし。sidecar runtime も未配置。
+- Cross-build tooling 状態: `rustup target list --installed` は `x86_64-unknown-linux-gnu` のみ。
+- GPU / driver メモ: まだ未調査。UI 実装時に runtime probe を追加予定。
+- ディスク / メモリ備考: 現時点で顕著な制約は未確認。
 
-## 3. Phase log
+## 3. フェーズログ
 
-| Phase | Status | Notes |
+| フェーズ | 状態 | メモ |
 |---|---|---|
-| Phase 0 | not started | |
-| Phase 1 | not started | |
-| Phase 2 | not started | |
-| Phase 3 | not started | |
-| Phase 4 | not started | |
-| Phase 5 | not started | |
-| Phase 6 | not started | |
-| Phase 7 | not started | |
-| Phase 8 | not started | |
-| Phase 9 | not started | |
-| Phase 10 | not started | |
-| Phase 11 | not started | |
-| Phase 12 | not started | |
-| Phase 13 | not started | |
-| Phase 14 | not started | |
-| Phase 15 | not started | |
-| Phase 16 | not started | |
-| Phase 17 | not started | |
-| Phase 18 | not started | |
+| Phase 0 | 完了 | docs 読了、進行表更新、architecture sanity review 実施・採用方針確定 |
+| Phase 1 | 実行中 | workspace 拡張、logging 初期化、基礎 crate 境界を反映済み。commit 前の記録更新中 |
+| Phase 2 | 実行中 | `MediaTime` と clear 境界 semantics を最小実装 |
+| Phase 3 | 着手準備中 | `.pauseink` schema / lenient load / canonical save を次に実装 |
+| Phase 4 | 実行中 | portable root と主要ディレクトリ解決を最小実装 |
+| Phase 5 | 未着手 | |
+| Phase 6 | 未着手 | |
+| Phase 7 | 未着手 | |
+| Phase 8 | 未着手 | |
+| Phase 9 | 未着手 | |
+| Phase 10 | 未着手 | |
+| Phase 11 | 未着手 | |
+| Phase 12 | 未着手 | |
+| Phase 13 | 未着手 | |
+| Phase 14 | 未着手 | |
+| Phase 15 | 未着手 | |
+| Phase 16 | 未着手 | |
+| Phase 17 | 未着手 | |
+| Phase 18 | 未着手 | |
 
-## 4. Decision log
+## 4. 決定ログ
 
-Record every meaningful design decision with:
+- 2026-04-04T23:56:59+09:00
+  - 決定: 文書と UI は日本語を正とし、既存の英語記述も実装に合わせて日本語へ更新する。
+  - 検討した代替案: コードのみ先行して docs 翻訳を最後にまとめる。
+  - 理由: ユーザーの明示要求であり、仕様と UI 表記のずれを早期に防ぐため。
+  - 影響: `README.md`、`progress.md`、`manual/`、`docs/`、UI 文言のすべてを段階的に日本語化する。
+- 2026-04-04T23:56:59+09:00
+  - 決定: 初期 crate / module 方針は `app`、`domain`、`project_io`、`portable_fs`、`presets_core` を維持しつつ、必要に応じて `fonts`、`template_layout`、`media`、`renderer`、`export` を追加する前提で architecture review にかける。
+  - 検討した代替案: すべてを `app` crate に集約する。
+  - 理由: `AGENTS.md` と `.docs/04_architecture.md` の疎結合要件を満たしやすく、snapshot-based background job を分離しやすい。
+  - 影響: 初期実装では crate 境界の責務を明文化し、review 結果で必要なら分割を調整する。
+- 2026-04-05T00:00:00+09:00
+  - 決定: architecture review を受け、`app` は composition root のみに寄せ、`ui` crate を独立させる。加えて time model は単純 `u64 ms` 固定ではなく `MediaTime` を導入し、export schema は family / profile の二層に分割する。
+  - 検討した代替案: 既存 5 crate のまま `app` に UI を内包し、time model と export profile を簡易な整数 / 単一 schema で押し切る。
+  - 理由: UI への business rule 混入、clear 境界の時刻ズレ、profile 特例分岐の肥大化を初期段階で防ぐため。
+  - 影響: Phase 1 は crate 境界の追加、Phase 2 / 6 は time model と export schema の土台から TDD で組み直す。
+- 2026-04-05T00:00:00+09:00
+  - 決定: background job は `ProjectSnapshot` などの immutable request / snapshot 型だけを受け取り、`Arc<Mutex<AppState>>` の共有は採用しない。
+  - 検討した代替案: live app state を共有して export / probe / font 更新を直接参照させる。
+  - 理由: `.docs/04_architecture.md` と sub-agent 指摘の通り、single-writer と worker 分離を守るため。
+  - 影響: runtime state と persisted project state を明確に分離する必要がある。
+- 2026-04-05T00:20:00+09:00
+  - 決定: domain time model は `MediaTime { ticks, time_base }` を基本表現とし、clear 境界ジャスト時刻は次ページに属する。
+  - 検討した代替案: `u64 ms` 維持。
+  - 理由: mixed time base と clear 境界の等値判定を UI / save / export で一貫させるため。
+  - 影響: project schema と media/provider 側も `MediaTime` 前提で整える必要がある。
+- 2026-04-05T00:20:00+09:00
+  - 決定: `presets_core` は export family と distribution profile を別 schema とし、catalog で compatibility を解決する。
+  - 検討した代替案: profile 単一 schema に family 制約を混在させる。
+  - 理由: special case 分岐を減らし、後から profile を追加しやすくするため。
+  - 影響: `presets/export_profiles/` のサンプル定義も後続で更新する。
 
-- timestamp
-- decision
-- alternatives considered
-- reason
-- consequence
+## 5. 作業ログ
 
-## 5. Work log
+- 2026-04-04T23:56:59+09:00
+  - 実施内容: `prototype` ブランチ作成、必読 docs 読了、workspace scaffold 調査、環境確認。
+  - 変更ファイル: なし
+  - 結果: 固定仕様と現状 scaffold の差分を把握。`ffmpeg` runtime 未配置を確認。
+  - 次の一手: `progress.md` / 実装レポート更新後、architecture sanity review を起動。
+- 2026-04-04T23:56:59+09:00
+  - 実施内容: `progress.md` と本レポートを日本語ベースの live tracker に更新。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: Phase 0 の開始状態と初期方針を明文化。
+  - 次の一手: sub-agent 所見を反映して crate/module 構成を確定。
+- 2026-04-05T00:00:00+09:00
+  - 実施内容: architecture sanity review を回収し、採用点 / 後回し点を整理。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: `ui` crate 分離、`MediaTime`、family/profile 二層 schema、immutable snapshot worker を採用。
+  - 次の一手: workspace 拡張と最初の failing test を追加する。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: workspace に `ui` / `fonts` / `template_layout` / `media` / `renderer` / `export` crate を追加し、`app` を composition root 寄りに整理。
+  - 変更ファイル: `Cargo.toml`, `crates/app/*`, `crates/ui/*`, `crates/fonts/*`, `crates/template_layout/*`, `crates/media/*`, `crates/renderer/*`, `crates/export/*`
+  - 結果: Phase 1 の crate 境界が compile 可能な状態になった。
+  - 次の一手: foundation behavior を TDD で積む。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: `MediaTime` と clear 境界 semantics の failing test を追加し、domain を実装して緑化。
+  - 変更ファイル: `crates/domain/src/lib.rs`
+  - 結果: mixed time base 比較と clear 境界でのページ切り替えがテストで固定された。
+  - 次の一手: project schema に `MediaTime` を反映できるよう `.pauseink` 実装へ進む。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: portable root の failing test を追加し、主要ディレクトリ解決を実装。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`
+  - 結果: executable-local root と override root の最小 API ができた。
+  - 次の一手: env override の実利用と settings 保存へ広げる。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: export family/profile の failing test を追加し、互換解決 catalog を実装。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`
+  - 結果: family/profile 二層 schema の最小 API ができた。
+  - 次の一手: preset file の loader と実際の JSON5 schema を揃える。
 
-Append work sessions here.  
-Each entry should contain:
+## 6. 検証ログ
 
-- timestamp
-- task(s) attempted
-- files touched
-- result
-- next step
+- `git status --short --branch`
+  - 結果: `main...origin/main` から開始。作業前は未変更。
+- `git branch --list prototype`
+  - 結果: 既存ブランチなし。
+- `git switch -c prototype`
+  - 結果: `prototype` ブランチを作成して checkout。
+- `rustc -V && cargo -V && rustup show active-toolchain`
+  - 結果: `rustc 1.93.0`, `cargo 1.93.0`, active toolchain は stable。
+- `rustup target list --installed`
+  - 結果: `x86_64-unknown-linux-gnu` のみ。
+- `ffmpeg -version | head -n 2`
+  - 結果: `ffmpeg: command not found`
+- `ffprobe -version | head -n 2`
+  - 結果: `ffprobe: command not found`
+- `cargo test --workspace`
+  - 結果: exit 0。現 scaffold の 4 unit test は通過したが、仕様拘束を担保する面積はまだ不足。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 101。`MediaTime` / `TimeBase` / `ClearEvent.time` 未定義で compile error。期待どおり red。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。2 tests passed。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 101。`PortablePaths` と `portable_root_with_override` 未定義で red。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 0。2 tests passed。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 101。`ExportCatalog` / `DistributionProfile` / `ProfileCompatibility` 未定義で red。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。2 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。workspace 全体の回帰確認を完了。
 
-## 6. Validation log
+## 7. 失敗と修正
 
-Record exact commands and outcomes:
+- 2026-04-04T23:56:59+09:00
+  - 事象: ホストに `ffmpeg` / `ffprobe` が存在しない。
+  - 影響: import / export の実検証は sidecar runtime を用意するまで着手不可。
+  - 暫定対応: provider abstraction は sidecar 前提で設計し、後続フェーズで取得方法と provenance を整理する。
 
-- build commands
-- test commands
-- smoke-test steps
-- export jobs
-- import probe checks
-- Windows build attempts
-- tutorial sample validation commands
+## 8. Sub-agent メモ
 
-## 7. Failures and fixes
+- Pass 1 — architecture sanity review
+  - 目的: crate / module 境界、single-writer + snapshot worker 方針、cross-platform UI の危険点を洗う。
+  - 要約:
+    - `app` は薄く保ち `ui` crate を独立させる
+    - time model は `u64 ms` に固定せず `MediaTime` を先に整備する
+    - export schema は family / profile の二層に分ける
+    - background worker は immutable snapshot のみを受ける
+  - 採用した変更:
+    - `ui` crate を workspace に追加する
+    - clear 境界の等値 semantics と `MediaTime` を Phase 2 の先頭で TDD する
+    - `presets_core` は export family schema と distribution profile schema を分ける
+  - 見送った提案:
+    - UI toolkit 名の即時固定。理由: crate 境界と time/export schema を先に固める方が rework が少ないため
 
-Mandatory section.  
-Document failed approaches, regressions, errors, and the fix that resolved each issue.
+## 9. Export / profile メモ
 
-## 8. Sub-agent notes
+- 公式ページの再確認は未実施。
+- YouTube / X / Instagram / Adobe の最終値は export 実装前に official source を見直して記録する。
 
-For each sub-agent pass record:
+## 10. パッケージング / ライセンスメモ
 
-- objective
-- summary of findings
-- adopted changes
-- rejected suggestions and why
+- mainline 方針: FFmpeg sidecar runtime provider。
+- 現時点では optional codec pack 未実装。
+- H.264 / HEVC は mainline 前提にしない。
+- release packaging 用の provenance / notice 整理は後続フェーズで記録する。
 
-## 9. Export/profile notes
+## 11. 開発者チュートリアル
 
-Record:
+- 対象チュートリアル: 未確定
+- 実行 / 検証コマンド: 未実施
+- 結果: 未実施
 
-- which official pages were used for final YouTube/X/Instagram values
-- which values were taken directly
-- which Instagram values remain app-authored safe defaults
-- Adobe-focused families validated
+## 12. 既知の問題 / 制約
 
-## 10. Packaging and licensing notes
+- 現在の repository は最小 scaffold のみで、実アプリ機能は未実装。
+- FFmpeg runtime が未配置のため、import/export 実検証はまだできない。
+- Windows cross-build 環境は未整備。
+- `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
 
-Record:
-
-- FFmpeg runtime strategy used
-- whether any optional codec packs were considered or implemented
-- H.264/H.265 packaging implications observed
-- what notices/source/provenance work remains for release packaging
-
-## 11. Tutorial sample
-
-Record:
-
-- tutorial location
-- how it was built/run/tested
-- exact commands
-- result
-
-## 12. Known issues / limitations
-
-Be exact and honest.
-
-## 13. Final acceptance checklist
+## 13. 最終受け入れチェックリスト
 
 - [ ] Host build passes
 - [ ] Core tests pass

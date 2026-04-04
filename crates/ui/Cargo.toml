@@ -1,9 +1,9 @@
 [package]
-name = "pauseink-presets-core"
+name = "pauseink-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-serde.workspace = true
-thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
