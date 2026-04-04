@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: Phase 1 着手準備中
-- 現在の即時マイルストーン: `ui` crate 分離、`MediaTime` 基盤、family/profile 二層 schema の開始
+- 全体状態: Phase 9 実行中、runtime provenance と export schema の補強を反映済み
+- 現在の即時マイルストーン: host `ffprobe` smoke と export settings data loader の着手
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -20,9 +20,11 @@
   - local font family 列挙と Google Fonts CSS2 URL / cache path の基礎実装を追加
   - template slot / guide geometry の最小実装を追加
   - host 検証用 `ffmpeg` / `ffprobe` 利用可能を確認
+  - media runtime origin / raw probe / capability parser の最小実装を追加
+  - export family/profile schema を runtime tier / source kind 付きに補強
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
-  - ホスト環境に `ffmpeg` / `ffprobe` が未配置
+  - portable sidecar runtime 向け manifest 実体と export setting loader が未実装
   - クロスビルド target はまだ Linux ホスト分のみ
 
 ## フェーズ進行表
@@ -30,15 +32,15 @@
 | Phase | 状態 | 直近ゴール | 備考 |
 |---|---|---|---|
 | Phase 0 | 完了 | 進行表・実装レポート初期化、最初の sub-agent review 完了 | 必読 docs 読了、review 結果取り込み方針確定 |
-| Phase 1 | 実行中 | workspace / crate 骨格を実装可能な形へ拡張 | `app` を薄くし `ui` を独立境界にする |
-| Phase 2 | 未着手 | domain model と clear/page 仕様を固定 | manual clear / screen-wide を厳守 |
-| Phase 3 | 未着手 | `.pauseink` lenient load / normalized save | unknown field 保持を優先 |
-| Phase 4 | 未着手 | portable root と設定保存 | 実行ファイル隣接ルールを検証 |
-| Phase 5 | 未着手 | command model と bounded undo/redo | 既定深さ 256 |
-| Phase 6 | 未着手 | preset / export profile 基盤 | 宣言的定義を優先 |
-| Phase 7 | 未着手 | local font / Google Fonts 基盤 | graceful failure 必須 |
-| Phase 8 | 未着手 | template layout / guide geometry | grapheme-aware を実装 |
-| Phase 9 | 未着手 | FFmpeg provider / probe / capability | export review sub-agent を入れる |
+| Phase 1 | 完了 | workspace / crate 骨格を実装可能な形へ拡張 | `app` を薄くし `ui` を独立境界にした |
+| Phase 2 | 実行中 | domain model と clear/page 仕様を固定 | `MediaTime` と clear/page semantics の最小実装あり |
+| Phase 3 | 実行中 | `.pauseink` lenient load / normalized save | unknown field 保持の最小実装あり |
+| Phase 4 | 実行中 | portable root と設定保存 | 実行ファイル隣接ルールの最小実装あり |
+| Phase 5 | 実行中 | command model と bounded undo/redo | 既定深さ 256 の最小実装あり |
+| Phase 6 | 実行中 | preset / export profile 基盤 | family/profile 二層 schema の最小実装あり |
+| Phase 7 | 実行中 | local font / Google Fonts 基盤 | graceful failure の最小実装あり |
+| Phase 8 | 実行中 | template layout / guide geometry | grapheme-aware 最小実装あり |
+| Phase 9 | 実行中 | FFmpeg provider / probe / capability | media/export/licensing sanity review を実施済み |
 | Phase 10 | 未着手 | 再生基盤 | import / seek / pause / play |
 | Phase 11 | 未着手 | free ink capture と stabilization | raw points を保持 |
 | Phase 12 | 未着手 | guide system | 非 export を保証 |
@@ -51,6 +53,6 @@
 
 ## 次の具体的な一手
 
-1. media provider / ffprobe capability の failing test を追加する。
-2. host `ffprobe` を使った probe 基盤と runtime discovery を実装する。
-3. その後 export family 実行計画へ進む。
+1. host `ffprobe` を使った実 probe smoke を追加する。
+2. `presets/export_profiles/` を新 schema に合わせて読み込む loader を実装する。
+3. export concrete setting 計算と runtime capability 判定へ進む。
