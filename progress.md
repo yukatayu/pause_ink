@@ -6,8 +6,8 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: 全体で概算 46% 前後。Phase 10 の playback foundation を着手し、次は app/ui 側へ載せる
-- 現在の即時マイルストーン: imported media と playback state を app/ui の状態へ接続し、最低限の import/playback skeleton を見せる
+- 全体状態: 全体で概算 49% 前後。Phase 10 の playback foundation を app/ui の日本語 status skeleton へ接続し、次は preview/editor state と描画入力へ進む
+- 現在の即時マイルストーン: preview/editor state、free ink capture、guide/template mode の最小縦断を作る
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -30,6 +30,7 @@
   - `.pauseink` の strokes / objects / groups / clear_events を typed wrapper 化
   - typed project model を操作する insert / z-order project command を追加
   - imported media / playback state / seek clamp / frame-canvas mapping を追加
+  - `app` に session、`ui` に日本語 status model を追加し、import/playback skeleton を接続
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - portable sidecar runtime 向け manifest 実体と export engine 本体が未実装
@@ -49,18 +50,18 @@
 | Phase 7 | 実行中 | 30% | local font / Google Fonts 基盤 | graceful failure の最小実装あり |
 | Phase 8 | 実行中 | 35% | template layout / guide geometry | grapheme-aware 最小実装あり |
 | Phase 9 | 実行中 | 75% | FFmpeg provider / probe / capability | runtime discovery と host smoke を追加 |
-| Phase 10 | 実行中 | 30% | 再生基盤 | import / playback state / seek / mapping の基礎を追加 |
+| Phase 10 | 実行中 | 40% | 再生基盤 | app/ui の import/playback status skeleton まで接続 |
 | Phase 11 | 未着手 | 0% | free ink capture と stabilization | raw points を保持 |
 | Phase 12 | 未着手 | 0% | guide system | 非 export を保証 |
 | Phase 13 | 未着手 | 0% | outline / groups / page events | run 表示を分離 |
 | Phase 14 | 未着手 | 0% | style / entrance / clear effects | built-in effects のみ |
 | Phase 15 | 実行中 | 20% | export UI と export engine | bucket 解決と capability 判定の基礎を追加 |
 | Phase 16 | 未着手 | 0% | preferences / cache manager / recovery | autosave と復旧を検証 |
-| Phase 17 | 未着手 | 0% | README / manuals / tutorials / polish | 全文書を日本語へ統一 |
+| Phase 17 | 実行中 | 10% | README / manuals / tutorials / polish | UI 文言と一部 preset docs を日本語化済み |
 | Phase 18 | 未着手 | 0% | 最終 build / test / export / Windows build 試行 | done criteria を満たすまで終了しない |
 
 ## 次の具体的な一手
 
-1. imported media と playback state を app/ui 状態へ接続する。
-2. import / seek / pause / play の最小 skeleton UI を日本語で出す。
-3. frame-canvas mapping を preview/editor の足場へ繋ぐ。
+1. preview/editor state と mode 切替を `app` に追加する。
+2. free ink capture と raw stroke 生成を最小 UI から通す。
+3. guide/template mode の editor-only 表示と commit/cancel を足す。

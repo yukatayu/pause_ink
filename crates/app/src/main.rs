@@ -2,7 +2,17 @@ use anyhow::Result;
 
 fn main() -> Result<()> {
     init_tracing();
-    pauseink_ui::run(&pauseink_ui::UiBootstrap::default())
+    let session = pauseink_app::AppSession::default();
+    let status = pauseink_ui::UiStatusModel {
+        project_status: format!("オブジェクト数: {}", session.project.glyph_objects.len()),
+        media_status: session
+            .imported_media
+            .as_ref()
+            .map(|media| format!("読込済みメディア: {}", media.source_path.display()))
+            .unwrap_or_else(|| "読込済みメディア: なし".to_owned()),
+        transport_status: session.transport_summary(),
+    };
+    pauseink_ui::run(&pauseink_ui::UiBootstrap::default(), &status)
 }
 
 fn init_tracing() {

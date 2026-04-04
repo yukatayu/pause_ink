@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper に加え、`media` に imported media / playback state / seek clamp / frame-canvas mapping を追加した。次は app/ui 側へ playback foundation を載せる。
-- 現在のフェーズ: Phase 9 実行中。
+- 現在の状態: `media` の runtime discovery / probe、`presets_core` の loader / catalog、`export` の concrete settings 計算、`domain` の typed model / project command、`project_io` の typed wrapper、`media` の imported media / playback state / seek clamp / frame-canvas mapping に加え、`app` の session と `ui` の日本語 status skeleton を接続した。次は preview/editor state と free ink capture へ進む。
+- 現在のフェーズ: Phase 10 実行中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -36,14 +36,14 @@
 | Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
 | Phase 8 | 実行中 | template layout / guide geometry の最小実装を完了 |
 | Phase 9 | 実行中 | runtime discovery、raw probe、capability parser、host smoke を実装済み |
-| Phase 10 | 実行中 | imported media / playback state / seek / mapping の基礎を実装 |
+| Phase 10 | 実行中 | imported media / playback state / seek / mapping と app/ui status skeleton を実装 |
 | Phase 11 | 未着手 | |
 | Phase 12 | 未着手 | |
 | Phase 13 | 未着手 | |
 | Phase 14 | 未着手 | |
 | Phase 15 | 実行中 | bucket 解決と capability 判定の基礎を実装 |
 | Phase 16 | 未着手 | |
-| Phase 17 | 未着手 | |
+| Phase 17 | 実行中 | UI 文言と一部 preset docs の日本語化を開始 |
 | Phase 18 | 未着手 | |
 
 ## 4. 決定ログ
@@ -148,6 +148,11 @@
   - 検討した代替案: app/UI 層に playback state を置き、`media` は probe だけに留める。
   - 理由: import classification と座標変換 math は UI 非依存であり、ここを先に固定した方が preview/export 両方へ再利用しやすいため。
   - 影響: `ui` は transport 操作と表示に集中し、`media` は playback foundation の計算責務を持つ。
+- 2026-04-05T02:05:00+09:00
+  - 決定: `app` crate には session と transport 操作だけを追加し、`ui` crate には当面日本語の status model と text bootstrap だけを置く。
+  - 検討した代替案: ここで即座に GUI toolkit を導入して import/playback/preview まで一気に実装する。
+  - 理由: playback foundation の接続面を先に app/UI 境界で固定し、次の preview/editor 実装で責務を崩さないようにするため。
+  - 影響: 直近では CLI 風の status 表示だが、後続の GUI 実装は `AppSession` と UI model を差し替える形で進められる。
 
 ## 5. 作業ログ
 
@@ -251,6 +256,11 @@
   - 変更ファイル: `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `progress.md`
   - 結果: import classification、play/pause、duration clamp、letterbox 座標変換の基礎が揃い、host runtime では import smoke も通るようになった。
   - 次の一手: app/ui の状態と結び、最小の import/playback skeleton を出す。
+- 2026-04-05T02:05:00+09:00
+  - 実施内容: `app` に session/import/play/pause/seek API を追加し、`ui` に日本語 status model / text rendering を追加、binary から両者を接続した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/ui/src/lib.rs`, `progress.md`
+  - 結果: imported media と playback state を app/UI 境界へ載せる最小 skeleton ができ、状態文言を日本語で固定できた。
+  - 次の一手: preview/editor state、mode 切替、free ink capture を追加する。
 
 ## 6. 検証ログ
 
@@ -365,8 +375,12 @@
   - 結果: exit 0。11 tests passed。import media、playback state、frame-canvas mapping、host import smoke を含む。
 - `cargo test --workspace`
   - 結果: exit 0。playback foundation 追加後の回帰確認を完了。
+- `cargo test -p pauseink-app -p pauseink-ui`
+  - 結果: exit 0。`pauseink-app` 2 tests、`pauseink-ui` 1 test が通過。session/transport と日本語 status rendering の最小接続を確認。
 - `cargo test --workspace`
   - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
+- `cargo test --workspace`
+  - 結果: exit 0。app/ui status skeleton と文書更新後の workspace 回帰確認を完了。
 - `ffmpeg -version | sed -n '1,12p'`
   - 結果: Ubuntu apt build `6.1.1-3ubuntu5`。`--enable-gpl`、`--enable-libaom`、`--enable-libopus`、`--enable-libsvtav1`、`--enable-libvpx`、`--enable-libx264`、`--enable-libx265` を確認。
 - `ffprobe -version | sed -n '1,12p'`
@@ -451,8 +465,8 @@
 - typed project command は insert / z-order update までで、実 UI 操作との接続や削除/選択/batch edit はまだ未実装。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
 - Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
-- media provider は import/playback foundation まで実装済みだが、実 frame access と UI 接続は未実装。
-- frame access、実 preview 更新、transport UI 接続はまだ未実装。
+- media provider は import/playback foundation と app/ui status skeleton まで実装済みだが、実 frame access と GUI preview は未実装。
+- frame access、実 preview 更新、free ink capture、transport GUI 接続はまだ未実装。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 - export concrete settings の基礎は実装済みだが、Custom 編集 UI、project snapshot 連携、FFmpeg 実行までの export engine 本体はまだ未実装。
 
