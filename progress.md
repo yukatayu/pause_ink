@@ -17,6 +17,7 @@
   - `.pauseink` の lenient load / canonical save / unknown field 保持の最小実装とテストを追加
   - generic command history と bounded undo/redo の基礎実装を追加
   - portable settings と env override の最小実装を追加
+  - local font family 列挙と Google Fonts CSS2 URL / cache path の基礎実装を追加
   - `cargo test --workspace` を通過
 - 現在のブロッカー:
   - ホスト環境に `ffmpeg` / `ffprobe` が未配置
@@ -48,6 +49,6 @@
 
 ## 次の具体的な一手
 
-1. local font / Google Fonts 基盤の failing test を追加する。
-2. font catalog と graceful failure の最小実装に着手する。
-3. その後 template layout / guide geometry へ進む。
+1. template layout / guide geometry の failing test を追加する。
+2. grapheme-aware slot と slope / guide geometry を実装する。
+3. その後 media provider の入口へ進む。

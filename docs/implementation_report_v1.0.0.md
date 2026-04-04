@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: portable settings と env override の最小版まで実装。次は fonts 基盤。
-- 現在のフェーズ: Phase 7 着手準備中。
+- 現在の状態: fonts 基盤の最小版まで実装。次は template layout / guide geometry。
+- 現在のフェーズ: Phase 8 着手準備中。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / `ffmpeg` と `ffprobe` は未配置。
 - 最新の検証済み build: 未実施
 - 最新の検証済み composite export: 未実施
@@ -33,8 +33,8 @@
 | Phase 4 | 実行中 | portable root / env override / settings.json5 の最小実装を完了 |
 | Phase 5 | 実行中 | generic command history / bounded undo-redo の最小実装を完了 |
 | Phase 6 | 未着手 | |
-| Phase 7 | 未着手 | |
-| Phase 8 | 未着手 | |
+| Phase 7 | 実行中 | local font family 列挙、Google Fonts CSS2 URL / cache path の最小実装 |
+| Phase 8 | 着手準備中 | template layout / guide geometry を次に実装 |
 | Phase 9 | 未着手 | |
 | Phase 10 | 未着手 | |
 | Phase 11 | 未着手 | |
@@ -93,6 +93,11 @@
   - 検討した代替案: settings 保存を後回しにして app 起動時のハードコード設定だけで進める。
   - 理由: portable-state ルールと履歴深さ設定を早い段階で実コードに落とし込むため。
   - 影響: fonts / UI / export は以後この settings 構造を参照できる。
+- 2026-04-05T01:35:00+09:00
+  - 決定: Google Fonts は official CSS2 API を使って family ごとの CSS URL を構築し、キャッシュファイル名は portable root 配下で family 名を slug 化して管理する。
+  - 検討した代替案: Google Fonts の全メタデータ API や重いブラウザ依存取得に寄せる。
+  - 理由: v1.0 では configured family を軽量に取得できれば十分であり、broken entry を UI 全体から切り離しやすいため。
+  - 影響: 実ダウンロード段階では CSS から最初の `url(...)` を抽出し、失敗時はその family だけを非表示扱いにできる。
 
 ## 5. 作業ログ
 
@@ -146,6 +151,11 @@
   - 変更ファイル: `crates/portable_fs/Cargo.toml`, `crates/portable_fs/src/lib.rs`
   - 結果: env override 付き root 解決、settings ファイル位置、既定値 roundtrip をテストで固定した。
   - 次の一手: local fonts / Google Fonts catalog と graceful failure を実装する。
+- 2026-04-05T01:35:00+09:00
+  - 実施内容: fonts crate に failing test を追加し、Google Fonts CSS2 URL / cache path / CSS parser と local font family 列挙を実装。
+  - 変更ファイル: `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`
+  - 結果: broken CSS は `None` で握りつぶせる形になり、missing extra dirs も無視できるようにした。
+  - 次の一手: template layout と guide geometry を実装する。
 
 ## 6. 検証ログ
 
@@ -201,6 +211,19 @@
   - 結果: exit 0。4 tests passed。
 - `cargo test --workspace`
   - 結果: exit 0。portable settings 追加後の回帰確認を完了。
+- `cargo search fontdb --limit 1`
+  - 結果: `fontdb = "0.23.0"` を確認。
+- Google Fonts CSS2 API 公式ページ
+  - URL: https://developers.google.com/fonts/docs/css2
+  - メモ: base URL は `https://fonts.googleapis.com/css2`、`family=` を複数指定可能、`display=swap` を利用可能。最終閲覧時のページ更新日は 2024-07-23 UTC。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 101。Google Fonts URL / cache path / CSS parser API 未定義で red。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 101。`fontdb` API の iterator 想定違いで失敗。実 API に合わせて修正。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。fonts 追加後の回帰確認を完了。
 
 ## 7. 失敗と修正
 
@@ -251,6 +274,7 @@
 - `.pauseink` parse/save、undo/redo、実 UI、media provider、renderer、export はまだ本実装前。
 - command history は generic 基盤のみ実装済みで、実 project editing command はまだ未接続。
 - settings は最小実装で、ファイル I/O やディレクトリ作成、cache cleanup policy まではまだ未接続。
+- Google Fonts は URL / cache path / CSS parser までで、実ダウンロードと UI 連携はまだ未接続。
 - `.pauseink` save は現時点でコメント保持を行わない。load は許可、save は canonical JSON に正規化する。
 
 ## 13. 最終受け入れチェックリスト
