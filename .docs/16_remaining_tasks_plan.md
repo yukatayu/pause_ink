@@ -52,7 +52,7 @@
 4. clear effect の実装完了と clear / combo preset UI
 5. selection / multi-select / group / ungroup / z-order の編集導線
 6. object outline / page events panel の強化
-7. template / guide advanced controls と slot fit
+7. template / guide advanced controls
 8. portable FFmpeg sidecar packaging / provenance / notices
 9. GitHub Release への sidecar 統合
 10. Windows / macOS / Linux の最終検証
@@ -91,7 +91,7 @@
 | V1-04 | clear effect / clear preset / combo preset | V1-01 | clear kind / ordering / granularity を UI と renderer で完結させる |
 | V1-05 | selection / group / z-order foundation | なし | multi-select, group, ungroup, z-order の command と UI を入れる |
 | V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
-| V1-07 | template / guide advanced controls / slot fit | なし | line height / script scale / underlay mode / slot fit に加え、guide の次文字字間調整を UI に露出する |
+| V1-07 | template / guide advanced controls | なし | template 詳細設定を別ポップアップへ逃がし、guide の次文字字間調整を UI に露出する |
 | PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
 | PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 3 OS build + release asset に sidecar / notices を載せる |
 | QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
@@ -104,7 +104,7 @@
 - preset は現状 `style preset` に entrance まで同居しており、spec の `base style / entrance / clear / combo` 分離と `inherit / reset` UI がまだ無い。
 - selection は `selected_object_id: Option<GlyphObjectId>` の単一選択だけで、multi-select / group / ungroup / z-order 操作が未整備。
 - `オブジェクト一覧` は flat text list、`ページイベント` は flat list で、spec の tree / batch edit / alive highlight / auto-follow に未達。
-- template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足し、`slot fit` は未実装。
+- template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足している。
 - guide では `slope` しか編集できず、次文字用の縦線セットを直前文字からどれだけ離すかを調整する editor parameter がない。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 
@@ -130,6 +130,7 @@
 ### V1-01: preset 境界の正規化と field-level reset / inherit
 
 **優先度:** P0
+**ひとことで言うと:** preset を「なんでも一緒盛り」から卒業させ、あとから clear や combo を足しても壊れない土台にする task。
 **目的:** spec の preset category と reset semantics を実装可能な形へ整える。以後の effect / clear / combo 実装が後戻りしないよう、editor state と catalog 構造をここで固定する。
 
 **具体的に困る場面**
@@ -207,6 +208,7 @@
 
 **優先度:** P0
 **依存:** V1-01
+**ひとことで言うと:** なぞり書きの「今どこまで進んだか」を見やすくする先頭ハイライト演出を入れる task。
 
 **目的:** spec 5.3 の `none / solid / glow / comet-tail` を preview/export で正しく見せ、preset と project 保存に接続する。
 
@@ -270,6 +272,7 @@
 
 **優先度:** P0
 **依存:** V1-01
+**ひとことで言うと:** 書き終わった後の点滅、発光、色変化など「後からかかる演出」を入れる task。
 
 **目的:** `during reveal / after stroke / after glyph object / after group / after run` に対する built-in post-action を renderer と UI へ接続する。
 
@@ -339,6 +342,7 @@
 
 **優先度:** P0
 **依存:** V1-01
+**ひとことで言うと:** `全消去` を「ただ消すだけ」から、順番付きや dissolve 付きで編集できる機能へ広げる task。
 
 **目的:** clear event を `Instant / Ordered / ReverseOrdered / WipeOut / DissolveOut` まで UI と renderer で完結させ、clear preset と combo preset へ接続する。
 
@@ -408,6 +412,7 @@
 
 **優先度:** P0
 **依存:** なし
+**ひとことで言うと:** 複数選択、グループ化、前面/背面のような「編集の土台」を作る task。
 
 **目的:** spec 9 の編集導線を成立させる。現在の単一 `selected_object_id` から multi-select と command 群へ拡張する。
 
@@ -476,6 +481,7 @@
 
 **優先度:** P1
 **依存:** V1-04, V1-05
+**ひとことで言うと:** 下の一覧パネルを「ただの文字列」から、探しやすく編集しやすい実用品へする task。
 
 **目的:** spec 10 の panel 要件へ近づける。flat list を tree / batch-edit 可能な panel に引き上げる。
 
@@ -535,85 +541,82 @@
 - page events tab から clear を編集しやすい
 - batch edit と auto-follow が spec に沿う
 
-### V1-07: template / guide advanced controls と slot fit
+### V1-07: template / guide advanced controls
 
 **優先度:** P1
 **依存:** なし
+**ひとことで言うと:** 左ペインで詰まり気味の template / guide 設定を整理し、実用上ほしい細かな調整を足す task。
 
-**目的:** spec 4.3 / 7 の template settings を UI へ露出し、slot fit と guide の次文字字間調整を v1.0 範囲で入れる。
+**目的:** spec 4.3 / 7 の template settings を別ポップアップで編集可能にし、guide の次文字字間調整を v1.0 範囲で入れる。
 
 **具体的に困る場面**
 
 - 利用者がかな/英字/句読点の混在したテンプレートを書いても、現状は advanced controls が無いため「英字だけ少し小さく」「行間を狭く」といった実運用上の調整ができない。
-- slot fit が無いので、template を薄い下書きとして使った後に位置だけ揃えたい場合も手で微調整するしかない。
 - guide を使って連続で文字を書くとき、文字の右端と次の縦線セットが近すぎたり遠すぎたりしても、今は gap を調整できない。たとえば横に寝た字形や払いの長い字の直後で、次のマスを少し右へ逃がしたい場面に対応できない。
-- 開発者が fit を後付けすると、transform を slot commit 時に掛けるのか、後から再配置でも掛け直すのかで手戻りが出やすい。
 - 開発者が guide gap を後付けすると、`cell_width` 由来の固定幅・`next_cell_origin_x` の送り方・project/settings 保存のどこに属する値かが後からずれやすい。
 
 **現状の問題**
 
 - `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` は内部 state にあるが UI に出ていない。
-- `slot fit` の `Off / Move only / Weak uniform scale` が未実装。
 - guide の次文字送りは直前文字全体の union bounds までは実装済みだが、その右端からさらに空ける `gap` を持っていない。
 
 **設計**
 
-- template editor は左ペインのまま維持し、advanced section を `詳細` collapsible にまとめる。
-- guide の詳細設定も左ペインへまとめ、`ガイド傾き` の直下に `次文字字間` スライダーを置く。
-- slot fit は object capture 後の幾何補正ではなく、slot commit 時の object transform として適用する。
-  - `Off`: 現状維持
-  - `MoveOnly`: slot center へ平行移動だけ
-  - `WeakUniformScale`: bounding box 比から `1.0..=1.15` 程度の弱い uniform scale を掛ける
-- stroke の最終表示はユーザー手書き主体を守るため、非一様スケールや強制歪みは入れない。
-- guide gap は `next_cell_origin_x = previous_character_max_x + gap` の形で適用し、縦線セット幅そのものは変えない。
+- template 詳細設定は左ペインに詰め込まず、`テンプレート詳細` ポップアップへ逃がす。
+- ポップアップで変更した値は即時に preview / placed slot へ反映する。
+- guide 設定は左ペインに残し、`ガイド傾き` の直下に `次文字字間` スライダーを置く。
+- guide gap は既存 guide overlay にも即時反映し、スライダーを動かした瞬間に縦線位置が更新されるようにする。
+- guide gap は `guide_next_gap_ratio: f32` として持ち、`next_cell_origin_x = previous_character_max_x + cell_width * guide_next_gap_ratio` の形で適用する。縦線セット幅そのものは変えない。
+- gap の単位は `cell_width` 比で固定する。`0.0` が「右端ぴったり」、`0.25` が「1 マス幅の 25% だけ右へ空ける」、`-0.20` が「20% だけ食い込ませる」を意味する。
+- gap は負値を許可する。ただし fallback advance の歩幅が 0 以下にならないよう、UI 範囲は `-0.50..=1.50` を既定とし、`次送りのみの連打` では `cell_width * (1.0 + guide_next_gap_ratio)` を 1 ステップとして使う。
 - gap の見た目は slope と independent に保存し、傾けても「文字間の横方向余白」を調整するための値として扱う。
+- 保存先は guide slope と同じ経路に揃える。つまり live 値は `Settings` に持ち、project save/reopen と app relaunch の復元は `ProjectEditorUiState` を介して `project.settings.pauseink_editor_ui` と `settings.editor_ui_state` の両方へ流す。
 
 **着手前に決めるべきこと**
 
-- fit を「新規 commit 時だけ適用」するか、「設定変更後に既存 slot へ再適用」するか。後から変えると object transform の意味が変わる。
-- `WeakUniformScale` の上限値と下限値をどこに置くか。後から cap を変えると既存 project の見た目が変わる。
-- advanced controls を左ペイン常設にするか、折りたたみ詳細に寄せるか。UI の占有幅に効く。
 - mixed-script line height の基準を font size 基準に固定するか、最大 glyph height 基準にするか。slot 生成式の根本になる。
-- guide gap の単位を `canvas px` にするか `cell_width 比` にするか。後から変えると save 値の意味と UI 体感が変わる。
-- guide gap を負値まで許すか、`0` 以上へ clamp するか。後から変えると既存 project で文字が重なる/重ならないの意味が変わる。
-- gap を `project` に保存するか `workspace/settings` に保存するか。後から移すと reopen / relaunch の復元位置がずれる。
+- template 詳細ポップアップをモーダルにするか、非モーダルの小ウィンドウにするか。操作中に canvas を見ながら微調整できるかが変わる。
+- guide gap の UI 表現を slider only にするか、slider + numeric 表示にするか。値の discoverability と細かい調整性に影響する。
 
 **変更ファイル**
 
 - Modify: `crates/template_layout/src/lib.rs`
 - Modify: `crates/app/src/main.rs`
 - Modify: `crates/app/src/lib.rs`
+- Modify: `crates/portable_fs/src/lib.rs`
 - Modify: `manual/user_guide.md`
 - Modify: `manual/developer_guide.md`
 
 **実装ステップ**
 
-1. 左ペイン template section に advanced controls を追加する。
-2. `UnderlayMode` の dropdown を追加する。
-3. 左ペイン guide section に `次文字字間` スライダーを追加し、guide geometry 生成式へ接続する。
-4. slot fit mode を editor state と project/settings restore に追加する。
-5. slot commit 時に `MoveOnly / WeakUniformScale` を object transform へ適用する。
-6. preview と export が同じ transform を使うこと、guide gap が save/reopen で戻ることを確認する。
+1. template 詳細を開くポップアップと、その中の advanced controls を追加する。
+2. `UnderlayMode` の dropdown と script scale / line height controls をポップアップへ移す。
+3. `Settings` と `ProjectEditorUiState` に `guide_next_gap_ratio` を追加し、guide slope と同じ保存経路へ乗せる。
+4. 左ペイン guide section に `次文字字間` スライダーを追加し、guide geometry 生成式へ接続する。
+5. `next_cell_origin_x` の更新式と fallback advance を `guide_next_gap_ratio` 対応に直す。
+6. template 詳細ポップアップの変更が placed slot と preview に即時反映されることを確認する。
+7. guide gap が save/reopen と app relaunch の両方で戻ることを確認する。
 
 **必要テスト**
 
 - `template_layout`: script scale / line height / underlay mode の UI 値が slot 計算へ反映される
-- `app` / `guide`: gap を変えると次文字縦線の開始 x だけが変わり、縦線セット幅は変わらない
-- `app`: save/reopen で advanced template settings と fit mode が戻る
-- `app`: save/reopen または settings relaunch で guide gap が戻る
-- `renderer/app`: `WeakUniformScale` が上限を超えず、stroke 形状を過度に歪めない
+- `app` / `guide`: gap を変えると次文字縦線の開始 x だけが `cell_width * ratio` 分だけ変わり、縦線セット幅は変わらない
+- `app` / `guide`: 負の gap でも次文字送りが動作し、fallback advance が 0 以下にならない
+- `app`: save/reopen で advanced template settings が戻る
+- `app`: save/reopen と settings relaunch の両方で guide gap が guide slope と同じ経路で戻る
+- `app`: template 詳細ポップアップの値変更が preview / placed slot に即時反映される
 
 **完了条件**
 
 - template advanced settings が GUI から編集できる
 - guide の次文字字間が GUI から編集できる
-- slot fit が spec の 3 モードで動く
-- 手書き主体の見た目を壊さない
+- template 詳細と guide gap がリアルタイムで反映される
 
 ### PKG-01: portable FFmpeg sidecar packaging / provenance / notices
 
 **優先度:** P0
 **依存:** なし
+**ひとことで言うと:** 配布 zip を展開しただけで動くように、FFmpeg 同梱の出荷形を作る task。
 
 **目的:** mainline runtime 方針を host `ffmpeg` 依存から脱し、portable sidecar runtime を release-ready にする。
 
@@ -678,6 +681,7 @@
 
 **優先度:** P0
 **依存:** PKG-01
+**ひとことで言うと:** GitHub Release に 3 OS 分の「完成した配布物」を自動で正しく載せる task。
 
 **目的:** tag が `main` に入った時に 3 OS の app + sidecar + notices を GitHub Release へ確実に上げる。
 
@@ -734,6 +738,7 @@
 
 **優先度:** P0
 **依存:** V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02
+**ひとことで言うと:** 最後に各 OS で本当に使えるかを確認し、完了判定を閉じる task。
 
 **目的:** done criteria を最後に閉じる。Linux / Windows / macOS で build / import / save-load / composite export / transparent export を確認し、残制限を確定する。
 
@@ -803,8 +808,8 @@
 
 1. `V1-01` preset 境界正規化
    - 以後の effect / clear / combo の保存境界をここで固定しないと schema の手戻りが大きい。
-2. `V1-07` template / guide advanced controls / slot fit
-   - 独立性が高く、既存 UI を壊しにくい。早めに片付けると mixed-script/template と guide 運用上の細かなストレスを同時に減らせる。
+2. `V1-07` template / guide advanced controls
+   - 独立性が高く、既存 UI を壊しにくい。template 詳細ポップアップと guide gap は軽めで、早めに片付けると運用上の細かなストレスを減らせる。
 3. `V1-02` reveal-head effect
    - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
 4. `V1-04` clear / clear preset / combo preset

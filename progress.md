@@ -8,13 +8,15 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: 残タスク計画を保守し、guide の次文字字間スライダー要件を着手順を崩さず `V1-07` に織り込む。
+- 現在の即時マイルストーン: 残タスク計画を保守し、`V1-07` を user 指定どおり「template 詳細ポップアップ + guide 字間」に絞り直す。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
   - `develop` ブランチで作業継続
-  - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls / slot fit` へ更新し、guide の次文字字間スライダーを TODO へ追加した
-  - guide 字間 TODO について、困る具体例、着手前に決めるべきこと、保存先、単位、負値可否、テスト観点まで追記した
+  - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls` へ絞り直し、slot fit を計画から外した
+  - guide 字間は `cell_width` 比、負値許可、guide slope と同じ保存経路で固定した
+  - template 詳細は左ペインへ詰め込まず別ポップアップ前提にし、変更がリアルタイムで preview / placed slot へ反映される設計へ更新した
+  - 各残 task に `ひとことで言うと` を追加し、利用者目線での意味が追いやすい計画書へ整えた
   - `.pauseink` lenient load / canonical save / unknown field 保持を実装
   - bounded undo/redo と history depth 設定を実装
   - portable settings、cache/autosave/runtime path、cache cleanup helper を実装
