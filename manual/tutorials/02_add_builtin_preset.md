@@ -1,15 +1,60 @@
-# Tutorial 02 — add a built-in preset
+# チュートリアル 02 — built-in style preset を追加する
 
-This is a target tutorial. Codex must update it after the real implementation exists.
+## 目的
 
-## Goal
+PauseInk の built-in base style preset を 1 つ追加し、右ペイン `組み込み preset` から適用できることを確認します。
 
-Show a developer how to add a new built-in style or combo preset.
+## 前提
 
-## Expected final contents
+- preset ファイルは `presets/style_presets/*.json5`
+- loader は `pauseink-presets-core` の `load_base_style_presets_from_dir`
+- 現 UI では `thickness`、`color_rgba`、`opacity`、`outline`、`drop_shadow`、`glow`、`blend_mode`、`entrance.kind`、`entrance.duration_mode`、`entrance.duration_ms`、`entrance.speed_scalar` を適用できます
 
-- where built-in preset files live
-- how preset snapshots work
-- how to expose the preset in the UI
-- how to test it
-- how to validate it manually
+## 例: 新しい preset を追加する
+
+1. `presets/style_presets/soft_blue_note.json5` を作る
+
+```json5
+{
+  id: "soft_blue_note",
+  display_name: "やわらか青メモ",
+  base_style: {
+    thickness: 8.0,
+    color_rgba: [0.45, 0.72, 1.0, 0.95],
+  },
+  entrance: {
+    kind: "instant",
+    target: "group",
+  },
+}
+```
+
+2. loader test を通す
+
+```bash
+cargo test -p pauseink-presets-core
+```
+
+3. display が使える環境なら app を起動して右ペインから適用する
+
+```bash
+cargo run -p pauseink-app
+```
+
+確認点:
+
+- `組み込み preset` の一覧に追加した名前が出る
+- `preset を適用` を押すと `太さ`、色、effect、出現設定が変わる
+
+headless 環境では `cargo check -p pauseink-app --all-targets` までを自動検証とし、UI 確認は表示環境で行う。
+
+## 実装上の注意
+
+- 現 v1.0 実装では clear / combo preset の専用 UI、reveal-head effect、post-action chain は未接続
+- project へ実際に反映されるのは、その preset 適用後に新しく描いた stroke
+- 既存 stroke を一括再解決する機能はまだ入れていない
+
+## この repository で実際に使った確認コマンド
+
+- `cargo test -p pauseink-presets-core`
+- `cargo check -p pauseink-app --all-targets`

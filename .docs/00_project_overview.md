@@ -1,44 +1,44 @@
-# Project overview
+# 概要
 
-## Product intent
+## 製品の狙い
 
-PauseInk is a desktop tool for adding handwritten overlays to video with a workflow centered on:
+PauseInk は、動画の上に手書きの注釈を重ねるためのデスクトップアプリです。主な流れは次の通りです。
 
-- loading a local video,
-- pausing or playing it,
-- drawing annotations directly over the frame,
-- optionally using guides or template slots,
-- replaying those annotations with reveal effects,
-- clearing the page manually at chosen moments,
-- exporting either the composite or the annotation layer.
+- ローカル動画を読み込む
+- 再生・一時停止する
+- フレーム上へ直接注釈を書く
+- 必要に応じてガイドやテンプレート枠を使う
+- その注釈を reveal 効果付きで再生する
+- 任意のタイミングでページを手動で消去する
+- 合成結果または注釈レイヤーを出力する
 
-This is not a general nonlinear editor, not a whiteboard recorder, and not a font substitution tool.
+これは一般的な NLE でも、ホワイトボード録画ツールでも、フォント置換ツールでもありません。
 
-## Primary users
+## 主な利用者
 
-- Vlog editors who want casual handwritten overlays
-- commentary creators who pause and annotate scenes
-- VOICEROID / synthetic voice creators who want “light handwritten note” aesthetics
-- users who prefer a portable, install-light workflow
+- 気軽な手書き注釈を載せたい vlog 編集者
+- シーンを止めて書き込みたい解説系制作者
+- VOICEROID / 合成音声系で「軽い手書きメモ」感を出したい制作者
+- インストール負荷の低い、持ち運び前提のワークフローを好む利用者
 
-## v1.0 positioning
+## バージョン 1.0 の位置づけ
 
-v1.0 must optimize for simplicity, predictability, and portability:
+v1.0 は、単純さ・予測可能性・ポータビリティを最優先にします。
 
-- single main window
-- manual clear only
-- no arbitrary partial clear
-- no runtime-scripting hot path
-- no dependence on OS-level app-state directories
-- no mandatory GPU
-- no required browser runtime
-- no required systemwide install
+- 単一メインウィンドウ
+- 手動 clear のみ
+- 任意の部分 clear はなし
+- 実行時スクリプト hot path はなし
+- OS の app-state ディレクトリに依存しない
+- GPU は必須ではない
+- ブラウザ実行環境は不要
+- システム全体への常駐インストールは不要
 
-## Key language
+## 重要用語
 
-- **Stroke**: one pen-down to pen-up capture
-- **Glyph Object**: one handwritten character-like object, possibly composed of multiple strokes
-- **Group**: a user-created collection of glyph objects and/or strokes that share reveal behavior
-- **Page**: the timeline interval between clear events
-- **Clear Event**: a screen-wide event that removes all alive annotations on the page at that time
-- **Template Slot**: a layout cell derived from input text and font/template settings
+- **Stroke**: 1 回の pen-down から pen-up までの入力記録
+- **Glyph Object**: 複数 stroke から成りうる、1 つの手書き文字相当オブジェクト
+- **Group**: reveal 挙動を共有する、利用者作成の glyph object / stroke の集合
+- **Page**: clear event 同士のあいだにある時間区間
+- **Clear Event**: その時点でページ上の生存中注釈をすべて消す screen-wide イベント
+- **Template Slot**: 入力テキストと font/template 設定から導かれるレイアウト枠

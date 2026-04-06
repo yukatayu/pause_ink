@@ -1,69 +1,69 @@
-# Testing strategy and done criteria
+# テスト方針と完了条件
 
-## 1. Testing philosophy
+## 1. テストの考え方
 
-The user explicitly prefers:
+利用者は明示的に次を好んでいます。
 
-- careful phased development
-- strong unit coverage
-- minimized rework
-- honest validation logs
+- 丁寧な段階的開発
+- 強い unit coverage
+- やり直しの最小化
+- 正直な検証ログ
 
-So the implementation must be test-heavy and incremental.
+そのため、実装は test-heavy かつ incremental に進めます。
 
-## 2. Required unit-test areas
+## 2. 必須の unit test 領域
 
-At minimum, cover:
+少なくとも次をカバーします。
 
-- project parse/normalize/save
-- unknown-field preservation
-- command model and undo/redo
-- clear event semantics
-- grouping and ungrouping
+- project の parse / normalize / save
+- 未知フィールドの保持
+- command model と undo / redo
+- clear event の意味論
+- grouping / ungrouping
 - guide geometry
-- template slot generation
+- template slot の生成
 - profile resolution
-- preset inheritance/override/reset
+- preset の inheritance / override / reset
 - portable path resolution
-- media capability parsing (where mockable)
-- hardware-fallback selection logic
-- smoothing helper math
-- snapshot/job isolation logic
+- media capability parsing（mock 可能な範囲）
+- hardware fallback の選択ロジック
+- smoothing helper の数理
+- snapshot / job の分離ロジック
 
-## 3. Required integration/smoke areas
+## 3. 必須の integration / smoke 領域
 
-At minimum, validate:
+少なくとも次を検証します。
 
-- create project -> save -> reopen -> compare
-- import media -> annotate -> clear -> save
+- project を作る -> save -> reopen -> compare
+- media を import して -> 注釈して -> clear して -> save
 - composite export
 - transparent export
-- Google Fonts graceful failure
-- portable root locality
-- tutorial sample behavior
+- Google Fonts の graceful failure
+- portable root の locality
+- tutorial sample の挙動
 
-## 4. Golden/reference tests
+## 4. Golden / reference test
 
-Use golden tests where useful for:
+必要に応じて golden test を使います。対象は次の通りです。
 
-- canonical project save output
-- profile computation tables
-- CPU compositor outputs (if practical)
-- guide geometry reference cases
+- canonical な project save output
+- profile 計算表
+- CPU compositor の出力（実用的なら）
+- guide geometry の参照ケース
 
-## 5. Failure logging requirement
+## 5. 失敗ログの要件
 
-Every significant failed attempt must go into `docs/implementation_report_v1.0.0.md`.
+目立った失敗はすべて `docs/implementation_report_v1.0.0.md` に記録します。
 
-## 6. Done criteria
+## 6. 完了条件
 
-The project is done only when:
+次の条件をすべて満たしたときだけ、プロジェクトは完了です。
 
-- the host build succeeds
-- core tests pass
-- at least one end-to-end composite export is validated
-- at least one transparent export is validated
-- docs match reality
-- tutorial sample is validated
-- Windows build attempt is documented
-- known limitations are written down honestly
+- host build が成功する
+- core tests が通る
+- 少なくとも 1 回の end-to-end composite export を検証済み
+- 少なくとも 1 回の transparent export を検証済み
+- docs が実態と一致している
+- tutorial sample を検証済み
+- Windows build の試行が記録されている
+- 既知の制限が正直に書かれている

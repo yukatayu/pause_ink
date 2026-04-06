@@ -1,49 +1,49 @@
-# Future work
+# 将来の作業
 
 ## 1. Partial clear
 
-Not in v1.0.  
-Future order of consideration:
+v1.0 には入れません。  
+将来の検討順は次の通りです。
 
 1. manual page break + carry-forward
-2. keep selected group into next page
-3. group-scoped clear
-4. arbitrary partial clear
+2. 選択した group を次 page に残す
+3. group 単位の clear
+4. 任意の partial clear
 
-## 2. Pen pressure
+## 2. ペン圧
 
-Real pressure support is future work.  
-Architectural requirement in v1.0: do not block it.
+本当の pressure support は future work です。  
+v1.0 でのアーキテクチャ要件は、それを塞がないことです。
 
 ## 3. Auto taper / pseudo-pressure
 
-Future checkbox-level feature:
+将来の checkbox レベル機能です。
 
-- Auto taper on/off
-- later: advanced controls
+- Auto taper の on / off
+- 後から advanced control
 
-Recommended future signals:
+推奨する将来 signal は次の通りです。
 
 - path progress
 - speed
-- local curvature
-- start/end proximity
+- 局所 curvature
+- start / end への近さ
 
 ## 4. Proxy media
 
-Not in v1.0.  
-Design the media layer so proxy generation can be added later without replacing the project model.
+v1.0 には入れません。  
+project model を差し替えずにあとから proxy 生成を足せるよう、media 層を設計します。
 
 ## 5. GPU export compositor
 
-Future optimization only.  
-Do not compromise v1.0 correctness for it.
+将来の最適化に限ります。  
+v1.0 の正しさを犠牲にしてはいけません。
 
-## 6. Codec-pack helper tooling
+## 6. Codec-pack 補助ツール
 
-Future helper for obtaining optional codec-capable FFmpeg runtimes with clear provenance/compliance documentation.
+optional で codec を使える FFmpeg runtime を、provenance / compliance を明確にしながら取得するための将来ツールです。
 
 ## 7. Effect scripting
 
-Out of scope for v1.0.  
-A future safe expression layer or scripting API may be added, but not in the hot path first.
+v1.0 の対象外です。  
+将来、安全な expression layer や scripting API を足す可能性はありますが、最初に hot path へ入れてはいけません。

@@ -5,7 +5,24 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+eframe = "0.34.1"
 pauseink-domain = { path = "../domain" }
+pauseink-export = { path = "../export" }
+pauseink-fonts = { path = "../fonts" }
+pauseink-media = { path = "../media" }
 pauseink-project-io = { path = "../project_io" }
 pauseink-portable-fs = { path = "../portable_fs" }
 pauseink-presets-core = { path = "../presets_core" }
+pauseink-renderer = { path = "../renderer" }
+pauseink-template-layout = { path = "../template_layout" }
+pauseink-ui = { path = "../ui" }
+rfd = "0.17.2"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-segmentation = "1.12"
+
+[dev-dependencies]
+tempfile = "3"

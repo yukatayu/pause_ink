@@ -1,118 +1,118 @@
-# UI and window model
+# 画面とウィンドウモデル
 
-## 1. Windowing stance
+## 1. ウィンドウ方針
 
-v1.0 uses a **single main window**.
+v1.0 は **単一のメインウィンドウ** を使います。
 
-Reasons:
+理由は次の通りです。
 
-- reduces cross-platform complexity
-- avoids detached-window synchronization bugs
-- simplifies persistence/restoration
-- reduces Codex implementation risk
+- クロスプラットフォームの複雑さを下げる
+- 分離した window の同期バグを避ける
+- 永続化 / 復元を単純にする
+- Codex 実装時のリスクを下げる
 
-No detached floating tool windows are required in v1.0.
+v1.0 では detached な floating tool window は不要です。
 
-## 2. Main window layout
+## 2. メインウィンドウのレイアウト
 
-Recommended layout:
+推奨レイアウトは次の通りです。
 
 ```text
 +----------------------------------------------------------------------------------+
-| Menu / project / transport / page info / status                                  |
+| メニュー / project / transport / page 情報 / status                            |
 +----------------------+------------------------------------+----------------------+
-| Left rail            | Central canvas                     | Inspector            |
-| - Media              | - Video preview                    | - Selection          |
+| 左レール             | 中央 canvas                         | Inspector            |
+| - Media              | - 動画 preview                      | - Selection          |
 | - Template           | - Overlay preview                  | - Style              |
-| - Fonts              | - Capture interactions             | - Entrance           |
+| - Fonts              | - Capture interaction              | - Entrance           |
 | - Presets            |                                    | - Post actions       |
 |                      |                                    | - Template settings  |
 +----------------------+------------------------------------+----------------------+
-| Bottom tabs: Object Outline | Page Events | Export Queue | Logs                  |
+| 下部タブ: Object Outline | Page Events | Export Queue | Logs                    |
 +----------------------------------------------------------------------------------+
 ```
 
-## 3. Required panels
+## 3. 必要な panel
 
-### 3.1 Left rail
+### 3.1 左レール
 
-Sections:
+区分は次の通りです。
 
-- **Media**: file import, metadata summary, runtime diagnostics
-- **Template**: text entry, underlay mode, slot-related controls
-- **Fonts**: local fonts, Google Fonts, refresh, broken-entry visibility
-- **Presets**: built-in and user preset browsing
+- **Media**: file import、metadata 概要、runtime diagnostics
+- **Template**: テキスト入力、underlay mode、slot 関連操作
+- **Fonts**: local fonts、Google Fonts、refresh、壊れた entry の表示切替
+- **Presets**: built-in / user preset の閲覧
 
 ### 3.2 Inspector
 
-Context-sensitive.
+文脈依存です。
 
-Expected groups:
+想定する区分は次の通りです。
 
 - Selection summary
 - Base style
 - Entrance
 - Reveal-head effect
 - Post-actions
-- Group info
+- Group 情報
 - Transform
-- Template placement settings when template mode is active
+- template mode 中の template placement 設定
 
-### 3.3 Bottom tabs
+### 3.3 下部タブ
 
 - **Object Outline**
 - **Page Events**
 - **Export Queue**
 - **Logs**
 
-## 4. Modal dialogs
+## 4. モーダルダイアログ
 
-Allow these in v1.0:
+v1.0 で許可するのは次の通りです。
 
-- Open project
+- Project を開く
 - Save As
-- Import media
+- Media を import
 - Export
 - Preferences
 - Font manager / font refresh
 - Cache manager
-- Missing runtime / codec provider info
-- Recovery prompt
+- runtime / codec provider 不足情報
+- recovery prompt
 - Error dialog
 
-Avoid extra modal proliferation.
+モーダルを増やしすぎないでください。
 
 ## 5. Transport controls
 
-Required controls:
+必要な操作は次の通りです。
 
 - play
 - pause
 - seek bar
 - current time
-- frame- or short-step controls if feasible
-- insert clear
+- 可能なら frame / short-step 操作
+- clear 挿入
 
-Insert Clear must work both while paused and while playing.
+Insert Clear は pause 中でも再生中でも動作しなければなりません。
 
-## 6. Visible state cues
+## 6. 見えているべき状態
 
-The UI must make it easy to see:
+UI では次をすぐに見分けられるようにします。
 
-- current page boundaries
-- currently alive objects
-- current selection
-- current active template mode
-- whether GPU preview is active or disabled/fallback
-- whether media HW accel is active, unavailable, or disabled
-- whether the active export path is hardware-assisted or software fallback
+- 現在の page boundary
+- 現在生存している object
+- 現在の selection
+- 現在の template mode
+- GPU preview が有効か、無効か、fallback か
+- media HW accel が有効か、利用不可か、無効か
+- 現在の export path が hardware-assisted か software fallback か
 
-## 7. Avoidable complexity for v1.0
+## 7. v1.0 で避ける複雑さ
 
-Avoid adding:
+次のものは追加しません。
 
 - scripting editor
-- floating property windows
-- partial-clear targeting UI
-- nested multitrack media timelines
-- per-object exit track editors
+- floating property window
+- partial-clear target UI
+- ネストした multitrack media timeline
+- object ごとの exit track editor

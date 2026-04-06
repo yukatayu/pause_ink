@@ -1,39 +1,142 @@
-# PauseInk progress
+# PauseInk 進捗
 
-This file must stay short, current, and truthful.
+このファイルは短く、最新で、事実ベースに保つ。
 
-## Current overall status
+## 現在地
 
-- Repository type: Codex handoff package
-- Product version target: v1.0.0
-- Locked design state: **ready for implementation**
-- Latest repository refresh reason: final spec freeze after manual clear / GPU / export / Adobe / portable-state decisions
+- 作業ブランチ: `prototype`
+- 目標バージョン: `v1.0.0`
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
+- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
+- 現在の即時マイルストーン: paused batch preview / cross-object effect order / workspace 復元まわりの修正は完了。次は reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを v1.0 残項目として整理する。
+- 最新の確認事項:
+  - `AGENTS.md` と `.docs/` を全件読了
+  - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
+  - `prototype` ブランチで作業継続
+  - `.pauseink` lenient load / canonical save / unknown field 保持を実装
+  - bounded undo/redo と history depth 設定を実装
+  - portable settings、cache/autosave/runtime path、cache cleanup helper を実装
+  - local font discovery、Google Fonts CSS/cache helper、実 fetch と graceful failure を実装
+  - template slot / guide geometry を実装
+  - FFmpeg runtime discovery / probe / capability parser / preview frame を実装
+  - export family/profile catalog と base style preset loader を実装
+  - export engine、custom profile 編集、HW try / software fallback、transparent/composite smoke export を実装
+  - `app` binary に preferences / cache manager / runtime diagnostics / export queue を接続
+  - built-in base style preset の読み込みと適用 UI を接続
+  - `.docs/` 配下を日本語へ統一し、`.docs/05_project_file_format.md` を現行 schema に同期
+  - `samples/minimal_project.pauseink` を現行 `.pauseink` schema へ更新
+  - integration / smoke として `create -> save -> reopen -> compare`、`import -> annotate -> clear -> save` を追加し通過
+  - tutorial validation を一時 preset/profile 追加で実施し、loader / app compile を通過
+  - `.github/workflows/ci.yml` を追加し、`main` push と `pull_request` で `cargo check` / `cargo test --workspace` を走らせる構成を追加
+  - `.github/workflows/release.yml` を追加し、tag push または tag 付き commit の `main` 流入時に Linux / macOS / Windows build を作って GitHub Release へ添付する構成を追加
+  - `scripts/package_release_asset.py` を追加し、release asset の archive 化を workflow から再利用できる形にした
+  - preview overlay を source frame 座標から target texture 座標へ縮尺して描くよう修正し、マウス描画時の見かけの大きな位置ずれを解消
+  - canvas pointer helper の roundtrip / letterbox test を追加し、preview 座標変換の再発防止を強化
+  - `egui` 起動時に system / portable font から日本語 UI fallback font を登録し、Windows 環境での豆腐化を回避する構成にした
+  - bugfix sanity review sub-agent でも、preview の source/target 座標不一致と `egui` 日本語 font 未登録が主因であることを再確認した
+  - bugfix 反映 commit `217d1ae` を `origin/prototype` へ push 済み
+  - 現在の追加修正バッチでは、template underlay の字幅/字詰め/傾き/フォント選択、object list と log の drag resize、transport bar の明示、Ctrl-Z / Ctrl-Shift-Z / Ctrl-Y、Ctrl タップでの次文字縦ガイド進行、template 配置中の stroke 抑止を進めている
+  - template 字詰めは単文字固定幅ではなく、実フォント shaping と kerning を使う形へ更新した
+  - architecture / UI 観点の sub-agent 2 件を回収済みで、panel resize・shortcut・runtime help・template slot 幅の根本原因を確認した
+  - transport bar を上部直下へ追加し、再生 / 一時停止 / seek の導線を分離した
+  - template font dropdown は読み込み済み family を列挙し、選択 family を egui へ lazy 登録する形で反映した
+  - Ctrl タップでの次文字縦ガイド送りと、template 配置待ち中の stroke 抑止を実装した
+  - Ctrl guide capture は modifier 押下中の複数 stroke を同一 reference glyph に寄せ、modifier release で確定する挙動へ更新した
+  - 描画中の stroke を `AppSession` の draft から stabilized preview として取り出し、committed overlay の上に live 表示するよう更新した
+  - live preview sanity review sub-agent でも、draft は editor-only overlay として app painter で描くのが最小で安全という結論を確認した
+  - `前スロット` を追加し、template slot の前後移動を underflow / overflow しない helper へ寄せた
+  - 既存 object へ stroke を append する際、object style も最新の active style へ同期するよう修正し、基本スタイル変更が template / guide の継続描画で反映されるようにした
+  - `ガイド解除` は overlay だけでなく capture 文脈、modifier 状態、last committed bounds もまとめて捨てるようにした
+  - renderer の effect 合成を object 単位の multi-pass へ寄せ、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくい順序へ補正した
+  - effect 実装状況も整理し、renderer backend は整ったが、UI/preset loader は引き続き thickness / color 中心であることを明記した
+  - FFmpeg runtime 再検出を `機能情報更新` / `診断を再取得` に接続し、起動後に sidecar や host runtime を配置した場合でもその場で再 discovery できるようにした
+  - runtime 未検出時の最後の discovery error を診断 UI に保持し、原因が見えなくなる問題を減らした
+  - Windows の `WinGet Links` / `WinGet Packages` / `WindowsApps` / Scoop、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を system runtime 探索対象に追加した
+  - 配置済み template は `placed_origin` を保持し、文字列 / フォント / フォントサイズ / 字間 / 傾きの変更時に slot box を再計算するようにした
+  - template underlay は committed stroke と live stroke の下へ回し、input を preview 描画より先に処理して描き始めのラグを減らした
+  - canvas input は `drag_started` 依存を避け、current frame の `PointerButton` press 座標を最初の sample として優先的に取り込むようにした
+  - press frame の duplicate sample を抑止し、1 点目が zero-length line になって消えるケースを防いだ
+  - guide の横線は current frame の左右端まで伸ばして描くようにし、表示領域いっぱいで基準線を見られるようにした
+  - live preview の線幅は renderer と同じ downscale 比率へ合わせ、ペンを離す前だけ不自然に太く見える差を減らした
+  - `project.settings.pauseink_editor_ui` と `project.presets.base_style` に、template text/font/layout、guide 傾き、resolved base style snapshot、選択 preset ID を保存するようにした
+  - built-in preset に加えて `pauseink_data/config/style_presets/*.json5` の user preset overlay を読み込むようにし、GUI から追加保存 / 上書き保存 / 削除できるようにした
+  - user preset は built-in と同じ `id` を使うと overlay として優先され、削除すると built-in 側へ自然に戻る
+  - 下部タブは `内容幅` を持つ固定高さ scroll region に整理し、object list / logs が増えても panel 自体の縦サイズが揺れないようにした
+  - export 実行中は `実行中:` の下と `書き出しキュー` の両方に stage 名付き progress bar を表示するようにした
+  - 基本スタイルの色 picker は RGB のみに絞り、不透明度は単一の `不透明度` スライダーへ統一した
+  - inspector に outline / drop shadow / glow / blend mode / 出現方式 / 時間モード / 時間 / 出現速度を追加し、preset / project save / renderer まで接続した
+  - `project.presets.entrance` に resolved entrance snapshot を保存し、reopen 後も出現設定を復元するようにした
+  - `presets/style_presets/*.json5` と `pauseink_data/config/style_presets/*.json5` は base style に加えて entrance を読み書きできるようにした
+  - `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture`、`cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture` を通過
+  - `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - `.docs/11_implementation_plan.md` を再確認し、Phase 14 の残 gap は reveal-head effect、post-action chain、clear/combo preset 専用 UI であることを棚卸しした
+  - 動画 export の 92% 固定は ffmpeg 実行中の progress 未更新が原因だったため、`-progress pipe:1` を使って encode 中も進捗が進むように修正した
+  - hardware fallback で encode 経路が切り替わっても progress bar が逆走しないよう、pending progress は単調増加で保持するようにした
+  - `progress=end` は即「完了」扱いにせず「最終処理中」表示へ切り替え、`3/3 一時ファイルを整理中` と説明文を出すようにして、99% / 100% 表示のまま何待ちか分からない状態を解消した
+  - page 内の entrance sequencing を見直し、`Instant` は即表示のまま通しつつ、PathTrace / Wipe / Dissolve のような timed entrance は `reveal_order` 順に直列化するよう修正した
+  - `cargo test -p pauseink-renderer timed_entrance_waits_for_previous_timed_reveal_even_with_instant_between -- --nocapture`、`cargo test -p pauseink-renderer timed_entrance_on_next_page_does_not_wait_for_previous_page_reveal -- --nocapture`、`cargo test -p pauseink-renderer dissolve_entrance_waits_for_previous_path_trace_reveal -- --nocapture`、`cargo test -p pauseink-renderer`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を再通過
+  - guide の次文字縦線は、直前文字の幅で再スケールせず、位置だけ直前文字の右端へ送るように修正した
+  - `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` を consume した release では guide の次文字送りが発火しないよう、modifier tap 抑止を追加した
+  - paused batch の renderer は page 全体 1 本の queue ではなく、`created_at` ごとの paused batch lane ごとに timed entrance を直列化するように見直した
+  - 一時停止中 preview は current paused batch だけ `fully visible` override を掛け、既存 batch は現在時刻ベースの reveal のまま見せるようにした
+  - outline / drop shadow / glow / base の合成順は object-first から layer-first へ切り替え、後から描いた object の outer effect が先の object body を潰さないようにした
+  - 再生中に canvas input が来た場合は stroke draft を開始せず、既存 drag も cancel して free-ink を無効化するようにした
+  - `settings.json5` に editor UI / base style / entrance の resolved snapshot を保存し、次回起動時に style / effect / font / template / guide が戻るようにした
+  - 上記 bugfix バッチについて `cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過し、manual / report / progress も同期した
+  - `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`、`cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`、`cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`、`cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`、`cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture` を red/green で通した
+  - `cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
+  - `cargo test -p pauseink-export`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - preset/save-state 追加後も `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture` を通過
+  - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample`、`same_frame_move_keeps_pointer_button_press_as_first_preview_point`、`horizontal_guide_line_extends_to_frame_edges`、`live_preview_width_matches_downscaled_overlay_scale` を追加した
+  - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
+  - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
+  - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
+  - slot/style/guide 修正後も `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
+  - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
+  - `cargo test --workspace` を通過
+  - `cargo check -p pauseink-app --all-targets` を通過
+  - `cargo build -p pauseink-app` を通過
+  - `cargo build --release -p pauseink-app` を通過
+  - `cargo check --workspace --target x86_64-pc-windows-gnu` は target 未導入で失敗し、blocker を記録
+  - `timeout 5s ./target/debug/pauseink-app` は display server 不在で失敗し、headless host 制約として記録
+- 現在の未解決制約:
+  - release 用 portable sidecar runtime の同梱 / provenance 整備は未着手
+  - GitHub Release workflow が生成する成果物は現時点では app binary archive で、FFmpeg sidecar 同梱はまだ含まれない
+  - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
+  - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
+  - reveal-head effect と post-action chain は domain 型までで、renderer / inspector UI は未接続
+  - clear / combo preset の専用 UI は未接続
+  - headless host では GUI 実表示 smoke を実行できない
 
-## Immediate next actions for Codex
+## フェーズ進行表
 
-1. Read `AGENTS.md` and `.docs/`.
-2. Rewrite this file into a live execution tracker.
-3. Record environment details in `docs/implementation_report_v1.0.0.md`.
-4. Launch the first architecture sanity-check sub-agent before major coding.
-5. Begin Phase 0 and Phase 1 from `.docs/11_implementation_plan.md`.
+| Phase | 状態 | 進捗目安 | 直近ゴール | 備考 |
+|---|---|---|---|---|
+| Phase 0 | 完了 | 100% | 進行表・実装レポート初期化、最初の sub-agent review 完了 | 必読 docs 読了、review 結果取り込み済み |
+| Phase 1 | 完了 | 100% | workspace / crate 骨格 | app/domain/project_io/portable_fs/presets_core/fonts/template/media/renderer/export/ui を整理 |
+| Phase 2 | 完了 | 100% | domain model と clear/page 仕様 | typed stroke/object/group/style/clear と clear semantics を固定 |
+| Phase 3 | 完了 | 100% | `.pauseink` lenient load / normalized save | typed wrapper、entity extra 維持、sample roundtrip を確認 |
+| Phase 4 | 完了 | 100% | portable root と設定保存 | env override、autosave/cache/runtime/temp/helper、cleanup API を実装 |
+| Phase 5 | 完了 | 100% | command model と bounded undo/redo | history limit 設定と app session 接続、smoke test 追加 |
+| Phase 6 | 完了 | 100% | preset / export profile 基盤 | export profile / base style preset loader、family/profile accessors を実装 |
+| Phase 7 | 完了 | 100% | local font / Google Fonts 基盤 | fetch/caching/graceful failure を unit test 付きで実装 |
+| Phase 8 | 完了 | 100% | template layout / guide geometry | preview と slot 生成を v1.0 範囲で固定 |
+| Phase 9 | 完了 | 100% | FFmpeg provider / probe / capability | preview frame と diagnostics、host smoke を実装 |
+| Phase 10 | 完了 | 100% | 再生基盤 | preview canvas と transport 接続、import/playback smoke を実装 |
+| Phase 11 | 完了 | 100% | free ink capture と stabilization | GUI 経由の free ink / grouping / undo-redo と smoke を実装 |
+| Phase 12 | 完了 | 100% | guide system | guide capture と editor-only guide 表示を v1.0 範囲で実装 |
+| Phase 13 | 完了 | 100% | outline / groups / page events | object/page event track を v1.0 最小線で実装 |
+| Phase 14 | 進行中 | 92% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save は接続済み。reveal-head effect と post-action chain が残る |
+| Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
+| Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
+| Phase 17 | 進行中 | 98% | README / manuals / tutorials / polish | paused batch preview / settings 復元 / effect 合成順の修正内容を docs へ同期済み |
+| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。workspace 再検証と最終記録を反映済みで、残るのは v1.0 残項目整理 |
 
-## Locked design highlights
+## 次の具体的な一手
 
-- manual clear events only
-- no partial clear in v1.0
-- `.pauseink` JSON5 project files
-- portable mutable state under executable-local `pauseink_data/`
-- local fonts + Google Fonts cache
-- GPU preview preferred, CPU-safe export composition baseline
-- FFmpeg sidecar/provider model
-- Web + Adobe + transparent export presets
-- declarative presets, no arbitrary hot-path scripting
-
-## Required live updates during implementation
-
-Codex must keep this file updated with:
-
-- current phase
-- active blocker(s)
-- latest successful validation
-- next concrete step
+1. display server がある Linux または実機 Windows で、effect editor、出現速度 editor、preset 保存/再読込、template 字詰め、guide 進行を目視確認する。
+2. reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを `.docs/11_implementation_plan.md` に照らして確定し、実装か明示 de-scope のどちらかを report へ固定する。
+3. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行し、release 用 portable sidecar runtime の bundling / provenance / notices を詰める。

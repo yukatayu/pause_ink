@@ -1,16 +1,16 @@
-# Portable layout and cache policy
+# ポータブル layout と cache policy
 
-## 1. Default portable root
+## 1. 既定の portable root
 
-Default mutable root:
+既定の mutable root は次の通りです。
 
 ```text
 <executable dir>/pauseink_data/
 ```
 
-This root should contain all app-managed mutable state.
+この root に、アプリが管理する mutable state をすべて置きます。
 
-## 2. Suggested directory layout
+## 2. 推奨ディレクトリ構成
 
 ```text
 pauseink_data/
@@ -28,42 +28,42 @@ pauseink_data/
   temp/
 ```
 
-The exact names may vary, but the spirit must remain.
+正確な名前は多少変わっても構いませんが、考え方は保ってください。
 
-## 3. Locality rule
+## 3. locality rule
 
-Do not write app-managed mutable state outside the portable root by default.
+既定では、アプリ管理の mutable state を portable root の外へ書き出してはいけません。
 
-## 4. Development/test override
+## 4. 開発 / テスト用 override
 
-A developer/test-only override environment variable is acceptable so tests can isolate state in CI or repo-local temp roots.
+CI や repo-local の temp root へ state を分離するため、developer / test 専用の override 環境変数は認めます。
 
-## 5. Cache behavior
+## 5. cache の挙動
 
 ### 5.1 Google Fonts cache
 
-- cache downloaded assets under the portable root
-- broken downloads may be ignored or cleaned up
-- never block the whole UI on one bad family
+- ダウンロードした asset は portable root 配下に cache する
+- 壊れたダウンロードは無視または cleanup してよい
+- 1 つの壊れた family で UI 全体を止めない
 
-### 5.2 Probe cache
+### 5.2 probe cache
 
-- cache media probe results with invalidation keyed by file path + metadata signature
+- media probe 結果を、file path + metadata signature を鍵にして cache する
 
-### 5.3 Thumbnail cache
+### 5.3 thumbnail cache
 
 - bounded
-- cleanable by the user
+- 利用者が消去可能
 
-## 6. Cleanup tools
+## 6. cleanup ツール
 
-v1.0 should include at least a basic cache manager dialog or action that can:
+v1.0 には、少なくとも基本的な cache manager dialog または action を入れます。次ができること。
 
-- show major cache categories
-- clear selected categories
-- report approximate size if feasible
+- 主な cache category を表示する
+- 選択した category を消去する
+- 可能なら概算サイズを示す
 
-## 7. Logging
+## 7. logging
 
-Logs also stay under the portable root.  
-Do not spray logs into global OS log locations by default.
+log も portable root 配下に置きます。  
+既定で OS のグローバル log へ撒き散らしてはいけません。

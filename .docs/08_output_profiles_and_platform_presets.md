@@ -1,10 +1,10 @@
-# Output profiles and platform presets
+# 出力 profile と platform preset
 
-## 1. Split the export decision into two layers
+## 1. export の判断を 2 層に分ける
 
-### Layer A — container/codec family
+### レイヤーA - container/codec family
 
-Examples:
+例:
 
 - WebM / VP9 / Opus
 - WebM / AV1 / Opus
@@ -14,9 +14,9 @@ Examples:
 - PNG Sequence / RGBA
 - AVI / MJPEG / PCM
 
-### Layer B — distribution/profile preset
+### レイヤーB - distribution/profile preset
 
-Examples:
+例:
 
 - Low
 - Medium
@@ -28,111 +28,110 @@ Examples:
 - Adobe Alpha
 - Custom
 
-This split keeps the system extensible and lets developers add platform presets without rewriting codec logic.
+この分割によって system は拡張しやすくなり、codec logic を書き直さずに platform preset を追加できます。
 
-## 2. UI behavior
+## 2. UI の挙動
 
-- User chooses family + profile.
-- The app computes concrete numeric settings.
-- For non-Custom profiles, numeric input fields display the computed values but remain disabled.
-- For Custom, numeric fields become editable.
+- 利用者は family と profile を選びます。
+- アプリは具体的な数値設定を計算します。
+- Custom 以外では、数値入力欄に計算済み値を表示しつつ編集不可にします。
+- Custom では数値欄を編集可能にします。
 
-Numeric fields should include at least:
+数値欄には少なくとも次を含めます。
 
 - target video bitrate
-- max video bitrate if applicable
+- 必要なら max video bitrate
 - audio bitrate
-- GOP/keyframe interval
+- GOP / keyframe interval
 - sample rate
-- possibly CRF/CQ or quality target for codec families that use them
+- 必要に応じて CRF / CQ など、該当 codec family で使う quality target
 
-## 3. Official vs app-authored profile sources
+## 3. 公式ソースと app-authored ソース
 
 ### 3.1 YouTube
 
-Use official published encoding guidance where directly available.
+直接使えるなら、公式の公開 encoding guidance を使います。
 
 ### 3.2 X
 
-Use official published upload guidance where directly available.
+直接使えるなら、公式の公開 upload guidance を使います。
 
 ### 3.3 Instagram
 
-Use official public constraints where available.  
-Where exact bitrate ladders are not formally published in the same way, use app-authored “safe defaults” and label them honestly.
+使える範囲では公式の公開制約を使います。  
+正確な bitrate ladder が同じ形で公開されていない場合は、app-authored の「safe defaults」を使い、そのことを正直にラベルします。
 
 ### 3.4 Adobe
 
-Use app-authored intermediate/editing presets based on Adobe-compatible families.
+Adobe と互換性のある family を元に、app-authored の intermediate / editing preset を使います。
 
-## 4. Built-in preset expectations
+## 4. 組み込み preset の期待値
 
-### 4.1 Web/social default families
+### 4.1 Web / social 向けの既定 family
 
-- WebM VP9 + Opus: main open default
-- WebM AV1 + Opus: high compression default
-- MP4 AV1 + AAC-LC: advanced single-file compatibility option
+- WebM VP9 + Opus: 主な open default
+- WebM AV1 + Opus: 高圧縮の default
+- MP4 AV1 + AAC-LC: 1 ファイル互換性を高めた advanced option
 
-### 4.2 Adobe/editing families
+### 4.2 Adobe / editing 向け family
 
-- MOV ProRes 422 HQ + PCM: editing master/intermediate
-- MOV ProRes 4444 + PCM: alpha/intermediate
-- PNG sequence RGBA: maximum transparency interoperability
+- MOV ProRes 422 HQ + PCM: editing master / intermediate
+- MOV ProRes 4444 + PCM: alpha / intermediate
+- PNG sequence RGBA: 透明度互換性が最も高い出力
 
 ### 4.3 Legacy rescue
 
 - AVI MJPEG + PCM
 
-## 5. Data-driven profile files
+## 5. データ駆動の profile file
 
-Store profile definitions in declarative files under `presets/export_profiles/`.
+profile 定義は `presets/export_profiles/` 配下の宣言ファイルに置きます。
 
-Suggested file responsibilities:
+想定する責務は次の通りです。
 
-- platform/profile name
-- intended family compatibility
+- platform / profile 名
+- 想定する family 互換性
 - bitrate ladder
-- frame-rate adjustment rules
-- audio defaults
-- explanatory notes
-- source reference URLs
+- frame-rate 調整規則
+- audio の既定
+- 補足メモ
+- 参照 URL
 
-The application should load them through a stable schema, not by hard-coding every platform rule in UI code.
+アプリは UI コードに rule を hard-code するのではなく、安定した schema で読み込みます。
 
-## 6. Resolution-aware calculation direction
+## 6. 解像度を考慮した計算の方向
 
-The computation engine should consider at least:
+計算 engine は少なくとも次を考慮するべきです。
 
-- output width/height
+- 出力 width / height
 - frame rate bucket
-- family capabilities
-- platform/profile preference
-- alpha requirement
-- audio presence
+- family capability
+- platform / profile の優先
+- alpha の必要性
+- audio の有無
 
-## 7. Example platform guidance references
+## 7. 公式ガイダンスの参照例
 
-Codex should verify and record exact values used during implementation from these kinds of official pages:
+Codex は実装中に次のような公式ページから、実際に採用した値を確認して記録してください。
 
 - YouTube recommended upload encoding settings
-- X media upload/media studio guidance
-- Instagram Reels/public constraints
-- Adobe Media Encoder supported import/export format pages
+- X media upload / media studio guidance
+- Instagram Reels / public constraints
+- Adobe Media Encoder の import / export 対応形式ページ
 
-Store the final selected URLs and values in `docs/implementation_report_v1.0.0.md`.
+最終的に採用した URL と数値は `docs/implementation_report_v1.0.0.md` に保存します。
 
-## 8. Profile extensibility rule
+## 8. Profile 拡張のルール
 
-Adding a new platform preset must be easy for a developer:
+新しい platform preset を追加するのは、開発者にとって簡単でなければなりません。
 
-1. create a new profile file
-2. register it in the profile catalog if needed
-3. add/update tests
-4. document it in the developer guide
+1. 新しい profile file を作る
+2. 必要なら profile catalog に登録する
+3. test を追加 / 更新する
+4. developer guide に記載する
 
+## 9. Audio policy の補足
 
-## 9. Audio policy note
-
-- **PCM** is the uncompressed/lossless-style intermediate choice for editing/master outputs.
-- Social/web delivery presets should prefer **AAC-LC** or **Opus** depending on the chosen family/platform.
-- Adobe-oriented intermediate presets may use PCM because file size is less important than edit-friendliness and fidelity.
+- **PCM** は、editing / master 出力向けの非圧縮・ロスレス系 intermediate です。
+- social / web 配布 preset では、選んだ family / platform に応じて **AAC-LC** か **Opus** を優先します。
+- Adobe 向け intermediate preset では、ファイルサイズより編集しやすさと忠実性を重視するため PCM を使って構いません。

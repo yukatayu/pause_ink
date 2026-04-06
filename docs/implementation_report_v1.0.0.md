@@ -1,142 +1,1063 @@
-# Implementation report — v1.0.0
+# 実装レポート — v1.0.0
 
-> This document must be updated continuously during implementation.  
-> Do not leave it until the end.
+> この文書は実装中ずっと更新し続ける。最後にまとめて書かないこと。
 
-## 1. Executive summary
+## 1. 要約
 
-- Current status:
-- Current phase:
-- Host environment:
-- Latest validated build:
-- Latest validated composite export:
-- Latest validated transparent export:
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在のフェーズ: Phase 18 完了。
+- ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
+- 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
+- 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
+- 最新の検証済み transparent export: `cargo test --workspace` 内の `pauseink_export::tests::transparent_png_sequence_export_smoke_if_host_runtime_exists`
 
-## 2. Environment
+## 2. 環境
 
-- Date/time:
-- Host OS:
-- Shell:
-- Rust toolchain:
-- FFmpeg runtime state:
-- Cross-build tooling state:
-- GPU/driver notes:
-- Available disk/memory notes if relevant:
+- 日時: 2026-04-05T07:48:03+09:00
+- ホスト OS: Linux yukatayu-agent 6.8.0-106-generic x86_64 GNU/Linux
+- シェル: `bash`
+- Rust toolchain: `stable-x86_64-unknown-linux-gnu` / `rustc 1.93.0` / `cargo 1.93.0`
+- FFmpeg runtime 状態: host に `ffmpeg 6.1.1-3ubuntu5` / `ffprobe 6.1.1-3ubuntu5` があり、検証に利用可能。sidecar runtime は未配置。
+- Cross-build tooling 状態: `rustup target list --installed` は `x86_64-unknown-linux-gnu` のみ。
+- GPU / driver メモ: まだ未調査。UI 実装時に runtime probe を追加予定。
+- ディスク / メモリ備考: 現時点で顕著な制約は未確認。
 
-## 3. Phase log
+## 3. フェーズログ
 
-| Phase | Status | Notes |
+| フェーズ | 状態 | メモ |
 |---|---|---|
-| Phase 0 | not started | |
-| Phase 1 | not started | |
-| Phase 2 | not started | |
-| Phase 3 | not started | |
-| Phase 4 | not started | |
-| Phase 5 | not started | |
-| Phase 6 | not started | |
-| Phase 7 | not started | |
-| Phase 8 | not started | |
-| Phase 9 | not started | |
-| Phase 10 | not started | |
-| Phase 11 | not started | |
-| Phase 12 | not started | |
-| Phase 13 | not started | |
-| Phase 14 | not started | |
-| Phase 15 | not started | |
-| Phase 16 | not started | |
-| Phase 17 | not started | |
-| Phase 18 | not started | |
+| Phase 0 | 完了 | docs 読了、進行表更新、architecture sanity review 実施・採用方針確定 |
+| Phase 1 | 完了 | workspace 拡張、logging 初期化、基礎 crate 境界を反映 |
+| Phase 2 | 完了 | typed stroke / glyph object / group / style / entrance モデルと clear/page semantics を固定 |
+| Phase 3 | 完了 | `.pauseink` typed wrapper、entity-level unknown field 保持、sample roundtrip を確認 |
+| Phase 4 | 完了 | portable root / env override / settings.json5 / cache/autosave/runtime 下位 path を実装 |
+| Phase 5 | 完了 | typed project command と history 接続、bounded undo/redo smoke を確認 |
+| Phase 6 | 完了 | family/profile 二層 schema、built-in family catalog、profile loader、`settings_buckets` schema を実装 |
+| Phase 7 | 完了 | local font family 列挙、Google Fonts CSS2 URL / cache path / fetch / graceful failure を実装 |
+| Phase 8 | 完了 | template layout / guide geometry の v1.0 最小実装を完了 |
+| Phase 9 | 完了 | runtime discovery、raw probe、capability parser、host smoke を実装 |
+| Phase 10 | 完了 | imported media / playback state / seek / mapping と single-window preview GUI を実装 |
+| Phase 11 | 完了 | free ink capture、shift grouping、stabilization helper を GUI へ接続し smoke を追加 |
+| Phase 12 | 完了 | guide capture と template preview の editor-only 表示を実装 |
+| Phase 13 | 完了 | object outline と page events bottom tab の v1.0 最小表示を実装 |
+| Phase 14 | 完了 | renderer 側 built-in effect に加え、base style preset loader / apply を実装 |
+| Phase 15 | 完了 | export UI、custom 編集、queue、transparent/composite 実行を接続 |
+| Phase 16 | 完了 | settings file roundtrip、portable dir 作成、autosave cadence、recovery prompt、preferences / cache manager / diagnostics を接続 |
+| Phase 17 | 完了 | README / manual / tutorials / `.docs/` / samples を現実へ同期 |
+| Phase 18 | 完了 | host build/test/export、Windows build 試行、final QA/docs review 反映を完了 |
 
-## 4. Decision log
+## 4. 決定ログ
 
-Record every meaningful design decision with:
+- 2026-04-04T23:56:59+09:00
+  - 決定: 文書と UI は日本語を正とし、既存の英語記述も実装に合わせて日本語へ更新する。
+  - 検討した代替案: コードのみ先行して docs 翻訳を最後にまとめる。
+  - 理由: ユーザーの明示要求であり、仕様と UI 表記のずれを早期に防ぐため。
+  - 影響: `README.md`、`progress.md`、`manual/`、`docs/`、UI 文言のすべてを段階的に日本語化する。
+- 2026-04-04T23:56:59+09:00
+  - 決定: 初期 crate / module 方針は `app`、`domain`、`project_io`、`portable_fs`、`presets_core` を維持しつつ、必要に応じて `fonts`、`template_layout`、`media`、`renderer`、`export` を追加する前提で architecture review にかける。
+  - 検討した代替案: すべてを `app` crate に集約する。
+  - 理由: `AGENTS.md` と `.docs/04_architecture.md` の疎結合要件を満たしやすく、snapshot-based background job を分離しやすい。
+  - 影響: 初期実装では crate 境界の責務を明文化し、review 結果で必要なら分割を調整する。
+- 2026-04-05T00:00:00+09:00
+  - 決定: architecture review を受け、`app` は composition root のみに寄せ、`ui` crate を独立させる。加えて time model は単純 `u64 ms` 固定ではなく `MediaTime` を導入し、export schema は family / profile の二層に分割する。
+  - 検討した代替案: 既存 5 crate のまま `app` に UI を内包し、time model と export profile を簡易な整数 / 単一 schema で押し切る。
+  - 理由: UI への business rule 混入、clear 境界の時刻ズレ、profile 特例分岐の肥大化を初期段階で防ぐため。
+  - 影響: Phase 1 は crate 境界の追加、Phase 2 / 6 は time model と export schema の土台から TDD で組み直す。
+- 2026-04-05T00:00:00+09:00
+  - 決定: background job は `ProjectSnapshot` などの immutable request / snapshot 型だけを受け取り、`Arc<Mutex<AppState>>` の共有は採用しない。
+  - 検討した代替案: live app state を共有して export / probe / font 更新を直接参照させる。
+  - 理由: `.docs/04_architecture.md` と sub-agent 指摘の通り、single-writer と worker 分離を守るため。
+  - 影響: runtime state と persisted project state を明確に分離する必要がある。
+- 2026-04-05T00:20:00+09:00
+  - 決定: domain time model は `MediaTime { ticks, time_base }` を基本表現とし、clear 境界ジャスト時刻は次ページに属する。
+  - 検討した代替案: `u64 ms` 維持。
+  - 理由: mixed time base と clear 境界の等値判定を UI / save / export で一貫させるため。
+  - 影響: project schema と media/provider 側も `MediaTime` 前提で整える必要がある。
+- 2026-04-05T00:20:00+09:00
+  - 決定: `presets_core` は export family と distribution profile を別 schema とし、catalog で compatibility を解決する。
+  - 検討した代替案: profile 単一 schema に family 制約を混在させる。
+  - 理由: special case 分岐を減らし、後から profile を追加しやすくするため。
+  - 影響: `presets/export_profiles/` のサンプル定義も後続で更新する。
+- 2026-04-05T00:45:00+09:00
+  - 決定: `.pauseink` の初期実装は `json5` による lenient load と、known field 順を固定した canonical JSON save を採用する。コメントは load できるが save 時には保持しない。
+  - 検討した代替案: コメント保持付きの完全 JSON5 roundtrip serializer を初手で実装する。
+  - 理由: v1.0 の determinism と unknown field 保持を先に満たし、comment preservation は limitation として明示する方が安全なため。
+  - 影響: `docs/implementation_report_v1.0.0.md` と manuals に save 時のコメント消失を明記する必要がある。
+- 2026-04-05T01:05:00+09:00
+  - 決定: undo/redo 基盤は project 専用 enum を先に固定せず、generic `Command` / `CommandBatch` / `CommandHistory` として実装する。
+  - 検討した代替案: 最初から `ProjectCommand` enum を作って history を密結合にする。
+  - 理由: grouped command、redo invalidation、bounded history を先に検証しつつ、後から domain command を載せ替えやすくするため。
+  - 影響: UI / domain の実編集操作は後続でこの generic history に乗せる。
+- 2026-04-05T01:20:00+09:00
+  - 決定: settings は `settings.json5` を lenient load / canonical JSON save で扱い、既定値は sample に合わせて `history_depth=256`、GPU preview / media HW accel は有効、Google Fonts は有効とする。
+  - 検討した代替案: settings 保存を後回しにして app 起動時のハードコード設定だけで進める。
+  - 理由: portable-state ルールと履歴深さ設定を早い段階で実コードに落とし込むため。
+  - 影響: fonts / UI / export は以後この settings 構造を参照できる。
+- 2026-04-05T01:35:00+09:00
+  - 決定: Google Fonts は official CSS2 API を使って family ごとの CSS URL を構築し、キャッシュファイル名は portable root 配下で family 名を slug 化して管理する。
+  - 検討した代替案: Google Fonts の全メタデータ API や重いブラウザ依存取得に寄せる。
+  - 理由: v1.0 では configured family を軽量に取得できれば十分であり、broken entry を UI 全体から切り離しやすいため。
+  - 影響: 実ダウンロード段階では CSS から最初の `url(...)` を抽出し、失敗時はその family だけを非表示扱いにできる。
+- 2026-04-05T01:50:00+09:00
+  - 決定: host に入った Ubuntu apt 版 `ffmpeg` / `ffprobe` は検証用 runtime として使うが、mainline 実装方針は引き続き portable sidecar provider として維持する。
+  - 検討した代替案: system `ffmpeg` を mainline 依存とみなす。
+  - 理由: apt build は `--enable-gpl` を含み、release packaging 方針と切り分けて扱う必要があるため。
+  - 影響: 実装レポートと packaging/licensing notes に host 検証 runtime と sidecar mainline 方針の差を明記する。
+- 2026-04-05T00:32:01+09:00
+  - 決定: export 実装前に `MediaRuntime` へ runtime origin / manifest / provenance を持たせ、`presets_core` には family ごとの codec/muxer/alpha/audio requirement と profile ごとの concrete rule data を追加する。
+  - 検討した代替案: 現在の `PathBuf` 2 本と `compatibility` だけの最小 schema のまま export orchestration で補う。
+  - 理由: mainline sidecar と host 検証 runtime を区別できないと packaging/licensing の境界が崩れ、family/profile 側の schema が薄すぎると UI/export 実装へ hard-code が漏れるため。
+  - 影響: Phase 9-15 の前に media/provider と presets schema の補強テストを追加する必要がある。
+- 2026-04-05T00:40:00+09:00
+  - 決定: `MediaRuntime` は `RuntimeOrigin`、`manifest_path`、`build_summary`、`license_summary` を持ち、probe では `avg_frame_rate_raw`、`r_frame_rate_raw`、`pix_fmt`、`has_alpha`、`has_audio` を保持する。
+  - 検討した代替案: human-readable summary のみで raw probe 情報を捨てる。
+  - 理由: VFR / alpha / optional codec pack 判定に raw metadata が必要だから。
+  - 影響: import caveat と export capability 判定を provider 側で持てる。
+- 2026-04-05T00:40:00+09:00
+  - 決定: `ExportFamily` は `RuntimeTier` と codec/muxer requirement を持ち、`DistributionProfile` は `ProfileSourceKind` と source URL / notes を持つ。
+  - 検討した代替案: runtime tier 判定を export orchestration 側の if 文で行う。
+  - 理由: H.264 / HEVC optional codec pack を schema で mainline から切り離すため。
+  - 影響: JSON5 preset file もこの schema へ寄せる必要がある。
+- 2026-04-05T00:53:59+09:00
+  - 決定: sidecar runtime discovery では `manifest.json` を必須にし、system runtime fallback は明示的に許可した場合だけ使う。
+  - 検討した代替案: binary 2 本が見つかれば manifest 無しでも sidecar として採用する。
+  - 理由: provenance / license summary の無い runtime を mainline sidecar と扱うのは危険だから。
+  - 影響: packaging 時は manifest 生成が必須になり、host system runtime は validation 用の別経路として扱う。
+- 2026-04-05T00:53:59+09:00
+  - 決定: export profile file の正規 schema は `settings_buckets` を含む JSON5 とし、loader 側で legacy の `family` / `intended_families` / `video_bitrate_ladder_mbps` / `app_safe_defaults` / `audio` を正規化吸収する。
+  - 検討した代替案: 旧サンプル schema をそのまま固定し、concrete settings は Rust 側のハードコードで補う。
+  - 理由: profile 追加を data-driven に保ちながら、既存 handoff 資産との互換も残せるため。
+  - 影響: `presets/export_profiles/` は stable schema に移行し、`export` crate は `settings_buckets` を直接利用できる。
+- 2026-04-05T01:00:22+09:00
+  - 決定: export concrete settings は UI から切り離した pure 計算として `export` crate に置き、bucket 解決順は exact match → standard bucket → `default` とする。
+  - 検討した代替案: UI 側で profile ごとの if 文を持ち、bucket 解決も画面実装に寄せる。
+  - 理由: `.docs/04_architecture.md` の疎結合要件を守り、後続の export UI と batch export の両方から再利用できるため。
+  - 影響: UI は結果表示に集中でき、runtime capability gating も同じ crate に集約できる。
+- 2026-04-05T01:10:20+09:00
+  - 決定: `.pauseink` の typed entity は domain struct をそのまま埋め込まず、`project_io` 側で `#[serde(flatten)]` wrapper と `extra` map を持たせて unknown field を保持する。
+  - 検討した代替案: project format でも `serde_json::Value` の配列を維持し、typed 化は後回しにする。
+  - 理由: typed model と lenient/forward-compatible load を両立させるため。
+  - 影響: domain は UI/renderer/export から使いやすい typed struct を保ちつつ、project file では entity-level unknown field を保持できる。
+- 2026-04-05T01:10:20+09:00
+  - 決定: typed project の編集 command は `domain` crate に置き、`AnnotationProject` を直接 mutate する reversible command として定義する。
+  - 検討した代替案: app state 層に command を置いて `domain` は pure data のみとする。
+  - 理由: UI 非依存の business rule と undo/redo を一体でテストでき、後続の playback/UI 実装から再利用しやすいため。
+  - 影響: `domain` は project editing API の中心になり、app/UI は command dispatch に徹する形へ寄る。
+- 2026-04-05T01:18:32+09:00
+  - 決定: playback foundation の最小責務は `media` crate に置き、import 結果、playback state、seek clamp、frame-canvas mapping を UI から独立にテストする。
+  - 検討した代替案: app/UI 層に playback state を置き、`media` は probe だけに留める。
+  - 理由: import classification と座標変換 math は UI 非依存であり、ここを先に固定した方が preview/export 両方へ再利用しやすいため。
+  - 影響: `ui` は transport 操作と表示に集中し、`media` は playback foundation の計算責務を持つ。
+- 2026-04-05T02:05:00+09:00
+  - 決定: `app` crate には session と transport 操作だけを追加し、`ui` crate には当面日本語の status model と text bootstrap だけを置く。
+  - 検討した代替案: ここで即座に GUI toolkit を導入して import/playback/preview まで一気に実装する。
+  - 理由: playback foundation の接続面を先に app/UI 境界で固定し、次の preview/editor 実装で責務を崩さないようにするため。
+  - 影響: 直近では CLI 風の status 表示だが、後続の GUI 実装は `AppSession` と UI model を差し替える形で進められる。
+- 2026-04-05T02:55:00+09:00
+  - 決定: v1.0 の最小 GUI は `eframe/egui` を app binary の composition root にのみ導入し、business rule は引き続き `app` lib / `domain` / `project_io` / `renderer` / `media` 側へ寄せる。
+  - 検討した代替案: `ui` crate 側へ即座に stateful GUI 全体を寄せる、または GUI を後回しにして CLI のまま export を先行する。
+  - 理由: single-window の最小完成形を早く通しつつ、UI が business rule を直接持たない構成を守りやすいため。
+  - 影響: mainline の GUI 実装は `crates/app/src/main.rs` に集約され、`ui` crate は当面軽量な補助境界として残る。
+- 2026-04-05T02:55:00+09:00
+  - 決定: free ink の raw/stabilized/derived 生成は `renderer` crate の helper と app session の commit path で統一する。
+  - 検討した代替案: UI 層でその都度 smoothing して domain へ完成済み path だけ保存する。
+  - 理由: preview と export で同じ stroke processing を再利用し、UI 側の責務肥大化を避けるため。
+  - 影響: `renderer` は CPU-safe preview/export の共通基盤になり、app/lib は raw point capture と command dispatch に集中できる。
+- 2026-04-05T04:30:00+09:00
+  - 決定: 既存の `crates/app/src/main.rs` に入っていた single-window GUI 実装は活かし、`app` lib 側の session API を合わせて疎結合を保つ。
+  - 検討した代替案: GUI を一度捨てて session 設計から書き直す。
+  - 理由: main window / canvas / outline / page events / template preview の実装面積を残した方が出戻りが少なく、`app` lib 側で business rule を収めれば architectural priority も守れるため。
+  - 影響: このブロックでは `main.rs` は最小修正に留め、`app` lib と supporting crates の API を先に充足する方針に切り替えた。
 
-- timestamp
-- decision
-- alternatives considered
-- reason
-- consequence
+## 5. 作業ログ
 
-## 5. Work log
+- 2026-04-06T00:00:00+09:00
+  - 実施内容: paused batch preview / cross-object effect order / workspace 設定復元 / 再生中入力禁止の bugfix バッチを開始し、即時マイルストーンを更新した。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: root cause 仮説を 1) preview と export が同じ時系列評価を共有している、2) effect が object 単位 pass で cross-object の背面保証を失っている、3) settings 保存が app workspace state を含んでいない、の 3 系統に整理した。
+  - 次の一手: renderer / app / portable settings へ failing test を追加し、原因を test で固定してから実装修正に入る。
+- 2026-04-04T23:56:59+09:00
+  - 実施内容: `prototype` ブランチ作成、必読 docs 読了、workspace scaffold 調査、環境確認。
+  - 変更ファイル: なし
+  - 結果: 固定仕様と現状 scaffold の差分を把握。`ffmpeg` runtime 未配置を確認。
+  - 次の一手: `progress.md` / 実装レポート更新後、architecture sanity review を起動。
+- 2026-04-04T23:56:59+09:00
+  - 実施内容: `progress.md` と本レポートを日本語ベースの live tracker に更新。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: Phase 0 の開始状態と初期方針を明文化。
+  - 次の一手: sub-agent 所見を反映して crate/module 構成を確定。
+- 2026-04-05T00:00:00+09:00
+  - 実施内容: architecture sanity review を回収し、採用点 / 後回し点を整理。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: `ui` crate 分離、`MediaTime`、family/profile 二層 schema、immutable snapshot worker を採用。
+  - 次の一手: workspace 拡張と最初の failing test を追加する。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: workspace に `ui` / `fonts` / `template_layout` / `media` / `renderer` / `export` crate を追加し、`app` を composition root 寄りに整理。
+  - 変更ファイル: `Cargo.toml`, `crates/app/*`, `crates/ui/*`, `crates/fonts/*`, `crates/template_layout/*`, `crates/media/*`, `crates/renderer/*`, `crates/export/*`
+  - 結果: Phase 1 の crate 境界が compile 可能な状態になった。
+  - 次の一手: foundation behavior を TDD で積む。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: `MediaTime` と clear 境界 semantics の failing test を追加し、domain を実装して緑化。
+  - 変更ファイル: `crates/domain/src/lib.rs`
+  - 結果: mixed time base 比較と clear 境界でのページ切り替えがテストで固定された。
+  - 次の一手: project schema に `MediaTime` を反映できるよう `.pauseink` 実装へ進む。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: portable root の failing test を追加し、主要ディレクトリ解決を実装。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`
+  - 結果: executable-local root と override root の最小 API ができた。
+  - 次の一手: env override の実利用と settings 保存へ広げる。
+- 2026-04-05T00:20:00+09:00
+  - 実施内容: export family/profile の failing test を追加し、互換解決 catalog を実装。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`
+  - 結果: family/profile 二層 schema の最小 API ができた。
+  - 次の一手: preset file の loader と実際の JSON5 schema を揃える。
+- 2026-04-05T00:45:00+09:00
+  - 実施内容: `.pauseink` の failing test を追加し、lenient load / canonical save / unknown field 保持の最小実装を追加。
+  - 変更ファイル: `Cargo.toml`, `crates/project_io/Cargo.toml`, `crates/project_io/src/lib.rs`
+  - 結果: comments / trailing commas を許可する loader と deterministic save が動作した。
+  - 次の一手: command model / undo-redo と portable settings を実装する。
+- 2026-04-05T01:05:00+09:00
+  - 実施内容: command history の failing test を追加し、generic `Command` / `CommandBatch` / `CommandHistory` を実装。
+  - 変更ファイル: `crates/domain/Cargo.toml`, `crates/domain/src/history.rs`, `crates/domain/src/lib.rs`
+  - 結果: bounded history、redo invalidation、grouped command undo の基礎がテストで固定された。
+  - 次の一手: settings 永続化と env override 実利用へ広げる。
+- 2026-04-05T01:20:00+09:00
+  - 実施内容: portable settings と env override の failing test を追加し、`Settings` と `settings.json5` 保存基盤を実装。
+  - 変更ファイル: `crates/portable_fs/Cargo.toml`, `crates/portable_fs/src/lib.rs`
+  - 結果: env override 付き root 解決、settings ファイル位置、既定値 roundtrip をテストで固定した。
+  - 次の一手: local fonts / Google Fonts catalog と graceful failure を実装する。
+- 2026-04-05T01:35:00+09:00
+  - 実施内容: fonts crate に failing test を追加し、Google Fonts CSS2 URL / cache path / CSS parser と local font family 列挙を実装。
+  - 変更ファイル: `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`
+  - 結果: broken CSS は `None` で握りつぶせる形になり、missing extra dirs も無視できるようにした。
+  - 次の一手: template layout と guide geometry を実装する。
+- 2026-04-05T01:50:00+09:00
+  - 実施内容: template layout の failing test を追加し、grapheme-aware slot / scale / slope / guide geometry を実装。
+  - 変更ファイル: `crates/template_layout/Cargo.toml`, `crates/template_layout/src/lib.rs`
+  - 結果: grapheme cluster 単位の slot と 5 本構成の guide line がテストで固定された。
+  - 次の一手: host `ffprobe` を使った media provider の入口を実装する。
+- 2026-04-05T00:32:01+09:00
+  - 実施内容: media/export/licensing sanity review を実施し、`AGENTS.md`、`.docs/07`、`.docs/08`、`.docs/10`、`.docs/11`、`progress.md`、実装レポート、`crates/media/src/lib.rs`、`crates/presets_core/src/lib.rs` を再確認した。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: runtime provenance 欠落、probe 情報不足、family/profile schema の薄さ、host 検証 runtime と release packaging の記録不足を Phase 9 の主要論点として確定した。
+  - 次の一手: runtime origin / manifest / capability と export family/profile schema の failing test を追加する。
+- 2026-04-05T00:40:00+09:00
+  - 実施内容: `media` に runtime origin / raw probe / capability parser を追加し、`presets_core` に runtime tier / source kind を追加。
+  - 変更ファイル: `crates/media/src/lib.rs`, `crates/presets_core/src/lib.rs`
+  - 結果: host runtime と mainline sidecar の切り分け、alpha/VFR などの raw probe 情報保持、optional codec pack tier の区別が code/schema 上に現れた。
+  - 次の一手: host `ffprobe` 実 probe と JSON5 export profile loader を実装する。
+- 2026-04-05T00:53:59+09:00
+  - 実施内容: `media` に sidecar/system runtime discovery、manifest 読込、version summary 取得、host `ffprobe` smoke test を追加。
+  - 変更ファイル: `crates/media/Cargo.toml`, `crates/media/src/lib.rs`
+  - 結果: mainline sidecar と host system runtime の選択経路が分離され、host 環境では 320x180 MJPEG fixture を生成して provider 経由の probe が通ることを確認した。
+  - 次の一手: built-in export family/profile loader と settings schema を実装する。
+- 2026-04-05T00:53:59+09:00
+  - 実施内容: `presets_core` に built-in export family catalog、distribution profile loader、`settings_buckets` schema を追加し、`presets/export_profiles/` を日本語ベースの stable schema へ更新した。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`, `presets/export_profiles/README.md`, `presets/export_profiles/*.json5`, `progress.md`
+  - 結果: `low` / `medium` / `high` / `youtube` / `x` / `instagram` / `adobe_edit` / `adobe_alpha` / `custom` を data-driven に読み込めるようになった。
+  - 次の一手: `export` crate に concrete settings 計算と bucket 解決を実装する。
+- 2026-04-05T01:00:22+09:00
+  - 実施内容: `export` crate に export request、bucket candidate 解決、concrete settings 計算、runtime capability 判定を追加した。
+  - 変更ファイル: `crates/export/Cargo.toml`, `crates/export/src/lib.rs`, `progress.md`
+  - 結果: YouTube 4K60、Instagram 縦長、alpha family 制約、PNG sequence の音声無効化、missing encoder の失敗系をテストで固定できた。
+  - 次の一手: Phase 2 の stroke / object / group / style snapshot モデルを domain へ追加する。
+- 2026-04-05T01:10:20+09:00
+  - 実施内容: `domain` に typed annotation model を追加し、`project_io` を typed wrapper ベースへ拡張した。
+  - 変更ファイル: `crates/domain/src/lib.rs`, `crates/domain/src/annotations.rs`, `crates/project_io/Cargo.toml`, `crates/project_io/src/lib.rs`, `progress.md`
+  - 結果: stroke / glyph object / group / clear event / style / entrance の型が揃い、`.pauseink` の `strokes` / `objects` / `groups` / `clear_events` が typed roundtrip 可能になった。
+  - 次の一手: project command と undo/redo を typed project model に接続する。
+- 2026-04-05T01:10:20+09:00
+  - 実施内容: `domain` に typed project command を追加し、`AnnotationProject` への insert / z-order 更新を history 経由で往復できるようにした。
+  - 変更ファイル: `crates/domain/src/lib.rs`, `crates/domain/src/annotations.rs`, `crates/domain/src/project_commands.rs`, `progress.md`
+  - 結果: stroke / object / group / clear event の挿入と z-order 更新が undo/redo と接続され、typed project model を前提にした編集 API ができた。
+  - 次の一手: Phase 10 の media import / playback state へ進む。
+- 2026-04-05T01:18:32+09:00
+  - 実施内容: `media` に imported media、playback state、seek clamp、frame-canvas mapping、import smoke を追加した。
+  - 変更ファイル: `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `progress.md`
+  - 結果: import classification、play/pause、duration clamp、letterbox 座標変換の基礎が揃い、host runtime では import smoke も通るようになった。
+  - 次の一手: app/ui の状態と結び、最小の import/playback skeleton を出す。
+- 2026-04-05T02:05:00+09:00
+  - 実施内容: `app` に session/import/play/pause/seek API を追加し、`ui` に日本語 status model / text rendering を追加、binary から両者を接続した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/ui/src/lib.rs`, `progress.md`
+  - 結果: imported media と playback state を app/UI 境界へ載せる最小 skeleton ができ、状態文言を日本語で固定できた。
+  - 次の一手: preview/editor state、mode 切替、free ink capture を追加する。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `renderer` に CPU-safe overlay raster、path trace / clear の最小時刻評価、stroke stabilization helper を追加し、`media` に preview frame 抽出を追加した。
+  - 変更ファイル: `crates/renderer/Cargo.toml`, `crates/renderer/src/lib.rs`, `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `Cargo.toml`
+  - 結果: preview/export 共通の描画核と、FFmpeg runtime 経由の静止フレーム抽出が揃った。
+  - 次の一手: app session から free ink / save-load / guide-template 状態を扱えるようにする。
+- 2026-04-05T03:35:00+09:00
+  - 実施内容: `app` lib に free ink commit、shift grouping、clear event、save/load、entity extra 保持、object bounds、project title/media hint API を追加し、`portable_fs` に settings file roundtrip / dir 作成を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/portable_fs/Cargo.toml`, `crates/portable_fs/src/lib.rs`
+  - 結果: session 単体で `.pauseink` の保存読込、undo/redo、free ink、portable settings I/O が扱えるようになった。
+  - 次の一手: single-window GUI をこの session API に合わせて compile / check を通す。
+- 2026-04-05T04:30:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の GUI 実装を session API に合わせて接続し、single-window canvas / outline / page events / template preview / guide overlay を compile 可能にした。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`
+  - 結果: `cargo check -p pauseink-app --all-targets` が通り、既存 GUI 実装と新しい session/renderer/media 基盤が接続された。
+  - 次の一手: autosave/recovery、export queue/engine、実 export 検証を進める。
+- 2026-04-05T04:50:00+09:00
+  - 実施内容: `crates/app/src/main.rs` に autosave cadence、保存成功時の autosave cleanup、起動時 recovery prompt、autosave 読込導線を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`
+  - 結果: Phase 16 の最小 recovery 線が GUI 起動経路へ載り、未保存作業の救済経路ができた。
+  - 次の一手: export queue/engine と transparent/composite export 検証へ進む。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `project_io` に typed annotation sync と extra 維持を追加し、`domain` に stroke append command を追加、`renderer` に overlay/clear/path trace 描画と stabilization helper を追加した。
+  - 変更ファイル: `crates/project_io/src/lib.rs`, `crates/domain/src/lib.rs`, `crates/domain/src/project_commands.rs`, `crates/renderer/Cargo.toml`, `crates/renderer/src/lib.rs`
+  - 結果: save/load roundtrip を壊さずに live project と file wrapper を同期できるようになり、free ink / preview / export の共通描画基盤ができた。
+  - 次の一手: `app` lib に save/load/free ink/guide/template 状態と file path helper を追加し、GUI から使う。
+- 2026-04-05T02:55:00+09:00
+  - 実施内容: `portable_fs` に cache/autosave/runtime 下位 path と directory 作成を追加し、`app` lib に free ink commit、shift grouping、clear event、save/load、title/media accessor、guide/template 用 helper を追加、`app` binary に single-window GUI を実装した。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`, `crates/app/Cargo.toml`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `progress.md`
+  - 結果: host 上で build 可能な single-window GUI、preview canvas、object outline、page events、guide/template preview の最小縦断が揃った。
+  - 次の一手: autosave/recovery、Google Fonts 実取得、export queue/engine、実 export 検証を進める。
+- 2026-04-05T07:10:00+09:00
+  - 実施内容: `presets_core` に family/profile accessors と base style preset loader を追加し、`portable_fs` に autosave interval と cache size / cleanup helper を追加、`app` lib に export snapshot builder を追加、`export` に direct execution API と HW try / software fallback を追加した。
+  - 変更ファイル: `crates/presets_core/src/lib.rs`, `crates/portable_fs/src/lib.rs`, `crates/app/src/lib.rs`, `crates/export/src/lib.rs`
+  - 結果: GUI が business rule を抱え込まずに export settings / snapshot / cache 管理へ接続できる下地が揃い、transparent/composite smoke export と fallback 判定 test を継続的に回せるようになった。
+  - 次の一手: export queue / preferences / cache manager / runtime diagnostics を GUI へ接続する。
+- 2026-04-05T08:20:00+09:00
+  - 実施内容: `app` binary に preferences、cache manager、runtime diagnostics、Google Fonts fetch/caching、export queue、custom profile 編集、built-in base style preset 適用 UI を追加し、`README.md`、`manual/`、`presets/style_presets/README.md` を日本語で現実へ合わせて更新した。
+  - 変更ファイル: `crates/app/src/main.rs`, `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`, `README.md`, `manual/*`, `presets/style_presets/*`, `progress.md`
+  - 結果: v1.0 の main window から設定・診断・cache cleanup・Google Fonts 管理・style preset・export job 実行まで完結する導線が整った。ユーザー文書と開発者文書も現在の UI へ追随した。
+  - 次の一手: workspace 全体 test、Windows build 試行、final QA/docs review を行う。
+- 2026-04-05T09:00:00+09:00
+  - 実施内容: final QA/docs review の指摘を反映し、`.docs/` を日本語へ統一、`samples/minimal_project.pauseink` を現行 schema へ更新、`portable_root_override` を settings schema / sample / manual から除去、`create -> save -> reopen -> compare` と `import -> annotate -> clear -> save` の smoke test を追加した。
+  - 変更ファイル: `.docs/*`, `samples/minimal_project.pauseink`, `samples/settings.example.json5`, `manual/developer_guide.md`, `crates/portable_fs/src/lib.rs`, `crates/project_io/src/lib.rs`, `crates/app/src/lib.rs`, `progress.md`
+  - 結果: docs / code / sample / tutorial の不整合を解消し、done criteria に必要な integration smoke と final QA 証跡が揃った。
+  - 次の一手: workspace 全体回帰、tutorial validation、Windows build 試行結果を report/progress に確定する。
+- 2026-04-05T07:48:03+09:00
+  - 実施内容: `.github/workflows/ci.yml` と `.github/workflows/release.yml`、`scripts/package_release_asset.py` を追加し、`main` push / PR CI と、tag push または tag 付き commit の `main` 流入時 release build を実装した。review 指摘を受け、release workflow は `main` push 側でも未 release の tag を拾うようにし、workflow 全体を直列化、既存 release は 3 OS 分の asset 完全性で判定、packager は staging directory を毎回掃除して archive 後に削除するよう修正した。
+  - 変更ファイル: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/package_release_asset.py`, `manual/developer_guide.md`, `progress.md`
+  - 結果: `main` の全 commit と PR に対する test 導線、および Linux / macOS / Windows release build を GitHub Release へ添付する導線が repository に入った。現 release asset は binary archive までで、FFmpeg sidecar bundling は別タスクとして残る。
+  - 次の一手: workflow 構文とローカル packaging を検証し、実装レポートへ記録する。
+- 2026-04-06T16:10:00+09:00
+  - 実施内容: preview 上でのマウス書き込み位置ずれと、Windows 環境での UI 日本語文字化けを調査し、renderer / app / fonts を横断して修正した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `crates/fonts/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: preview overlay は source media 座標から target texture 座標へ正しく縮尺され、pointer helper の roundtrip / letterbox rejection test を追加した。`egui` 起動時には system / portable cache から日本語 UI fallback font を明示登録するようにした。
+  - 次の一手: headless 制約を記録しつつ、report / progress の反映後に commit / push する。
+- 2026-04-06T20:30:00+09:00
+  - 実施内容: template underlay の fixed-width preview を実 font shaping / kerning ベースへ置き換え、font dropdown / slope 回転 / transport bar / Undo-Redo shortcut / resizable panel / guide 縦線送り / template 配置中入力抑止 / Windows runtime help を追加した。
+  - 変更ファイル: `crates/app/Cargo.toml`, `crates/app/src/main.rs`, `crates/fonts/src/lib.rs`, `crates/template_layout/src/lib.rs`, `README.md`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: template preview は読み込み済み font を選択でき、`VA` のような pair kerning を落としにくい run-level shaping で slot 位置を計算するようになった。Ctrl タップで次文字用の縦ガイドを進められ、配置待ち中の accidental stroke も止まる。再生/seek は上部直下の transport bar へ分離し、`Ctrl-Z` / `Ctrl-Shift-Z` / `Ctrl-Y` も利用できる。
+  - 次の一手: docs / report を最終同期し、commit / push する。
 
-Append work sessions here.  
-Each entry should contain:
+## 6. 検証ログ
 
-- timestamp
-- task(s) attempted
-- files touched
-- result
-- next step
+- `git status --short --branch`
+  - 結果: `main...origin/main` から開始。作業前は未変更。
+- `git branch --list prototype`
+  - 結果: 既存ブランチなし。
+- `git switch -c prototype`
+  - 結果: `prototype` ブランチを作成して checkout。
+- `rustc -V && cargo -V && rustup show active-toolchain`
+  - 結果: `rustc 1.93.0`, `cargo 1.93.0`, active toolchain は stable。
+- `rustup target list --installed`
+  - 結果: `x86_64-unknown-linux-gnu` のみ。
+- `ffmpeg -version | head -n 2`
+  - 結果: `ffmpeg: command not found`
+- `ffprobe -version | head -n 2`
+  - 結果: `ffprobe: command not found`
+- `cargo test --workspace`
+  - 結果: exit 0。現 scaffold の 4 unit test は通過したが、仕様拘束を担保する面積はまだ不足。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 101。`MediaTime` / `TimeBase` / `ClearEvent.time` 未定義で compile error。期待どおり red。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。2 tests passed。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 101。`PortablePaths` と `portable_root_with_override` 未定義で red。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 0。2 tests passed。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 101。`ExportCatalog` / `DistributionProfile` / `ProfileCompatibility` 未定義で red。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。2 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。workspace 全体の回帰確認を完了。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。`PauseInkDocument` / `PauseInkProject` / `load_from_str` / `save_to_string` 未定義で red。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。`serde_json` manifest 重複定義で失敗。manifest を修正。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 101。canonical save の順序が alphabetic になり golden と不一致。`serde_json` を `preserve_order` で固定。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 0。2 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。`project_io` 追加後の回帰確認を完了。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 101。`CommandHistory` / `CommandBatch` / `Command` / `DEFAULT_HISTORY_DEPTH` / `CommandError` 未定義で red。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。generic history 追加後の回帰確認を完了。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 101。`from_override_or_executable_dir` / `Settings` / settings load-save API 未定義で red。
+- `cargo test -p pauseink-portable-fs`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。portable settings 追加後の回帰確認を完了。
+- `cargo search fontdb --limit 1`
+  - 結果: `fontdb = "0.23.0"` を確認。
+- Google Fonts CSS2 API 公式ページ
+  - URL: https://developers.google.com/fonts/docs/css2
+  - メモ: base URL は `https://fonts.googleapis.com/css2`、`family=` を複数指定可能、`display=swap` を利用可能。最終閲覧時のページ更新日は 2024-07-23 UTC。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 101。Google Fonts URL / cache path / CSS parser API 未定義で red。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 101。`fontdb` API の iterator 想定違いで失敗。実 API に合わせて修正。
+- `cargo test -p pauseink-fonts`
+  - 結果: exit 0。4 tests passed。
+- `cargo test --workspace`
+  - 結果: exit 0。fonts 追加後の回帰確認を完了。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 101。template layout / guide geometry API 未定義で red。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 0。3 tests passed。
+- `ffmpeg -version | head -n 3`
+  - 結果: `ffmpeg version 6.1.1-3ubuntu5`。Ubuntu apt build、`--enable-gpl` を含む。
+- `ffprobe -version | head -n 3`
+  - 結果: `ffprobe version 6.1.1-3ubuntu5`。Ubuntu apt build、`--enable-gpl` を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。template layout 追加後の回帰確認を完了。
+- `cargo test -p pauseink-media -p pauseink-presets-core`
+  - 結果: exit 0。`pauseink-media` 3 tests、`pauseink-presets-core` 2 tests が通過。
+- `cargo test -p pauseink-media`
+  - 結果: exit 101。`RuntimeOrigin` / raw probe fields 未定義で red。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 101。`RuntimeTier` / `OutputKind` / `ProfileSourceKind` 未定義で red。
+- `cargo test -p pauseink-media`
+  - 結果: exit 101。`RuntimeCapabilities` 未定義で red。
+- `cargo test -p pauseink-media`
+  - 結果: exit 0。5 tests passed。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。3 tests passed。
+- `cargo test -p pauseink-media`
+  - 結果: exit 0。8 tests passed。sidecar discovery、system fallback 優先順位、host `ffprobe` smoke を含む。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。5 tests passed。legacy schema 正規化と repository preset file load を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。runtime discovery / profile loader / stable profile files 反映後の回帰確認を完了。
+- `cargo test -p pauseink-export`
+  - 結果: exit 0。5 tests passed。bucket 解決、alpha 制約、audio disable、missing capability を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。export concrete settings 計算追加後の回帰確認を完了。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。8 tests passed。stroke/object/group/clear event の typed model と既存 history/page semantics を含む。
+- `cargo test -p pauseink-project-io`
+  - 結果: exit 0。3 tests passed。typed wrapper の lenient load / canonical save / roundtrip を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。typed domain/project model 追加後の回帰確認を完了。
+- `cargo test -p pauseink-domain`
+  - 結果: exit 0。14 tests passed。typed project command、page interval、style snapshot、z-order reversible update を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。typed project command 追加後の回帰確認を完了。
+- `cargo test -p pauseink-media`
+  - 結果: exit 0。11 tests passed。import media、playback state、frame-canvas mapping、host import smoke を含む。
+- `cargo test --workspace`
+  - 結果: exit 0。playback foundation 追加後の回帰確認を完了。
+- `cargo test -p pauseink-app -p pauseink-ui`
+  - 結果: exit 0。`pauseink-app` 2 tests、`pauseink-ui` 1 test が通過。session/transport と日本語 status rendering の最小接続を確認。
+- `cargo test --workspace`
+  - 結果: exit 0。runtime/schema 補強後の回帰確認を完了。
+- `cargo test --workspace`
+  - 結果: exit 0。app/ui status skeleton と文書更新後の workspace 回帰確認を完了。
+- `cargo test -p pauseink-renderer`
+  - 結果: exit 0。4 tests passed。visible stroke、path trace、clear、dissolve clear の raster 基礎を確認。
+- `cargo test -p pauseink-media -p pauseink-app`
+  - 結果: exit 0。`pauseink-media` 12 tests、`pauseink-app` 2 tests が通過。preview frame smoke と import/session 接続を確認。
+- `cargo test -p pauseink-app`
+  - 結果: exit 0。7 tests passed。free ink commit、shift grouping、clear event、save/load、undo/redo を確認。
+- `cargo test -p pauseink-portable-fs -p pauseink-renderer`
+  - 結果: exit 0。`pauseink-portable-fs` 7 tests、`pauseink-renderer` 5 tests が通過。settings file roundtrip と renderer 角保持ケースを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。single-window GUI を含む全 target が compile。`eframe::egui::Panel` 系の deprecation warning が 8 件残るが、動作を止めるものではない。
+- `cargo test -p pauseink-presets-core -p pauseink-portable-fs -p pauseink-app -p pauseink-export`
+  - 結果: exit 0。`pauseink-presets-core` 6 tests、`pauseink-portable-fs` 8 tests、`pauseink-app` 9 tests、`pauseink-export` 8 tests が通過。export snapshot、cache cleanup、family/profile filtering、transparent/composite export smoke を確認。
+- `cargo check -p pauseink-app --all-targets && cargo test -p pauseink-fonts`
+  - 結果: exit 0。GUI を含む app 全 target compile と `pauseink-fonts` 6 tests が通過。Google Fonts empty family graceful failure と cache presence helper を確認。
+- `cargo test -p pauseink-presets-core -p pauseink-app`
+  - 結果: exit 0。base style preset loader の repository load と、GUI 統合後の app regression が通過。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-domain` 15 tests、`pauseink-media` 12 tests、`pauseink-export` 8 tests、`pauseink-fonts` 6 tests、`pauseink-portable-fs` 8 tests、`pauseink-project-io` 4 tests、`pauseink-renderer` 5 tests、`pauseink-template-layout` 3 tests、`pauseink-ui` 1 test、`pauseink-app` 9 tests が通過。workspace 全体の回帰確認を完了。
+- `cargo test -p pauseink-fonts empty_google_font_family_is_rejected_before_network_access`
+  - 結果: exit 0。Google Fonts empty family graceful failure を個別再確認。
+- `cargo check --workspace --target x86_64-pc-windows-gnu`
+  - 結果: exit 101。`can't find crate for core`、`x86_64-pc-windows-gnu target may not be installed`。この Linux ホストでは Windows target std component 未導入が blocker。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。debug binary の生成まで完了。`eframe::egui::Panel` 系 deprecation warning 8 件あり。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set`。現ホストでは display server が無く、GUI 実表示起動は blocker。
+- `cargo test -p pauseink-domain -p pauseink-project-io -p pauseink-renderer`
+  - 結果: exit 0。append stroke command、annotation sync、renderer clear/path trace/stabilization tests を含めて通過。
+- `cargo test -p pauseink-app`
+  - 結果: exit 0。free ink commit、shift grouping、clear event、save/load unknown field 維持、GUI binary compile を含めて通過。
+- `cargo test --workspace`
+  - 結果: exit 0。GUI / portable path helper / renderer 追加後の workspace 回帰確認を完了。
+- `command -v xvfb-run || true`
+  - 結果: 出力なし。現ホストでは `xvfb-run` を使った headless GUI 起動 smoke は未実施。
+- `ffmpeg -version | sed -n '1,12p'`
+  - 結果: Ubuntu apt build `6.1.1-3ubuntu5`。`--enable-gpl`、`--enable-libaom`、`--enable-libopus`、`--enable-libsvtav1`、`--enable-libvpx`、`--enable-libx264`、`--enable-libx265` を確認。
+- `ffprobe -version | sed -n '1,12p'`
+  - 結果: Ubuntu apt build `6.1.1-3ubuntu5`。`--enable-gpl` を含む host 検証 runtime であることを再確認。
+- `ffmpeg -encoders | rg 'libx264|libx265|libaom-av1|libsvtav1|libvpx-vp9|prores|mjpeg|aac|libopus'`
+  - 結果: host runtime では `libaom-av1`、`libsvtav1`、`libvpx-vp9`、`prores[_ks]`、`mjpeg`、`aac`、`libopus`、`libx264`、`libx265` が見えている。release packaging の既定サポートとはみなさない。
+- `ffmpeg -muxers | rg 'webm|mp4|mov|avi|image2'`
+  - 結果: host runtime では `webm`、`mp4`、`mov`、`avi`、`image2` muxer を確認。
+- `ffmpeg -hwaccels`
+  - 結果: host runtime では `vdpau`、`cuda`、`vaapi`、`qsv`、`drm`、`opencl`、`vulkan` が列挙された。実使用可否は別途 runtime probe が必要。
+- `cargo test -p pauseink-project-io -p pauseink-app -p pauseink-portable-fs`
+  - 結果: exit 0。`pauseink-app` 11 tests、`pauseink-portable-fs` 8 tests、`pauseink-project-io` 5 tests が通過。`.pauseink` sample roundtrip、`create -> save -> reopen -> compare`、`import -> annotate -> clear -> save`、portable settings roundtrip を確認。
+- `cargo test -p pauseink-presets-core`
+  - 結果: exit 0。開発者チュートリアル検証用の一時 export profile / style preset を `presets/` へ配置した状態で 8 tests が通過。repository loader が tutorial 手順どおりの追加ファイルを受理することを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。開発者チュートリアル検証用の一時 export profile / style preset を配置した状態でも app 全 target compile が通過。deprecation warning 8 件は継続。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-app` 11、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 6、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 5、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。transparent/composite export smoke、Google Fonts failure path、sample/tutorial 反映後の回帰確認を完了。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。`pauseink-app` debug build が 1m32s で完了。deprecation warning 8 件あり。
+- `cargo check --workspace --target x86_64-pc-windows-gnu`
+  - 結果: exit 101。`can't find crate for core`、`x86_64-pc-windows-gnu` target 未導入が blocker。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`WAYLAND_DISPLAY` / `DISPLAY` 不在のため headless host では GUI 実表示起動 smoke を実行できない。
+- `python3 - <<'PY' ... yaml.safe_load('.github/workflows/*.yml') ... PY`
+  - 結果: exit 0。review 指摘反映後の `.github/workflows/ci.yml` と `.github/workflows/release.yml` の YAML 構文が通ることを確認。
+- `python3 -m py_compile scripts/package_release_asset.py`
+  - 結果: exit 0。release packager script の構文が通ることを確認。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。CI workflow が呼ぶ compile step を再確認。deprecation warning 8 件は継続。
+- `cargo test --workspace`
+  - 結果: exit 0。CI workflow が呼ぶ workspace test を再確認。`pauseink-app` 11、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 6、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 5、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。
+- `cargo build --release -p pauseink-app`
+  - 結果: exit 0。release workflow が呼ぶ optimized build をローカルで再確認。`pauseink-app` release binary を生成できた。
+- `python3 scripts/package_release_asset.py --binary target/release/pauseink-app --platform linux-x86_64 --version v0.1.0-test --format tar.gz --output-dir /tmp/pauseink-ci-packaging`
+  - 結果: exit 0。`pauseink-v0.1.0-test-linux-x86_64.tar.gz` を生成。
+- `python3 scripts/package_release_asset.py --binary target/release/pauseink-app --platform windows-x86_64 --version release/test --format zip --output-dir /tmp/pauseink-ci-packaging`
+  - 結果: exit 0。tag 名の `/` が `-` に正規化され、`pauseink-release-test-windows-x86_64.zip` を生成。連続実行後も staging directory が残らないことを確認。
+- `tar -tzf /tmp/pauseink-ci-packaging/pauseink-v0.1.0-test-linux-x86_64.tar.gz`
+  - 結果: exit 0。archive 内に `README.md` と `pauseink-app` が入っていることを確認。
+- `python3 - <<'PY' ... zipfile.ZipFile('/tmp/pauseink-ci-packaging/pauseink-release-test-windows-x86_64.zip') ... PY`
+  - 結果: exit 0。zip archive 内に `README.md` と `pauseink-app` が入っていることを確認。これは Linux 上で packager の zip 出力を検証したもので、Windows binary 自体は GitHub Actions matrix build に委ねる。
+- `cargo test -p pauseink-fonts -p pauseink-renderer -p pauseink-app`
+  - 結果: exit 0。`pauseink-fonts` 8 tests、`pauseink-renderer` 6 tests、`pauseink-app` lib 11 tests + bin 3 tests が通過。preview 縮尺、pointer roundtrip、letterbox rejection、日本語 UI fallback family 優先順の固定を確認。
+- `cargo test --workspace`
+  - 結果: exit 0。bugfix 反映後も workspace 全体の回帰は維持。`pauseink-app` 11 + 3、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。bugfix 反映後の app compile を確認。`eframe::egui::Panel::*` 系 deprecation warning 8 件は継続。
+- `printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\n' \"$DISPLAY\" \"$WAYLAND_DISPLAY\"`
+  - 結果: `DISPLAY=`、`WAYLAND_DISPLAY=`。このホストでは GUI の目視起動確認は引き続き不可。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 0。5 tests passed。`next_cell_origin_x` を分離した guide geometry と grapheme scale helper の unit test を追加して通過。
+- `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 11 tests、bin 6 tests が通過。font choice list、guide vertical advance state、Windows runtime help text、pointer mapping の回帰を確認。
+- `cargo fmt --all && cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。Ctrl guide capture を modifier release 確定へ変更後も `pauseink-app` lib 11 tests、bin 8 tests が通過。`GuideCaptureState` の release / mid-drag finalize pending を unit test で固定した。
+- `cargo test --workspace`
+  - 結果: exit 0。Ctrl guide capture の確定タイミング変更後も `pauseink-app` 11 + 8、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。Ctrl guide capture を modifier release 確定へ変えた後も app 全 target compile は維持。`Panel::*` 系の deprecation warning は 9 件。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-app` 11 + 6、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。template shaping / transport / shortcut / resizable panel / runtime help 追加後の app 全 target compile を確認。`Panel::*` 系の deprecation warning は 9 件。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。debug build が 1m49s で完了。warning は compile-only で、binary は生成できた。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set`。headless host なので GUI 実表示確認は今回も未実施。
 
-## 6. Validation log
+## 7. 失敗と修正
 
-Record exact commands and outcomes:
+- 2026-04-04T23:56:59+09:00
+  - 事象: ホストに `ffmpeg` / `ffprobe` が存在しない。
+  - 影響: import / export の実検証は sidecar runtime を用意するまで着手不可。
+  - 暫定対応: provider abstraction は sidecar 前提で設計し、後続フェーズで取得方法と provenance を整理する。
+- 2026-04-05T00:32:01+09:00
+  - 事象: `progress.md` と本レポートの一部に host `ffmpeg` / `ffprobe` 未配置という古い記述が残っていた。
+  - 影響: host 検証 runtime と mainline sidecar 方針の区別が読み取りづらく、review 証跡として不正確。
+  - 暫定対応: host の Ubuntu apt runtime 利用可能を明記しつつ、release packaging とは分離して扱う方針に統一した。
+- 2026-04-05T09:00:00+09:00
+  - 事象: final QA/docs review で、`progress.md` と本レポートの done/not-done 不整合、`portable_root_override` の doc/code mismatch、古い `.pauseink` sample、integration smoke / tutorial validation / Google Fonts 証跡不足が指摘された。
+  - 影響: `AGENTS.md` の完了条件に対して「done と言い切れない」状態だった。
+  - 対応: settings から `portable_root_override` を除去して env override のみに統一し、sample と `.docs/05` を現行 schema へ更新、必要な smoke test と tutorial validation を追加、`progress.md` / report / `.docs/` を同期した。
+- 2026-04-06T16:10:00+09:00
+  - 事象: preview では stroke を source media 座標のまま小さい texture へ rasterize しており、マウス位置と描画位置が大きくずれて見えていた。加えて `egui` に日本語 font を登録していなかったため、Windows で UI が tofu 化していた。
+  - 影響: free ink の見かけ位置が信用できず、日本語 UI が読めない状態だった。
+  - 対応: `RenderRequest` に `source_width` / `source_height` を追加して preview/export の縮尺経路を明示し、preview pointer helper を `frame_rect` 基準に一本化、`egui` 起動時に system / portable cache font から日本語 fallback を先頭登録するよう修正した。
 
-- build commands
-- test commands
-- smoke-test steps
-- export jobs
-- import probe checks
-- Windows build attempts
-- tutorial sample validation commands
+## 8. Sub-agent メモ
 
-## 7. Failures and fixes
+- Pass 1 — architecture sanity review
+  - 目的: crate / module 境界、single-writer + snapshot worker 方針、cross-platform UI の危険点を洗う。
+  - 要約:
+    - `app` は薄く保ち `ui` crate を独立させる
+    - time model は `u64 ms` に固定せず `MediaTime` を先に整備する
+    - export schema は family / profile の二層に分ける
+    - background worker は immutable snapshot のみを受ける
+  - 採用した変更:
+    - `ui` crate を workspace に追加する
+    - clear 境界の等値 semantics と `MediaTime` を Phase 2 の先頭で TDD する
+    - `presets_core` は export family schema と distribution profile schema を分ける
+  - 見送った提案:
+    - UI toolkit 名の即時固定。理由: crate 境界と time/export schema を先に固める方が rework が少ないため
+- Pass 2 — media/export/licensing sanity review
+  - 目的: runtime/provider 分離、export family/profile 分離、host 検証 runtime と release packaging の境界、Adobe/Web/optional codec pack の扱いを洗う。
+  - 要約:
+    - `MediaRuntime` が `PathBuf` 2 本だけでは provenance / manifest / diagnostics を持てず、system runtime を mainline に混入させやすい
+    - `parse_ffprobe_output` は duration / fps を `f64` に落としており、time base・VFR caveat・alpha/audio の分類に必要な情報が不足している
+    - `ExportFamily` / `DistributionProfile` は二層分離自体は正しいが、codec/muxer/audio/alpha/settings/source metadata を保持できず schema が薄い
+    - host Ubuntu apt build は review / local validation に使えるが、`--enable-gpl` と `libx264` / `libx265` を含むため mainline release assumption にしてはいけない
+  - 採用した変更:
+    - Phase 9 以降で runtime origin / manifest / capability parsing を TDD で補強する
+    - Phase 6/15 の前に family/profile schema を concrete rule data まで広げる
+    - packaging/licensing notes では host 検証 runtime と release sidecar を別項目で記録する
+    - `MediaRuntime` に `RuntimeOrigin` と provenance field を追加する
+    - `MediaProbe` に raw frame-rate / alpha/audio 情報を追加する
+    - `presets_core` に `RuntimeTier` / `ProfileSourceKind` を追加する
+  - 見送った提案:
+    - host Ubuntu apt build の capability を既定サポート表として docs に固定する。理由: mainline runtime と法務境界が崩れるため
+- Pass 2.5 — ui/app boundary explorer
+  - 目的: `eframe/egui` 導入後の `app` / `ui` / core crates の責務境界を再点検する。
+  - 要約:
+    - 推奨依存方向は `ui -> app -> {domain, project_io, portable_fs, media, export, renderer, fonts, template_layout, presets_core}`
+    - `app` は single-writer の live state / command / autosave-export state machine を持ち、`ui` は widget tree と texture / panel / modal などの view state に留める
+    - autosave / export job / provider capability 判定は `ui` へ漏らさず `app` か supporting crate に寄せる
+  - 採用した変更:
+    - `main.rs` で扱う GUI 修正を最小に留め、session / persistence / renderer / media API を `app` lib 側で先に整える方針を維持
+  - 見送った提案:
+    - この段階で widget tree 全体を `ui` crate へ全面移送する。理由: 先に export/autosave 完成度を上げる方が done criteria への寄与が大きいため
+- Pass 3 — final QA/docs sanity review
+  - 目的: done criteria 直前で docs / code / tests / sample / tutorial / report の不整合を洗い切る。
+  - 要約:
+    - `progress.md` と本レポートの done/not-done が食い違っていた
+    - `portable_root_override` は docs と sample に存在したが、起動時には実際に使われていなかった
+    - `samples/minimal_project.pauseink` が旧 schema のままで、`.docs/05` と現行 loader/save と一致していなかった
+    - integration smoke、tutorial validation、Google Fonts graceful failure、export/profile 記録の証跡が弱かった
+  - 採用した変更:
+    - `portable_root_override` を settings schema / sample / manual から削除し、portable root override は環境変数のみに統一
+    - `samples/minimal_project.pauseink` と `.docs/05_project_file_format.md` を現行 schema へ更新し、sample roundtrip test を追加
+    - `create -> save -> reopen -> compare` と `import -> annotate -> clear -> save` の smoke test を `pauseink-app` に追加
+    - 開発者チュートリアル検証用の一時 profile / preset を実際に置いて loader / app compile を確認し、検証後に削除
+    - `.docs/` を日本語へ統一し、`progress.md` と本レポートを最終状態へ同期
+  - 見送った提案:
+    - settings file 起動時 override を新規実装する。理由: 起動順序を複雑化させるより、env override のみへ揃える方が portable-state ルールと実装実態に対して安全だった
+- Pass 4 — bugfix sanity review
+  - 目的: preview 座標ずれと UI 文字化けの根本原因が、局所パッチではなく設計上の不一致に由来していないか確認する。
+  - 要約:
+    - 描画位置ずれの主因は、preview で source media 座標の stroke を target texture へ縮尺せず rasterize していたこと
+    - 白い追従点も preview の保存座標系と揃っておらず、見かけのずれを増幅していたこと
+    - 文字化けの主因は、`egui` に日本語 font を登録しておらず Windows 既定 font だけでは CJK glyph を満たせなかったこと
+  - 採用した変更:
+    - `renderer` に source/target 縮尺を追加し、preview と export の render path を同じ `RenderRequest` で扱うようにした
+    - `app` に pointer / frame 座標 helper を追加して `frame_rect` 基準へ統一した
+    - `fonts` から system / portable cache の候補 font を読み、`egui` 起動時に日本語 fallback を登録するようにした
+  - 見送った提案:
+    - 日本語 font を repository へ bundle する。理由: まずは system / portable cache 利用で重い同梱物を増やさずに解消できたため
+- Pass 5 — live stroke preview sanity review
+  - 目的: 描画中ストロークの表示を足す際、renderer/export 側の責務まで巻き込まずに editor-only の挙動として収められるか確認する。
+  - 要約:
+    - `stroke_draft` は既に `pauseink-app` lib の `AppSession` 内で保持されており、committed project data にだけ renderer が依存している
+    - live preview を renderer request へ混ぜると export/cache/render の責務境界が崩れやすい
+    - 最小で安全な修正は、draft を stabilized polyline として app 側で読み出し、`egui::Painter` overlay で描く方法
+  - 採用した変更:
+    - `AppSession::current_stroke_preview` を追加し、raw sample から現在の style 付き preview path を取り出せるようにした
+    - `main.rs` に live stroke painter overlay を追加し、committed overlay texture の上、template / guide overlay の下に描くようにした
+  - 見送った提案:
+    - renderer の `RenderRequest` へ live draft を混ぜる。理由: editor-only の一時状態を export/preview の共通描画責務へ押し込む必要が無く、保守範囲を広げるだけだったため
 
-Mandatory section.  
-Document failed approaches, regressions, errors, and the fix that resolved each issue.
+## 8.5 2026-04-06 追加修正バッチ開始メモ
 
-## 8. Sub-agent notes
+- 開始時点の即時マイルストーン:
+  - template underlay の字幅・字詰め・傾き・font 選択を実動作に合わせて補正する
+  - transport / seek UI を独立させ、object list / log の drag resize と Undo/Redo shortcut を追加する
+  - Ctrl タップで次文字用の縦ガイドを送る挙動と、template 配置中の stroke 抑止を入れる
+  - Windows で FFmpeg runtime が見つからない場合の対処を UI に明示する
+- ユーザー観測の要点:
+  - template slot が固定幅前提で、文字幅と字間が不自然
+  - 傾き設定でも glyph 自体が直立したまま
+  - 読み込み済み font を dropdown から選べない
+  - transport が上部 toolbar に埋もれていて、再生/seek が見つけにくい
+  - `Ctrl-Z` / `Ctrl-Shift-Z` / `Ctrl-Y` が未接続
+  - object list / log panel の境界が drag resize できない
+  - Ctrl 修飾付き guide capture の後、Ctrl タップだけでは次文字用縦ガイドが進まない
+  - template 配置中でも drag すると stroke が始まる
+- sub-agent 回収結果:
+  - UI/操作系 sanity review:
+    - 再生/seek は既に toolbar に存在するが discoverability が弱い
+    - `Panel::*` は `.resizable(true)` を足すだけで drag resize 化できる
+    - Undo/Redo shortcut は `main.rs` だけで接続可能
+    - runtime 未検出案内は左ペインとランタイム診断へ寄せるのが自然
+  - template/font sanity review:
+    - slot 幅が `font_size * scale` 固定で、見えている glyph と box の大きさが不一致
+    - slope は slot の Y オフセットだけで、glyph そのものは回転していない
+    - `template.font_family` は UI に値があるだけで preview へ未反映
+- 今回の実装方針:
+  - `VA` のような pair kerning を殺さないため、1 grapheme ごとの独立計測ではなく line-level shaping を使って slot 位置を決める
+  - kana / latin / punctuation scale は保持しつつ、同一 scale の run ごとに shaping して kerning を温存する
+  - slope は baseline のずれだけでなく、glyph / slot box の回転にも反映する
+  - font dropdown は「システム既定 + 読み込み済み family」を候補にし、選択 family だけを egui に lazy 登録する
+  - guide の次文字縦線は horizontal guide を据えたまま、直前 object 幅に基づいて next-cell origin だけ送る
+  - Ctrl guide capture は pen-up 即確定ではなく、modifier 押下中の複数 stroke を同一 reference object に寄せ、modifier release で確定する
 
-For each sub-agent pass record:
+## 8.6 2026-04-06 live stroke preview 修正メモ
 
-- objective
-- summary of findings
-- adopted changes
-- rejected suggestions and why
+- 開始時点の即時マイルストーン:
+  - free ink 中の未確定 stroke を、その場で確認できるようにする
+  - stabilization 後に commit された stroke と大きく乖離しない preview path を使う
+  - renderer/export の責務境界は崩さず、editor-only の修正で閉じる
+- ユーザー観測の要点:
+  - 描画中は白い追従点しか出ず、stroke の線そのものは commit 後まで見えない
+  - 手ブレ補正が入る都合上、描き終わりで微妙に形が変わること自体は許容される
+- 今回の実装方針:
+  - `stroke_draft` から stabilized points を引いて `StrokePreview` を生成し、現在の `StyleSnapshot` をそのまま適用する
+  - live preview は editor-only overlay として `egui::Painter` で描き、renderer の `RenderRequest` には混ぜない
+  - draw order は committed overlay の上、template / guide overlay の下へ置く
 
-## 9. Export/profile notes
+## 8.7 2026-04-06 live stroke preview 検証ログ
 
-Record:
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `AppSession` に current draft preview accessor を追加し、`main.rs` で live stroke painter overlay を接続した。合わせて preview style と clear/cancel 挙動の unit test を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: 描画中も未確定 stroke がその場で表示され、commit / cancel 後は draft preview が消える構成になった。
+  - 次の一手: workspace 全体の回帰、manual / progress の同期、commit / push を行う。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 13 tests、bin 8 tests が通過。`current_stroke_preview` の style 反映と commit/cancel 時の clear を unit test で固定した。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。`pauseink-app` 13 + 8、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
 
-- which official pages were used for final YouTube/X/Instagram values
-- which values were taken directly
-- which Instagram values remain app-authored safe defaults
-- Adobe-focused families validated
+## 8.8 2026-04-06 slot/style/guide 修正メモ
 
-## 10. Packaging and licensing notes
+- 開始時点の即時マイルストーン:
+  - `前スロット` を追加して template slot の前後移動を明示する
+  - `基本スタイル` が template / guide の継続描画でも反映されるようにする
+  - `ガイド解除` 後に残る stale state を捨て、次回 guide capture の位置ずれを避ける
+  - effect 実装状況と未実装範囲を整理する
+- 根本原因の整理:
+  - template / guide の継続描画は既存 object へ stroke を append するが、renderer は object 配下の stroke を `object.style` で描くため、`active_style` だけ変えても見た目が更新されない
+  - `ガイド解除` ボタンは `guide_state` / `guide_geometry` しか消しておらず、`last_committed_object_bounds`、modifier state、guide capture context が残っていた
+  - effect は renderer/domain には outline / drop shadow / glow primitive があるが、preset loader と inspector UI は thickness / color 中心で、cross-stroke ordering の保証も不足していた
+- 今回の実装方針:
+  - 既存 object へ append する batch に `SetGlyphObjectStyleCommand` を入れて object style を最新の active style へ同期する
+  - `ガイド解除` は guide overlay だけでなく capture context、modifier flag、last bounds もまとめて reset する
+  - slot 移動は `step_template_slot_index` helper へ寄せて underflow / overflow を防ぐ
+  - effect は UI を広げず、renderer backend だけ object 単位の multi-pass へ補正して ordering rule を先に固定する
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `前スロット` UI、`SetGlyphObjectStyleCommand`、guide clear reset helper、関連 unit test を追加した。
+  - 変更ファイル: `crates/domain/src/project_commands.rs`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: template / guide 継続描画で style 変更が見た目へ反映される構成になり、guide clear 後の stale state も明示的に捨てるようになった。
+  - 次の一手: workspace 全体回帰、manual / progress 同期、commit / push を行う。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-domain` 16、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: renderer の stroke effect 描画を object 単位の multi-pass へ切り替え、cross-stroke outline ordering の regression test を追加した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`
+  - 結果: 同一 object 内では drop shadow / glow / outline を全 stroke ぶん先に描き、その後に stroke 本体を重ねる構成になった。`x` の 2 画目 outline が 1 画目本体を覆いにくい順序を backend で固定した。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo test -p pauseink-renderer -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-renderer` 7 tests が通過。multi-pass 化後も既存 preview/clear/path-trace 回帰を壊していない。
 
-Record:
+## 8.9 2026-04-06 FFmpeg runtime 再検出と探索経路の見直し
 
-- FFmpeg runtime strategy used
-- whether any optional codec packs were considered or implemented
-- H.264/H.265 packaging implications observed
-- what notices/source/provenance work remains for release packaging
+- 開始時点の即時マイルストーン:
+  - `winget install --id=Gyan.FFmpeg -e` 後でも Windows で runtime を拾えるかを見直す
+  - `機能情報更新` / `診断を再取得` が capability だけでなく discovery 自体をやり直すようにする
+  - Linux/macOS を含め、system runtime 探索対象と実検証範囲を整理する
+- 根本原因の整理:
+  - app 起動時は `discover_runtime(...).ok()` で 1 回だけ検出し、その後の `機能情報更新` / `診断を再取得` は capability 再取得しか行っていなかった
+  - discovery 失敗理由が UI に残らず、WinGet 配置のどこで外れているか見えなかった
+  - system runtime 探索は `PATH` と一部既知パスのみで、Windows の `WindowsApps` や Scoop、Linux の user bin / Linuxbrew を見ていなかった
+- 今回の実装方針:
+  - `DesktopApp` に runtime 再検出 helper と `last_runtime_error` を持たせ、起動後の再 discovery を可能にする
+  - 診断 UI は current OS 向けの案内を出し、Windows では WinGet Links / Packages / PATH を明示する
+  - `pauseink-media` の探索 context に home dir を追加し、Windows/macOS/Linux の代表的 install path を unit test 付きで補強する
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `crates/media/src/lib.rs` に home dir 付き `RuntimeSearchContext` と Windows/macOS/Linux の追加探索パス、`crates/app/src/main.rs` に runtime 再検出、最後の検出エラー保持、OS 別の runtime help を追加した。
+  - 変更ファイル: `crates/media/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: 起動後に sidecar や host runtime を配置しても `機能情報更新` / `診断を再取得` で再検出できる構成になり、Windows の `winget` user-scope / package-scope、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を探索候補へ含めた。
+  - 次の一手: manual / README / progress を同期し、workspace 全体回帰と Linux host 実 runtime パス確認を記録する。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test -p pauseink-media`
+  - 結果: exit 0。17 tests が通過。`windows_runtime_search_finds_winget_links_without_path`、`windows_runtime_search_finds_nested_winget_package_bin`、`windows_runtime_candidates_cover_windowsapps_and_scoop`、`macos_runtime_candidates_cover_homebrew_and_usr_local`、`linux_runtime_candidates_cover_usr_bins` を含め、探索ロジックの unit test を更新した。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 14 tests、bin 13 tests が通過。`apply_runtime_discovery_updates_status_and_provider`、OS 別 help 文言テスト、座標変換や guide 既存回帰が維持された。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体が通過し、`pauseink-export` の composite / transparent smoke、`pauseink-media` の host probe / preview smoke も維持された。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を確認。`Panel::*` 系の deprecation warning は継続。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `command -v ffmpeg && command -v ffprobe && ffmpeg -version | head -n 1 && ffprobe -version | head -n 1`
+  - 結果: Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`6.1.1-3ubuntu5` を実確認した。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`README.md`、`progress.md` を runtime 再検出と OS 別案内に合わせて更新した。
+  - 結果: docs / 実装 / テストの runtime 挙動を再同期した。
 
-## 11. Tutorial sample
+## 8.10 2026-04-06 template 再配置・下部パネル固定化・stroke 初動・export progress
 
-Record:
+- 開始時点の即時マイルストーン:
+  - 配置済み template のフォントサイズ変更で slot box が追従しない問題を直す
+  - object list / logs 増加で bottom panel が揺れて canvas がガタつく問題を止める
+  - template underlay と stroke の前後関係、描き始めの初動ラグ、export progress 表示、opacity UI の重複を整理する
+- 根本原因の整理:
+  - placed template は click 時の slot box をそのまま保持しており、配置後の再 layout 経路がなかった
+  - bottom panel は tab ごとの内容に応じて必要サイズが変わり、wrap と shrink の都合で中心 canvas の高さへ影響が漏れていた
+  - pointer input を canvas 描画の後段で処理していたため、描き始めの 1 点目が次 frame まで見えにくかった
+  - export worker は progress を UI へ返しておらず、`実行中:` の下が空いたままだった
+  - 色 picker と opacity slider の両方が alpha へ触れており、source of truth が二重化していた
+- 採用した実装方針:
+  - `placed_origin` を保存し、template text / font / font size / tracking / slope が変わったら slot box を再計算する
+  - bottom panel は `bottom_panel_content_width` を独立 state に持ち、固定高さの `ScrollArea::both().auto_shrink([false, false])` へ寄せる
+  - input を preview 描画より先に処理し、template underlay は committed/live stroke の下へ移す
+  - export crate に progress callback 付き API を追加し、right panel と `書き出しキュー` の両方へ progress bar を出す
+  - 色 picker は RGB のみ編集し、alpha は単一の opacity slider に統一する
+- sub-agent findings:
+  - explorer sub-agent は、bottom panel の揺れは内容側の要求サイズと wrap/shrink の組み合わせが主因で、`ScrollArea::both()` + `auto_shrink([false, false])` + 独立 content width state が最小で安全と指摘した
+  - この提案を採用し、`内容幅` UI と固定高さ scroll region を実装した
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `crates/app/src/main.rs` に placed template 再 layout helper、bottom panel content width、fixed-height scroll region、template underlay の描画順変更、input 処理順変更、RGB-only color picker、export progress UI を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`
+  - 結果: 配置済み template の slot box は設定変更へ追従し、bottom panel の行数増加では canvas の高さが揺れず、template underlay は stroke の下、live stroke は描き始めから見える構成になった。opacity は `不透明度` スライダーへ一本化された。
+  - 次の一手: export crate 側の progress callback、manual / progress 同期、workspace 回帰を行う。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `crates/export/src/lib.rs` に `ExportProgressUpdate` と `execute_export_with_settings_with_progress` を追加し、frame render / png sequence / ffmpeg launch 各段階の進捗を report するようにした。
+  - 変更ファイル: `crates/export/src/lib.rs`
+  - 結果: `実行中:` の下に stage label と progress bar を表示できるようになり、右ペインと `書き出しキュー` の両方で同じ pending 状態を見られるようになった。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo fmt --all`
+  - 結果: exit 0。format を適用。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test -p pauseink-export`
+  - 結果: exit 0。8 tests が通過し、progress callback 追加後も transparent/composite 系の export test が維持された。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`placed_template_slots_reflow_when_font_size_changes_after_placement`、`scrollable_bottom_tab_keeps_central_panel_height_stable_when_rows_increase`、`pending_export_progress_updates_and_completion_clears_worker_state`、`bottom_panel_content_width_is_clamped_to_safe_range` を含む app 回帰が通過した。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体の回帰、export smoke、runtime/path/guide/template 既存テストを維持した。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を維持。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を今回の UI/UX 差分に合わせて更新した。
+  - 結果: template 再配置、下部パネル固定化、export progress、opacity 一本化、出現速度 UI 未実装を docs と同期した。
+- 2026-04-06T16:58:41+09:00
+  - 事象: user から「動画の書き出しが 92% で止まる。エンコード種別によらず同じ」と報告が来た。
+  - root cause: `crates/export/src/lib.rs` の動画 export は frame 生成を 0.0..0.9、ffmpeg 起動後を固定 0.92 にして `Command::output()` で終了待ちしており、encode 中の進捗を一切 UI へ返していなかった。さらに hardware fallback が走ると再試行側の進捗で UI が逆走し得た。
+  - 実施内容: export 実行を `-progress pipe:1 -nostats` 付き `spawn` に切り替え、`out_time` / `out_time_us` / `out_time_ms` / `progress=end` から 0.92..0.99 の stage 内進捗へ写像する helper を追加した。app 側は pending export の fraction を単調増加で保持するよう変更した。
+  - 変更ファイル: `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: red として `cargo test -p pauseink-export ffmpeg_progress_lines_advance_fraction_beyond_mux_start -- --nocapture` を実行し、helper 未定義で fail を確認した。続いて `cargo test -p pauseink-app pending_export_progress_does_not_move_backwards_on_retry -- --nocapture` を実行し、progress 逆走で fail を確認した。その後 `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。transparent/composite export smoke を含む export crate 10 tests、app crate 45 tests が通過し、動画 export 中も progress bar が 92% 以降で更新される経路を固定できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T17:36:54+09:00
+  - 事象: user から「今度は 99% で止まり、`合成動画を書き出し中100%` と表示される」と追加報告が来た。
+  - root cause: `progress=end` を即 `100%` ラベルへ変換していたため、ffmpeg プロセスの終了待ちや app 側の working directory cleanup 中にも「100% なのに終わらない」状態に見えていた。さらに `start_export` worker は `Finished` 通知より先に `remove_dir_all` を実行しており、大量の frame cleanup が UI 完了通知を遅らせ得た。
+  - 実施内容: `crates/export/src/lib.rs` の `progress=end` 表示を `最終処理中` へ変更し、実完了は ffmpeg 正常終了後の `書き出し完了` に限定した。あわせて stage label を `1/3 フレーム生成`、`2/3 動画/PNG 書き出し`、`3/3 一時ファイル整理` に整理した。`crates/app/src/main.rs` では cleanup 前に `3/3 一時ファイルを整理中` を出すようにし、右ペインと `書き出しキュー` の両方で stage ごとの説明文も表示するようにした。
+  - 変更ファイル: `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: `cargo test -p pauseink-export ffmpeg_progress_end_clamps_to_stage_end -- --nocapture`、`cargo test -p pauseink-app export_progress_hint_explains_finalizing_stages -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。`progress=end` が誤って「100% 完了」に見えないことと、cleanup を含む最終段階が UI 上で説明付きで見えることを固定できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T18:12:41+09:00
+  - 事象: user から「preview では A/B/C が見えているが、動画では `PathTrace A -> Instant B -> PathTrace C` のとき `B` は即表示、`A` はだんだん表示、`C` は `A` 完了後にだんだん表示してほしい」と追加要望が来た。
+  - root cause: `crates/renderer/src/lib.rs` の entrance 評価は object ごとに `created_at` 基準で独立しており、同じ page 内でも後続 timed entrance が前の timed entrance 完了を待たずに始まっていた。
+  - 実施内容: renderer に page 単位の effective entrance start 計算を追加し、`Instant` 以外の timed entrance を `ordering.reveal_order` 順に直列化するようにした。`Instant` object は従来どおり即表示のまま通し、次の timed entrance だけが直前 timed entrance の end に揃う。page 境界は `object.page_index(clear_events)` で分離した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: red として `cargo test -p pauseink-renderer timed_entrance_waits_for_previous_timed_reveal_even_with_instant_between -- --nocapture` を実行し、`C` が `A` 完了前に進んでしまう failure を確認した。その後 `cargo test -p pauseink-renderer timed_entrance_on_next_page_does_not_wait_for_previous_page_reveal -- --nocapture`、`cargo test -p pauseink-renderer dissolve_entrance_waits_for_previous_path_trace_reveal -- --nocapture`、`cargo test -p pauseink-renderer`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。`PathTrace/Wipe/Dissolve` の timed entrance が page 内で reveal 順に直列化され、`Instant` は引き続き即表示されることを regression で固定できた。`Panel::*` 系 deprecation warning は継続。
 
-- tutorial location
-- how it was built/run/tested
-- exact commands
-- result
+## 8.11 2026-04-06 stroke 初点欠落の再修正
 
-## 12. Known issues / limitations
+- 開始時点の即時マイルストーン:
+  - 「画の最初が書けない」報告を再現し、press origin が最初の sample として残ることを test で固定する
+- 根本原因の整理:
+  - canvas input 開始条件が `drag_started` 由来の遅延と `response` 依存の interaction 判定に引きずられ、press 直後の 1 点目が draft に入らないケースが残っていた
+  - press frame で同一点を二重に積むと、live preview が zero-length line になって見えにくくなる
+- 採用した実装方針:
+  - input 開始条件は `drag_started` ではなく current frame の `PointerButton { pressed: true }` event を基準にし、その `pos` を最初の sample として使う
+  - `append_stroke_point` で直前 sample と同一点なら追加しない
+  - main.rs の regression test で「press frame で 1 点 preview」「commit 後の first raw sample が press 座標」「同一 frame の press→move でも press 座標を優先」を固定する
+- sub-agent findings:
+  - explorer sub-agent も、`handle_canvas_input` と `AppSession` の境界で初点が落ちている可能性を優先候補として挙げた
+  - 別の explorer sub-agent は、`drag_started` 依存と press frame の duplicate sample が主因候補で、`PointerButton.pos` ベースの開始点確保と duplicate 抑止が最小差分と指摘した
+  - そのため UI 側開始条件と draft sample 追加条件の両方を見直した
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の canvas input 開始条件を `press_origin` 基準へ変更し、`crates/app/src/lib.rs` の `append_stroke_point` に duplicate sample 抑止を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `crates/app/src/lib.rs`
+  - 結果: drag threshold 到達前の press frame でも draft が開始し、最初の sample は押した位置を保持するようになった。press frame の 1 点目は dot preview として描かれる。
+  - 次の一手: app/workspace 回帰、manual / progress 同期、commit / push を行う。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `stroke_starts_on_pointer_press_before_drag_threshold` と `committed_stroke_keeps_press_origin_as_first_raw_sample` を red -> green で追加した。
+  - 結果: 旧実装では前者が `canvas_drag_active` 未開始で fail、後者が commit/first sample 条件で fail した。修正後は両方 pass した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。app lib 14 tests、bin 19 tests が通過し、今回追加した 2 本の regression test も pass した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体回帰、export smoke、runtime/path/guide/template 既存テストを維持した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を維持。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を stroke 初点修正の内容に合わせて更新した。
+  - 結果: 「押した瞬間の位置から表示される」こと、press origin / duplicate sample 抑止の実装意図を docs と同期した。
+- 2026-04-06T14:10:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の開始点取得を `ctx.input().pointer.hover_pos()` 依存から current frame の `PointerButton { pressed: true }` event の `pos` 優先へ補強し、`same_frame_move_keeps_pointer_button_press_as_first_preview_point` を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: press と move が同一 frame に入っても、最初の preview/raw sample は move 後座標ではなく button press 座標を保持するようになった。
+- 2026-04-06T14:10:00+09:00
+  - 実施内容: `cargo test -p pauseink-app same_frame_move_keeps_pointer_button_press_as_first_preview_point -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`
+  - 結果: すべて exit 0。新規 same-frame regression を含めて回帰が通った。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T14:30:00+09:00
+  - 実施内容: guide 横線の表示幅を current frame の左右端まで拡張する helper を `crates/app/src/main.rs` に追加し、`draw_guide_overlay` の horizontal line 描画へ適用した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: 傾きは保ったまま、横ガイドは表示領域いっぱいへ伸びるようになった。縦ガイドの長さと位置決めは従来どおり。
+- 2026-04-06T14:30:00+09:00
+  - 実施内容: `horizontal_guide_line_extends_to_frame_edges` を red -> green で追加し、`cargo test -p pauseink-app horizontal_guide_line_extends_to_frame_edges -- --nocapture` を実行した。
+  - 結果: 旧実装では横線 start/end が cell 幅の範囲に留まり fail。修正後は frame 左右端へ延長され pass。
+- 2026-04-06T15:40:00+09:00
+  - 実施内容: project-specific UI state の保存位置を整理した。`project.settings.pauseink_editor_ui` に template text / font family / font size / tracking / line height / script scale / slope / underlay / current slot と guide 傾きを保存し、`project.presets.base_style` に resolved base style snapshot と任意の preset ID を保存する方針を採用した。
+  - 判断理由: `.docs/02_final_spec_v1.0.0.md` の「project には resolved snapshot と任意の preset ID を保存する」「user preset は portable root に保存する」に最も素直に沿う。`project_io` の generic JSON を活かせるため typed project schema を壊さず、unknown field preserve 方針とも両立する。
+  - 変更ファイル: `crates/app/src/main.rs`, `README.md`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`
+  - 結果: reopen / autosave recovery 後も、基本スタイル、選択 preset、template font/layout、guide 傾きが project 単位で戻るようになった。
+- 2026-04-06T15:55:00+09:00
+  - 実施内容: `crates/portable_fs/src/lib.rs` に `user_style_presets_dir()` を追加し、`pauseink_data/config/style_presets/` を portable な user preset 置き場として固定した。`crates/presets_core/src/lib.rs` では built-in / user overlay loader、disk save helper、preset source/file path/opacity/stabilization metadata を追加した。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`, `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`
+  - 結果: built-in preset は読み取り専用のまま、user preset を portable root 配下へ保存し、同じ `id` では overlay として扱えるようになった。
+- 2026-04-06T16:05:00+09:00
+  - 実施内容: inspector に user preset ID / 名、`追加保存` / `上書き保存` / `削除` を追加し、選択 preset と現在の base style を同期するようにした。preset 適用時は `opacity` と `stabilization_strength` も反映し、project-specific UI 変更では `session.dirty` を立てるようにした。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `README.md`, `progress.md`
+  - 結果: GUI から user preset の CRUD が完結し、保存対象だった style/template/guide state が autosave と明示保存の両方へ乗るようになった。
+- 2026-04-06T16:10:00+09:00
+  - 実施内容: `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture`
+  - 結果: すべて exit 0。project reopen での state 復元、portable user preset overlay、add / overwrite / delete の roundtrip を回帰テストで固定できた。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: effect / entrance UI の実装漏れを `.docs/11_implementation_plan.md` と突き合わせた。sub-agent は timeout で回収できなかったため、local audit でも同じ観点を再確認した。
+  - 判断: v1.0 の最小接続対象は base style の `outline / drop shadow / glow / blend mode` と、renderer が実際に消費する `entrance kind / duration_mode / duration / speed_scalar` とした。`reveal-head effect` と `post-action chain`、`clear / combo preset` の専用 UI は今回の範囲外だが、残 gap として明示管理する。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/presets_core/src/lib.rs` を拡張し、style preset が `outline / drop_shadow / glow / blend_mode / entrance` を読み書きできるようにした。built-in preset の `target: "glyph"`、`duration_mode: "length_proportional"` も loader 側で吸収するようにした。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`, `crates/domain/src/annotations.rs`
+  - 結果: built-in preset と user preset の両方で effect / entrance を保持したまま overlay load と disk roundtrip が可能になった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/app/src/lib.rs` に `active_entrance` と glyph object entrance 同期を追加し、`crates/app/src/main.rs` の inspector に outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar の UI を追加した。project save には `project.presets.entrance` を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/domain/src/project_commands.rs`
+  - 結果: 現在の style / entrance は preset 適用、user preset 保存、project reopen 復元、既存 object への継続編集まで一貫して反映されるようになった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/renderer/src/lib.rs` の entrance 計算を修正し、`speed_scalar` と `duration_mode` を可視化へ反映した。`fixed_total_duration` は時間を倍率で短縮/延長し、`proportional_to_stroke_length` は 600px を基準長として stroke 長に比例させる安全解釈を採用した。duration 未指定時だけ 0.6s fallback を使う。
+  - 判断理由: spec は `duration mode` と `speed scalar` を要求しているが、比例モードの基準長は未規定だったため、UI と renderer を最小矛盾で接続できる 600px baseline を app-authored 定数として採用した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`
+  - 結果: preview / export の両方で出現速度 UI が実際の visible progress に効くようになった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture` を red -> green で通し、その後 `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。workspace 回帰、transparent/composite export smoke、save/reopen、preset roundtrip を維持した。`eframe/egui 0.34.1` の `Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T15:27:29+09:00
+  - 事象: user から「次文字用の縦ガイド幅は一定で、位置だけ直前文字の横へ付けたい」と追加仕様が来た。
+  - root cause: `GuideOverlayState::advance_to_next_from_bounds` が `cell_width` 自体を直前文字 bounds で上書きしており、`build_guide_geometry` の vertical offset もその新しい幅を使っていた。そのため次文字用の縦ガイドセット幅まで直前文字幅に引きずられていた。
+  - 実施内容: `GuideOverlayState::from_reference_bounds` と `advance_to_next_from_bounds` を修正し、縦ガイドセットの幅は固定のまま、`next_cell_origin_x` だけを直前文字の右端 `max.x` へ送るようにした。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: `guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge` を追加し、`cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行。
+  - 結果: すべて exit 0。縦ガイドの位置送りだけを変え、guide geometry の既存前提と workspace 回帰は維持できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T16:06:12+09:00
+  - 事象: user から「Ctrl-Z 等の Ctrl に反応して guide が次に送られるのは非直観的」と追加報告が来た。
+  - root cause: frame 内の shortcut 処理が `handle_global_shortcuts`、guide modifier tap 判定が `handle_guide_modifier_tap` の順で走るため、undo / redo に使った修飾キー release も guide tap として扱われ得た。
+  - 実施内容: `DesktopApp` に `guide_modifier_tap_suppressed` を追加し、undo / redo shortcut を consume した frame では modifier release を 1 回だけ無効化するようにした。あわせて user / developer guide と progress を更新した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: `guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut` を追加し、`cargo test -p pauseink-app guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行。
+  - 結果: すべて exit 0。`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` の直後に guide が意図せず次文字へ送られないことを固定できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T17:15:41+09:00
+  - 事象: user から「一時停止中に書いた object が preview で即時に全表示されない」「A/B を書いて少し再生して止めてから C を書くと、preview/export の時系列が意図に合わない」「後から描いた object の outline/drop shadow が先の body より前に見える」「outline/effect/font 等が次回起動で戻らない」と報告が来た。
+  - root cause:
+    - renderer の entrance 計算が page 単位の単一 timed queue だったため、paused し直して後から書いた batch も前の batch の完了待ちになっていた。
+    - preview と export が同じ visibility 計算を共有しており、一時停止中の current batch だけを強制表示する経路が無かった。
+    - outer effect 合成が object-first multi-pass だったため、後から描いた object の outline / drop shadow が先の object body の上に乗り得た。
+    - `settings.json5` は基本設定しか持っておらず、workspace 的な style / entrance / template / font / guide state は project reopen でしか戻らなかった。
+  - 実施内容:
+    - `RenderRequest` に `preview_force_visible_batch` を追加し、preview だけ current paused batch を fully visible にする経路を追加した。
+    - timed entrance は page 全体 1 本の queue ではなく、同じ `created_at` を持つ paused batch lane の中だけで直列化するよう変更した。採用した安全解釈は「同じ page の paused batch は並列 lane、lane 内の timed object だけが reveal 順に待つ」で、これは user 例の `A/B -> 少し再生 -> C` に最も近い。
+    - outline / glow / drop shadow / base は layer-first に描くようにし、later object の outer effect が earlier object body を潰さないようにした。
+    - `handle_canvas_input` は playback 中なら即 return し、drag 中に再生へ入ったケースも `cancel_stroke` で安全に落とすようにした。
+    - `settings.json5` に editor UI / resolved base style / resolved entrance の snapshot を保存し、起動時に style / effect / template / font / guide を復元するようにした。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/app/src/main.rs`, `crates/portable_fs/src/lib.rs`, `crates/export/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red/green: `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`
+    - red/green: `cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`
+    - red/green: `cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`
+    - red/green: `cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`
+    - red/green: `cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture`
+    - 回帰: `cargo test -p pauseink-renderer`
+    - 回帰: `cargo test -p pauseink-app --lib --bins`
+    - 回帰: `cargo test -p pauseink-portable-fs`
+    - 最終確認: `cargo fmt --all --check`
+    - 最終確認: `cargo test --workspace`
+    - 最終確認: `cargo check -p pauseink-app --all-targets`
+  - 結果: targeted の red/green はすべて green 化できた。`cargo fmt --all --check`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` もすべて exit 0 で、paused preview override、batch lane 並列化、cross-object effect order、再生中 input 抑止、起動時 workspace 復元の修正を workspace 回帰まで含めて固定できた。`eframe/egui 0.34.1` の `Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T17:34:28+09:00
+  - 実施内容: reviewer sub-agent `Herschel` の結果を統合し、preview の current paused batch だけを強制可視化する `preview_force_visible_batch` 経路、`created_at` ごとの paused batch lane 直列化、`drop_shadow -> glow -> outline -> base` の layer-first compositor が今回の最小安全修正であることを report へ反映した。あわせて user / developer guide に「preview 専用 override は再生 / 保存 / 書き出しで通常 timeline へ戻る」旨を追記し、`progress.md` の即時マイルストーンを完了済みへ更新した。
+  - 変更ファイル: `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: bugfix バッチの仕様意図、採用理由、検証結果、残タスク整理が docs 上でも一致した。
 
-Be exact and honest.
+## 9. Export / profile メモ
 
-## 13. Final acceptance checklist
+- 2026-04-05 に export profile の参照元を再確認した。
+- YouTube: `https://support.google.com/youtube/answer/1722171` を再確認。AAC-LC / Opus、48kHz、GOP はフレームレートの半分、SDR の推奨ビットレートは 720p が 5 / 7.5 Mbps、1080p が 8 / 12 Mbps、1440p が 16 / 24 Mbps、2160p が 35-45 / 53-68 Mbps で、現在の `youtube` profile はこの範囲に沿う。
+- X: `https://help.x.com/en/using-x/media-studio-faqs` を再確認。Media Studio の推奨は MP4 / MOV、H.264、AAC-LC、最大 60 FPS、推奨ビットレート 5-8 Mbps、推奨解像度 1280x720、最大 1920x1080 で、現在の `x` profile はこれに沿う。
+- Instagram: preset の `source_urls` に official/public URL は保持しているが、このホストからの自動取得では login / block の影響で数値の機械確認ができなかった。そのため `instagram` は引き続き safety-side の `app_authored` preset として扱い、public constraints だけを記録する。
+- Adobe Edit / Adobe Alpha は SNS 公開ガイドの追従ではなく、編集ワークフロー向けの app-authored preset として扱う。
 
-- [ ] Host build passes
-- [ ] Core tests pass
-- [ ] Save/load works
-- [ ] Manual clear works
-- [ ] Composite export validated
-- [ ] Transparent export validated
-- [ ] Portable-state rule validated
-- [ ] Google Fonts graceful-failure behavior validated
-- [ ] Export-profile computation validated
-- [ ] Developer tutorial sample validated
-- [ ] Windows build attempted and documented
-- [ ] Manuals updated
-- [ ] `progress.md` updated
+## 10. パッケージング / ライセンスメモ
+
+- mainline 方針: FFmpeg sidecar runtime provider。
+- 現時点では optional codec pack 未実装。
+- H.264 / HEVC は mainline 前提にしない。
+- host 検証では Ubuntu apt の `ffmpeg 6.1.1-3ubuntu5` を利用可能。これは `--enable-gpl` を含むため、release packaging とは切り分けて扱う。
+- host 検証 runtime の encoder/muxer 列挙結果は local validation 証跡としてのみ使い、mainline release の feature guarantee には転用しない。
+- optional codec pack を導入する場合は mainline sidecar とは別 manifest / provenance / notices を持たせ、既定では無効にする。
+- release packaging 用の provenance / notice 整理は後続フェーズで記録する。
+
+## 11. 開発者チュートリアル
+
+- 対象チュートリアル:
+  - `manual/tutorials/01_add_export_profile.md`
+  - `manual/tutorials/02_add_builtin_preset.md`
+- 実行 / 検証コマンド:
+  - `presets/export_profiles/tutorial_validation_profile.json5` を一時追加
+  - `presets/style_presets/tutorial_validation_preset.json5` を一時追加
+  - `cargo test -p pauseink-presets-core`
+  - `cargo check -p pauseink-app --all-targets`
+  - 一時追加ファイルを削除
+- 結果:
+  - export profile tutorial は、チュートリアルと同等の一時 profile file を `presets/export_profiles/` へ追加し、catalog loader がそのまま受理することを確認した
+  - built-in preset tutorial は、チュートリアルと同等の一時 style preset file を `presets/style_presets/` へ追加し、style preset loader と app compile が通ることを確認した
+  - GUI 上の目視確認は現ホストに display server が無いため未実施
+
+## 12. 既知の問題 / 制約
+
+- portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
+- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive と `README.md` までで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
+- Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
+- Windows / macOS の FFmpeg runtime 実行確認はこの Linux host では行えず、現時点の cross-platform 証跡は探索ロジックの unit test と Linux host 上の実 runtime 検証まで。
+- `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
+- selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
+- built-in / user style preset は base style に加えて `outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar` を読み書きできる。clear / combo preset の専用 UI はまだ無い。
+- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱えるが、reveal-head effect と post-action chain は未接続。
+- Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
+- thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
+- autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。
+- `.pauseink` save は comment 保持を行わず canonical JSON へ正規化する。
+- GUI は `eframe/egui 0.34.1` の API に合わせて build しているが、`Panel::*` 系 deprecation warning が残っている。
+- 現ホストには `xvfb-run` が無く、`DISPLAY` / `WAYLAND_DISPLAY` も無いため GUI 実表示起動 smoke は未実施。
+
+## 13. 最終受け入れチェックリスト
+
+- [x] Host build passes
+- [x] Core tests pass
+- [x] Save/load works
+- [x] Manual clear works
+- [x] Composite export validated
+- [x] Transparent export validated
+- [x] Portable-state rule validated
+- [x] Google Fonts graceful-failure behavior validated
+- [x] Export-profile computation validated
+- [x] Developer tutorial sample validated
+- [x] Windows build attempted and documented
+- [x] Manuals updated
+- [x] `progress.md` updated

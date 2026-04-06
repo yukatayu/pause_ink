@@ -17,6 +17,4 @@
   },
 
   local_font_dirs: [],
-
-  portable_root_override: null, // developer/test only
 }

@@ -1,0 +1,13 @@
+[package]
+name = "pauseink-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fontdb = "0.23.0"
+thiserror.workspace = true
+ureq = { version = "2.10.1", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+tempfile = "3"

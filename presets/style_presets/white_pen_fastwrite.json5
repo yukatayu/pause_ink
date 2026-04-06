@@ -1,6 +1,6 @@
 {
   id: "white_pen_fastwrite",
-  display_name: "White Pen Fast Write",
+  display_name: "白ペン速書き",
   base_style: {
     thickness: 6.0,
     color_rgba: [1.0, 1.0, 1.0, 1.0],

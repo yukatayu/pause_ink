@@ -1,6 +1,25 @@
 {
-  id: "web_low",
-  display_name: "Low",
-  intended_families: ["webm_vp9_opus", "webm_av1_opus", "mp4_av1_aac"],
-  notes: "App-authored general low quality preset.",
+  id: "low",
+  display_name: "低",
+  source_kind: "app_authored",
+  compatibility: "any",
+  notes: "汎用の低ビットレート preset。軽量配布を優先する。",
+  settings_buckets: {
+    "720p": {
+      target_video_bitrate_kbps: 3000,
+      max_video_bitrate_kbps: 4500,
+      audio_bitrate_kbps: 128,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+    "1080p": {
+      target_video_bitrate_kbps: 5000,
+      max_video_bitrate_kbps: 8000,
+      audio_bitrate_kbps: 128,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+  },
 }

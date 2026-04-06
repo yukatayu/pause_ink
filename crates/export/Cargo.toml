@@ -1,0 +1,16 @@
+[package]
+name = "pauseink-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+image.workspace = true
+pauseink-domain = { path = "../domain" }
+pauseink-media = { path = "../media" }
+pauseink-presets-core = { path = "../presets_core" }
+pauseink-renderer = { path = "../renderer" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

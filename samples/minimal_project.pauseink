@@ -1,58 +1,81 @@
-// Example project file for PauseInk.
-// This file is illustrative, not authoritative.
+// PauseInk v1.0 の最小サンプルです。
+// load は lenient、save は canonical JSON に正規化されます。
 
 {
   format_version: "1.0.0",
   project: {
     metadata: {
-      title: "minimal example",
-      created_with: "handoff-package",
+      title: "最小サンプル",
+      created_with: "PauseInk handoff package",
     },
     media: {
       source_path: "sample.mp4",
       fps_hint: 30.0,
       width: 1920,
       height: 1080,
+      duration_seconds: 5.0,
     },
-    settings: {
-      guide_modifier: "platform_default",
-      history_depth: 256,
-    },
-    objects: [
+    settings: {},
+    pages: [],
+    strokes: [
       {
-        id: "obj_001",
-        type: "glyph_object",
-        page_anchor_time_ms: 1000,
-        z_index: 10,
-        strokes: [
+        id: "stroke_0001",
+        raw_samples: [
           {
-            id: "stroke_001",
-            raw_points: [
-              { x: 100.0, y: 100.0, t_ms: 1000 },
-              { x: 120.0, y: 118.0, t_ms: 1016 },
-              { x: 145.0, y: 125.0, t_ms: 1033 },
-            ],
-            style: {
-              thickness: 6.0,
-              color_rgba: [1.0, 1.0, 1.0, 1.0],
-            },
+            position: { x: 100.0, y: 100.0 },
+            at: { ticks: 1000, time_base: { numerator: 1, denominator: 1000 } },
+          },
+          {
+            position: { x: 120.0, y: 118.0 },
+            at: { ticks: 1016, time_base: { numerator: 1, denominator: 1000 } },
+          },
+          {
+            position: { x: 145.0, y: 125.0 },
+            at: { ticks: 1033, time_base: { numerator: 1, denominator: 1000 } },
           },
         ],
-        entrance: {
-          kind: "path_trace",
-          target: "glyph",
-          order: "serial",
-          duration_mode: "length_proportional",
-          speed_scalar: 1.0,
+        stabilized_samples: [
+          {
+            position: { x: 100.0, y: 100.0 },
+            at: { ticks: 1000, time_base: { numerator: 1, denominator: 1000 } },
+          },
+          {
+            position: { x: 119.0, y: 117.0 },
+            at: { ticks: 1016, time_base: { numerator: 1, denominator: 1000 } },
+          },
+          {
+            position: { x: 143.0, y: 124.0 },
+            at: { ticks: 1033, time_base: { numerator: 1, denominator: 1000 } },
+          },
+        ],
+        derived_path: {
+          points: [
+            { x: 100.0, y: 100.0 },
+            { x: 119.0, y: 117.0 },
+            { x: 143.0, y: 124.0 },
+          ],
         },
+        created_at: { ticks: 1000, time_base: { numerator: 1, denominator: 1000 } },
+      },
+    ],
+    objects: [
+      {
+        id: "object_0002",
+        stroke_ids: ["stroke_0001"],
+        ordering: {
+          z_index: 0,
+          capture_order: 1,
+          reveal_order: 1,
+        },
+        created_at: { ticks: 1000, time_base: { numerator: 1, denominator: 1000 } },
       },
     ],
     groups: [],
     clear_events: [
       {
-        id: "clear_001",
-        time_ms: 4000,
-        kind: "instant",
+        id: "clear_0003",
+        time: { ticks: 4000, time_base: { numerator: 1, denominator: 1000 } },
+        kind: "Instant",
       },
     ],
     presets: {},

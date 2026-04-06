@@ -1,0 +1,41 @@
+{
+  id: "high",
+  display_name: "高",
+  source_kind: "app_authored",
+  compatibility: "any",
+  notes: "汎用の高品質 preset。サイズよりも見た目を優先する。",
+  settings_buckets: {
+    "720p": {
+      target_video_bitrate_kbps: 7000,
+      max_video_bitrate_kbps: 10500,
+      audio_bitrate_kbps: 192,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+    "1080p": {
+      target_video_bitrate_kbps: 12000,
+      max_video_bitrate_kbps: 18000,
+      audio_bitrate_kbps: 192,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+    "1440p": {
+      target_video_bitrate_kbps: 20000,
+      max_video_bitrate_kbps: 30000,
+      audio_bitrate_kbps: 192,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+    "2160p": {
+      target_video_bitrate_kbps: 35000,
+      max_video_bitrate_kbps: 45000,
+      audio_bitrate_kbps: 192,
+      sample_rate_hz: 48000,
+      keyframe_interval_seconds: 2,
+      preferred_audio_codecs: ["aac", "libopus"],
+    },
+  },
+}

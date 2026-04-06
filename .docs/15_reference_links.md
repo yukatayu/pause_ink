@@ -1,41 +1,41 @@
-# Reference links to verify during implementation
+# 実装中に確認する参照リンク
 
-These are starting points. Codex must verify them again during implementation and record the exact values actually adopted.
+以下は出発点です。Codex は実装中に必ず再確認し、実際に採用した値を正確に記録してください。
 
-## Platform/export guidance
+## プラットフォーム / export の指針
 
-- YouTube recommended upload encoding settings:
+- YouTube の推奨 upload encoding settings:
   - https://support.google.com/youtube/answer/1722171
-- X media studio / upload guidance:
+- X の media studio / upload guidance:
   - https://help.x.com/en/using-x/media-studio-faqs
-- Instagram Reels size / frame rate constraints:
+- Instagram Reels の size / frame rate 制約:
   - https://help.instagram.com/1038071743007909
-- Meta business video ad/story/reel guidance:
+- Meta business の video ad / story / reel guidance:
   - https://www.facebook.com/business/ads-guide/
-- Adobe Media Encoder import formats:
+- Adobe Media Encoder の import 形式:
   - https://helpx.adobe.com/media-encoder/using/file-formats-supported-import.html
-- Adobe Media Encoder export formats:
+- Adobe Media Encoder の export 形式:
   - https://helpx.adobe.com/media-encoder/using/file-formats-supported-export.html
 
-## FFmpeg
+## ランタイム（FFmpeg）
 
-- FFmpeg main docs:
+- FFmpeg の main docs:
   - https://ffmpeg.org/ffmpeg.html
 - FFmpeg formats:
   - https://ffmpeg.org/ffmpeg-formats.html
 - FFmpeg legal:
   - https://ffmpeg.org/legal.html
-- FFmpeg general/license notes:
+- FFmpeg の general / license notes:
   - https://www.ffmpeg.org/general.html
 
-## Fonts
+## フォント
 
 - Google Fonts CSS2 API:
   - https://developers.google.com/fonts/docs/css2
 
-## Stroke quality references
+## ストローク品質の参照
 
-- One Euro Filter paper:
+- One Euro Filter の論文:
   - https://gery.casiez.net/publications/CHI2012-casiez.pdf
 - perfect-freehand:
   - https://github.com/steveruizok/perfect-freehand
