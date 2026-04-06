@@ -101,6 +101,9 @@
   - 保存済み `.pauseink` の open では `project.media.source_path` を見て media を再読込するよう修正し、relative path は `.pauseink` 自体の親ディレクトリ基準で解決するようにした
   - media restore は runtime 用の `imported_media` / `playback` だけを復元し、保存済み `source_path` 文字列は上書きせず、`dirty` も立てない
   - 今回の回帰として `restore_media_from_hint_resolves_relative_path_from_project_file` と `open_project_attempts_to_restore_saved_media_hint` を追加し、`cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過した
+  - guide の次文字送りは、直近 1 画ではなく「前回 guide 確定/送り以降に commit された文字全体」の union bounds を基準にするよう修正した
+  - 再現条件 `Ctrl を押しながら 1 文字目を書く -> Ctrl を離す -> 2 文字目を書く -> Ctrl を短く押す` を `guide_modifier_tap_advances_from_union_of_strokes_written_since_last_anchor` で固定し、多画文字でも最後の画の右端ではなく文字全体の右端へ送られることを確認した
+  - 追加で、送りに使った pending bounds が 1 回で消費されること、`clear_guide_state` で stale な guide 文字 bounds も落ちることを test で固定した
   - app 側で built-in style preset / export profile の探索先を `current_exe()` の親ディレクトリ配下 `presets/` 優先、repo fallback ありに変更し、CI 配布 archive でも `style preset` と `書き出し` 欄が欠けないようにした
   - `scripts/package_release_asset.py` は `presets/` ツリーも release archive へ同梱するように更新し、`scripts/package_release_asset_test.py` で stage/zip 両方を回帰固定した
   - 今回の確認として `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`、`cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、production 側の child process spawn が helper へ集約され、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した

@@ -631,6 +631,7 @@ struct DesktopApp {
     guide_capture_state: GuideCaptureState,
     guide_geometry: Option<GuideGeometry>,
     last_committed_object_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
+    pending_guide_character_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     bottom_tab: BottomTab,
     preview_texture: Option<egui::TextureHandle>,
     preview_key: Option<(PathBuf, i64, u32, u32)>,
@@ -737,6 +738,7 @@ impl DesktopApp {
             guide_capture_state: GuideCaptureState::default(),
             guide_geometry: None,
             last_committed_object_bounds: None,
+            pending_guide_character_bounds: None,
             bottom_tab: BottomTab::Outline,
             preview_texture: None,
             preview_key: None,
@@ -1309,6 +1311,7 @@ impl DesktopApp {
     fn capture_guide_from_object(&mut self, object_id: &pauseink_domain::GlyphObjectId) {
         if let Some((min, max)) = self.session.object_bounds(object_id) {
             self.last_committed_object_bounds = Some((min, max));
+            self.pending_guide_character_bounds = None;
             self.guide_state = Some(GuideOverlayState::from_reference_bounds(min, max));
             self.refresh_guide_geometry();
             self.push_log("ガイド基準を更新しました。");
@@ -1330,7 +1333,7 @@ impl DesktopApp {
         let Some(guide_state) = &mut self.guide_state else {
             return;
         };
-        guide_state.advance_to_next_from_bounds(self.last_committed_object_bounds);
+        guide_state.advance_to_next_from_bounds(self.pending_guide_character_bounds.take());
         self.refresh_guide_geometry();
         self.push_log("ガイド縦線を次文字位置へ進めました。");
     }
@@ -1339,12 +1342,27 @@ impl DesktopApp {
         self.guide_state = None;
         self.guide_geometry = None;
         self.last_committed_object_bounds = None;
+        self.pending_guide_character_bounds = None;
         self.guide_capture_state.cancel();
         self.guide_capture_armed = false;
         self.guide_modifier_was_down = false;
         self.guide_modifier_used_for_stroke = false;
         self.guide_modifier_tap_suppressed = false;
         self.push_log("ガイドを解除しました。");
+    }
+
+    fn record_committed_object_bounds_for_guide(
+        &mut self,
+        object_id: &pauseink_domain::GlyphObjectId,
+    ) {
+        let Some(bounds) = self.session.object_bounds(object_id) else {
+            return;
+        };
+        self.last_committed_object_bounds = Some(bounds);
+        if self.guide_state.is_some() {
+            self.pending_guide_character_bounds =
+                Some(merge_bounds(self.pending_guide_character_bounds, bounds));
+        }
     }
 
     fn move_template_slot(&mut self, delta: isize) {
@@ -1456,6 +1474,7 @@ impl DesktopApp {
             self.push_log(format!("undo 失敗: {error:#}"));
         } else {
             self.guide_capture_state.cancel();
+            self.pending_guide_character_bounds = None;
         }
     }
 
@@ -1464,6 +1483,7 @@ impl DesktopApp {
             self.push_log(format!("redo 失敗: {error:#}"));
         } else {
             self.guide_capture_state.cancel();
+            self.pending_guide_character_bounds = None;
         }
     }
 
@@ -2157,7 +2177,7 @@ impl DesktopApp {
 
                 match self.session.commit_stroke_into_object(target_object) {
                     Ok(Some(object_id)) => {
-                        self.last_committed_object_bounds = self.session.object_bounds(&object_id);
+                        self.record_committed_object_bounds_for_guide(&object_id);
                         if self.guide_capture_armed {
                             self.guide_capture_state
                                 .record_committed_object(object_id.clone());
@@ -4246,10 +4266,30 @@ fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> us
     }
 }
 
+fn merge_bounds(
+    existing: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
+    next: (pauseink_domain::Point2, pauseink_domain::Point2),
+) -> (pauseink_domain::Point2, pauseink_domain::Point2) {
+    match existing {
+        Some((min, max)) => (
+            pauseink_domain::Point2 {
+                x: min.x.min(next.0.x),
+                y: min.y.min(next.0.y),
+            },
+            pauseink_domain::Point2 {
+                x: max.x.max(next.1.x),
+                y: max.y.max(next.1.y),
+            },
+        ),
+        None => next,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use eframe::egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+    use pauseink_domain::{MediaTime, Point2};
     use pauseink_media::{ImportedMedia, MediaProbe, MediaSupport, PlaybackState};
     use pauseink_portable_fs::{load_settings_from_file, PortablePaths, Settings};
     use tempfile::tempdir;
@@ -5001,6 +5041,76 @@ mod tests {
     }
 
     #[test]
+    fn guide_modifier_tap_advances_from_union_of_strokes_written_since_last_anchor() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.session
+            .begin_stroke(Point2 { x: 100.0, y: 200.0 }, MediaTime::from_millis(0));
+        app.session
+            .append_stroke_point(Point2 { x: 160.0, y: 260.0 }, MediaTime::from_millis(10));
+        let first_object = app
+            .session
+            .commit_stroke(false)
+            .expect("first stroke should commit")
+            .expect("first object");
+        app.capture_guide_from_object(&first_object);
+
+        for (start, end) in [
+            (Point2 { x: 180.0, y: 205.0 }, Point2 { x: 232.0, y: 255.0 }),
+            (Point2 { x: 198.0, y: 198.0 }, Point2 { x: 245.0, y: 266.0 }),
+            (Point2 { x: 220.0, y: 210.0 }, Point2 { x: 228.0, y: 258.0 }),
+        ] {
+            app.session.begin_stroke(start, MediaTime::from_millis(20));
+            app.session
+                .append_stroke_point(end, MediaTime::from_millis(30));
+            let object_id = app
+                .session
+                .commit_stroke(false)
+                .expect("character stroke should commit")
+                .expect("character object");
+            app.record_committed_object_bounds_for_guide(&object_id);
+        }
+
+        app.advance_guide_to_next_character();
+
+        let first_vertical = app
+            .guide_geometry
+            .as_ref()
+            .expect("guide geometry")
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical")
+            .start
+            .x;
+
+        assert!(
+            (first_vertical - 245.0).abs() < 0.01,
+            "expected union right edge 245.0, got {first_vertical}"
+        );
+
+        app.advance_guide_to_next_character();
+        let second_vertical = app
+            .guide_geometry
+            .as_ref()
+            .expect("guide geometry")
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical")
+            .start
+            .x;
+
+        assert!(
+            (second_vertical - 305.0).abs() < 0.01,
+            "expected fallback advance by cell width to 305.0, got {second_vertical}"
+        );
+    }
+
+    #[test]
     fn guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut() {
         let temp_dir = tempdir().expect("temp dir");
         let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
@@ -5638,6 +5748,7 @@ mod tests {
         assert!(app.guide_state.is_none());
         assert!(app.guide_geometry.is_none());
         assert!(app.last_committed_object_bounds.is_none());
+        assert!(app.pending_guide_character_bounds.is_none());
         assert!(!app.guide_capture_armed);
         assert!(!app.guide_modifier_was_down);
         assert!(!app.guide_modifier_used_for_stroke);

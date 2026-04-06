@@ -1098,6 +1098,30 @@
     - relative path の project-relative 解決も同時に入ったため、`.pauseink` と media を同じ tree で持つケースでも reopen が安定する。
     - この Linux host では GUI 実機確認まではできないため、最終確認は実際に `保存 -> 閉じる -> 開く` を試す必要がある。
 
+- 2026-04-07T00:22:52+09:00
+  - 直近マイルストーン: guide の次文字送りが多画文字の「最後の 1 画」ではなく「文字全体」の右端を参照するように修正する。
+  - 調査:
+    - ユーザー再現条件 `Ctrl を押しながら 1 文字目を書く -> Ctrl を離す -> 2 文字目を書く -> Ctrl を短く押す` をコード経路で追跡した。
+    - `DesktopApp::advance_guide_to_next_character` が `last_committed_object_bounds` をそのまま `GuideOverlayState::advance_to_next_from_bounds` へ渡し、`last_committed_object_bounds` は commit 成功ごとに最後の object で上書きされていたため、2 文字目が多画だと最後の画の右端を基準に送っていた。
+    - explorer sub-agent `Einstein` にも独立確認させ、同じ結論を採用した。
+  - TDD:
+    - red: `cargo test -p pauseink-app guide_modifier_tap_advances_from_union_of_strokes_written_since_last_anchor -- --nocapture`
+    - 失敗内容: `expected union right edge 245.0, got 228`
+  - 実装:
+    - `DesktopApp` に `pending_guide_character_bounds` を追加し、guide が有効な間は commit された object bounds を union して保持するようにした。
+    - Ctrl 短押し時は `last_committed_object_bounds` ではなく `pending_guide_character_bounds.take()` を使って次文字位置を決めるよう変更した。
+    - guide capture 確定時、guide clear 時、undo/redo 成功時には stale な pending bounds を消すようにした。
+    - `record_committed_object_bounds_for_guide` と `merge_bounds` を追加して、通常描画でも多画文字全体の外接矩形を次送りに使えるようにした。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - green: `cargo test -p pauseink-app guide_modifier_tap_advances_from_union_of_strokes_written_since_last_anchor -- --nocapture`
+    - 回帰: `cargo test -p pauseink-app guide_ -- --nocapture`
+    - 回帰: `cargo test -p pauseink-app --lib --bins`
+    - 回帰: `cargo check -p pauseink-app --all-targets`
+  - 結果:
+    - guide の次文字送りは「前回 guide 確定/送り以降に commit された文字全体」の union bounds を使うようになり、最後の 1 画だけに引きずられなくなった。
+    - pending bounds は 1 回送ったら消費され、続けて送りたい場合だけ `cell_width` 分の fallback advance が働く。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。
