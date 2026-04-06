@@ -1,3 +1,5 @@
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -5453,5 +5455,17 @@ mod tests {
         assert!(!app.guide_modifier_used_for_stroke);
         assert!(app.guide_capture_state.current_target_object_id().is_none());
         assert!(!app.guide_capture_state.in_progress);
+    }
+
+    #[test]
+    fn windows_release_build_declares_gui_subsystem() {
+        let source = include_str!("main.rs");
+
+        assert!(
+            source.contains(
+                "#![cfg_attr(all(target_os = \"windows\", not(debug_assertions)), windows_subsystem = \"windows\")]"
+            ),
+            "Windows release build では GUI subsystem を宣言し、二重にコンソールが開かないようにしたい"
+        );
     }
 }

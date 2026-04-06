@@ -1004,6 +1004,22 @@
   - 判断理由: user が上から順に task を依頼する前提では、単なる未実装一覧だけでなく、何が痛点で何を先に固定しないと危険かが見えている必要があるため。
   - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: 大域計画が「困り方」「先決事項」「既存 docs/test の確認ポイント」まで含む実行可能な最終版になった。
+- 2026-04-06T20:07:03+09:00
+  - 事象: user から「Windows で `cargo run` は普通だが、CI 生成の release binary を起動すると同時にコマンドプロンプトが立ち上がる」と報告が来た。
+  - root cause:
+    - `scripts/package_release_asset.py` は binary をそのまま archive へコピーするだけで wrapper を作っておらず、packaging 側が原因ではなかった。
+    - `crates/app/src/main.rs` に `#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]` が無く、Windows release build が console subsystem のまま出力されていた。
+  - 実施内容:
+    - `crates/app/src/main.rs` の crate 先頭へ release 専用の `windows_subsystem = "windows"` 宣言を追加した。
+    - 回帰として `windows_release_build_declares_gui_subsystem` を追加し、source 上から attribute の存在を固定した。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red: `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - green: `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - 回帰: `cargo test -p pauseink-app --lib --bins`
+    - 回帰: `cargo check -p pauseink-app --all-targets`
+    - 補助確認: `python3 scripts/package_release_asset.py --help`
+  - 結果: release build だけ GUI subsystem を宣言する構成になり、debug 時の `cargo run` を壊さずに Windows の余計なコンソール表示を抑止する方向へ修正できた。`gh` はこのホストに入っていないため、GitHub Actions 上の再実行確認は push 後の CI に委ねる。`eframe/egui` の deprecation warning は継続。
 
 ## 9. Export / profile メモ
 
