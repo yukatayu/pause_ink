@@ -440,7 +440,7 @@ impl GuideOverlayState {
             horizontal_origin: Point::new(min.x, min.y),
             cell_width,
             cell_height,
-            next_cell_origin_x: min.x + cell_width,
+            next_cell_origin_x: max.x,
         }
     }
 
@@ -460,9 +460,8 @@ impl GuideOverlayState {
         &mut self,
         bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     ) {
-        if let Some((min, max)) = bounds {
-            self.cell_width = (max.x - min.x).max(40.0);
-            self.next_cell_origin_x = min.x + self.cell_width;
+        if let Some((_, max)) = bounds {
+            self.next_cell_origin_x = max.x;
         } else {
             self.next_cell_origin_x += self.cell_width;
         }
@@ -616,6 +615,7 @@ struct DesktopApp {
     guide_capture_armed: bool,
     guide_modifier_was_down: bool,
     guide_modifier_used_for_stroke: bool,
+    guide_modifier_tap_suppressed: bool,
     recovery_prompt_open: bool,
     preferences_open: bool,
     cache_manager_open: bool,
@@ -695,6 +695,7 @@ impl DesktopApp {
             guide_capture_armed: false,
             guide_modifier_was_down: false,
             guide_modifier_used_for_stroke: false,
+            guide_modifier_tap_suppressed: false,
             recovery_prompt_open,
             preferences_open: false,
             cache_manager_open: false,
@@ -1165,6 +1166,7 @@ impl DesktopApp {
         self.guide_capture_armed = false;
         self.guide_modifier_was_down = false;
         self.guide_modifier_used_for_stroke = false;
+        self.guide_modifier_tap_suppressed = false;
         self.push_log("ガイドを解除しました。");
     }
 
@@ -1247,7 +1249,7 @@ impl DesktopApp {
 
     fn handle_guide_modifier_tap(&mut self, ctx: &egui::Context) {
         let modifier_active = self.guide_modifier_active(ctx);
-        if modifier_active && !self.guide_modifier_was_down {
+        if modifier_active && !self.guide_modifier_was_down && !self.guide_modifier_tap_suppressed {
             self.guide_modifier_used_for_stroke = false;
         }
         if !modifier_active && self.guide_modifier_was_down {
@@ -1259,6 +1261,9 @@ impl DesktopApp {
                     self.finalize_guide_capture_with_object(object_id);
                     self.guide_modifier_used_for_stroke = false;
                 }
+            } else if self.guide_modifier_tap_suppressed {
+                self.guide_modifier_tap_suppressed = false;
+                self.guide_modifier_used_for_stroke = false;
             } else if !self.guide_modifier_used_for_stroke
                 && !ctx.egui_wants_keyboard_input()
                 && !self.template.placement_armed
@@ -1302,9 +1307,13 @@ impl DesktopApp {
         let redo_y = ctx.input_mut(|input| input.consume_shortcut(&redo_y_shortcut));
 
         if undo {
+            self.guide_modifier_tap_suppressed = true;
+            self.guide_modifier_used_for_stroke = true;
             self.perform_undo();
         }
         if redo_shift || redo_y {
+            self.guide_modifier_tap_suppressed = true;
+            self.guide_modifier_used_for_stroke = true;
             self.perform_redo();
         }
     }
@@ -4008,6 +4017,26 @@ mod tests {
         frame_rect
     }
 
+    fn run_shortcut_frame(
+        app: &mut DesktopApp,
+        ctx: &egui::Context,
+        modifiers: Modifiers,
+        events: Vec<Event>,
+    ) {
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                modifiers,
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                app.handle_global_shortcuts(ctx);
+                app.handle_guide_modifier_tap(ctx);
+            },
+        );
+    }
+
     #[test]
     fn preview_pointer_roundtrips_through_frame_space_mapping() {
         let frame_rect = Rect::from_min_size(Pos2::new(50.0, 75.0), Vec2::new(640.0, 360.0));
@@ -4381,6 +4410,115 @@ mod tests {
         assert_eq!(state.horizontal_origin, original_origin);
         assert!((first_vertical.start.x - 250.0).abs() < 0.01);
         assert!((first_horizontal.start.y - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge() {
+        let mut state = GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 130.0, y: 280.0 },
+        );
+        let original_width = state.cell_width;
+
+        assert!((original_width - 40.0).abs() < 0.01);
+        assert!((state.next_cell_origin_x - 130.0).abs() < 0.01);
+
+        state.advance_to_next_from_bounds(Some((
+            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+            pauseink_domain::Point2 { x: 245.0, y: 282.0 },
+        )));
+
+        let geometry = state.build_geometry(0.0);
+        let main_verticals = geometry
+            .vertical_lines
+            .iter()
+            .filter(|line| line.kind == GuideLineKind::Main)
+            .map(|line| line.start.x)
+            .collect::<Vec<_>>();
+
+        assert!((state.cell_width - original_width).abs() < 0.01);
+        assert!((state.next_cell_origin_x - 245.0).abs() < 0.01);
+        assert!((main_verticals[0] - 245.0).abs() < 0.01);
+        assert!((main_verticals[2] - (245.0 + original_width)).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_overlay_state_keeps_vertical_set_width_constant_when_advancing_from_bounds() {
+        let mut state = GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        );
+        let original_width = state.cell_width;
+
+        state.advance_to_next_from_bounds(Some((
+            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+            pauseink_domain::Point2 { x: 250.0, y: 282.0 },
+        )));
+
+        let geometry = state.build_geometry(0.0);
+        let main_verticals = geometry
+            .vertical_lines
+            .iter()
+            .filter(|line| line.kind == GuideLineKind::Main)
+            .collect::<Vec<_>>();
+
+        assert!((state.cell_width - original_width).abs() < 0.01);
+        assert!((main_verticals[0].start.x - 250.0).abs() < 0.01);
+        assert!((main_verticals[2].start.x - 310.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.guide_state = Some(GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.refresh_guide_geometry();
+        let original_x = app
+            .guide_geometry
+            .as_ref()
+            .expect("guide geometry")
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical")
+            .start
+            .x;
+
+        let ctx = initialized_test_context();
+        let mut command_modifiers = Modifiers::default();
+        command_modifiers.ctrl = true;
+        command_modifiers.command = true;
+        run_shortcut_frame(
+            &mut app,
+            &ctx,
+            command_modifiers,
+            vec![Event::Key {
+                key: egui::Key::Z,
+                physical_key: Some(egui::Key::Z),
+                pressed: true,
+                repeat: false,
+                modifiers: command_modifiers,
+            }],
+        );
+        run_shortcut_frame(&mut app, &ctx, Modifiers::default(), Vec::new());
+
+        let advanced_x = app
+            .guide_geometry
+            .as_ref()
+            .expect("guide geometry")
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical")
+            .start
+            .x;
+
+        assert!((advanced_x - original_x).abs() < 0.01);
     }
 
     #[test]

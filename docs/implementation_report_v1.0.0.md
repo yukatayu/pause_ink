@@ -923,6 +923,20 @@
 - 2026-04-06T14:54:38+09:00
   - 実施内容: `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture` を red -> green で通し、その後 `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
   - 結果: すべて exit 0。workspace 回帰、transparent/composite export smoke、save/reopen、preset roundtrip を維持した。`eframe/egui 0.34.1` の `Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T15:27:29+09:00
+  - 事象: user から「次文字用の縦ガイド幅は一定で、位置だけ直前文字の横へ付けたい」と追加仕様が来た。
+  - root cause: `GuideOverlayState::advance_to_next_from_bounds` が `cell_width` 自体を直前文字 bounds で上書きしており、`build_guide_geometry` の vertical offset もその新しい幅を使っていた。そのため次文字用の縦ガイドセット幅まで直前文字幅に引きずられていた。
+  - 実施内容: `GuideOverlayState::from_reference_bounds` と `advance_to_next_from_bounds` を修正し、縦ガイドセットの幅は固定のまま、`next_cell_origin_x` だけを直前文字の右端 `max.x` へ送るようにした。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: `guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge` を追加し、`cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行。
+  - 結果: すべて exit 0。縦ガイドの位置送りだけを変え、guide geometry の既存前提と workspace 回帰は維持できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T16:06:12+09:00
+  - 事象: user から「Ctrl-Z 等の Ctrl に反応して guide が次に送られるのは非直観的」と追加報告が来た。
+  - root cause: frame 内の shortcut 処理が `handle_global_shortcuts`、guide modifier tap 判定が `handle_guide_modifier_tap` の順で走るため、undo / redo に使った修飾キー release も guide tap として扱われ得た。
+  - 実施内容: `DesktopApp` に `guide_modifier_tap_suppressed` を追加し、undo / redo shortcut を consume した frame では modifier release を 1 回だけ無効化するようにした。あわせて user / developer guide と progress を更新した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: `guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut` を追加し、`cargo test -p pauseink-app guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行。
+  - 結果: すべて exit 0。`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` の直後に guide が意図せず次文字へ送られないことを固定できた。`Panel::*` 系 deprecation warning は継続。
 
 ## 9. Export / profile メモ
 
