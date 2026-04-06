@@ -19,7 +19,26 @@
   - `docs/implementation_report_v1.0.0.md` に判断・コマンド・結果を追記する
   - テストを先に足すか、最低でも red/green の形で回帰を固定する
   - commit は `git -c commit.gpgsign=false commit ...` を使い、日本語メッセージにする
-  - commit 後は都度 `origin/prototype` へ push する
+  - commit 後は都度 `origin/develop` へ push する
+
+## 0.1 着手前の共通確認
+
+- 仕様判断は最低でも次を再読する。
+  - `.docs/02_final_spec_v1.0.0.md`
+  - `.docs/04_architecture.md`
+  - `.docs/10_testing_and_done_criteria.md`
+- media / export / packaging を触る task では追加で次も確認する。
+  - `.docs/07_media_runtime_and_ffmpeg.md`
+  - `.docs/08_output_profiles_and_platform_presets.md`
+  - `.docs/09_portable_layout_and_cache.md`
+  - `.docs/13_risk_register.md`
+- 既存部分を壊さないため、着手前に現行の回帰テストを読む。
+  - `crates/renderer/src/lib.rs` の entrance / clear / visibility 系 test
+  - `crates/app/src/main.rs` の save-restore / guide / export progress / template 系 test
+  - `crates/app/src/lib.rs` の session / save-load / clear semantics 系 test
+  - `crates/presets_core/src/lib.rs` の preset loader / overlay 系 test
+  - `crates/media/src/lib.rs` と `crates/export/src/lib.rs` の runtime / fallback / smoke test
+- task に関連する `.docs` と既存 test が薄いと判断した場合は、本実装より先に doc 追記か回帰 test 追加を行う。
 
 ## 1. 範囲の切り分け
 
@@ -88,12 +107,34 @@
 - template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足し、`slot fit` は未実装。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 
-## 4. Task 詳細
+## 4. 着手前に確認する既存 docs / test
+
+既存部分を壊さないため、各 task では実装前に最低限次を読み直し、既存 test を実行する。ここで docs と test が薄いと判定した場合は、本実装へ入る前にその task の前提 docs/test を補強する。
+
+| Task ID | 最低限読み直す `.docs` | 既存コード / test の確認点 |
+|---|---|---|
+| V1-01 | `.docs/02_final_spec_v1.0.0.md`, `.docs/05_project_file_format.md`, `.docs/09_portable_layout_and_cache.md` | `crates/presets_core`, `crates/portable_fs`, `crates/app` の preset 保存/復元 test |
+| V1-02 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/renderer` の entrance / clear test、`crates/app` の style/entrance restore test |
+| V1-03 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/domain` の group/order test、`crates/renderer` の reveal sequence test |
+| V1-04 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/domain` の clear semantics test、`crates/renderer` の clear test、`crates/app` の page event UI test |
+| V1-05 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/domain/src/project_commands.rs` と `crates/app` の selection/undo 系 test |
+| V1-06 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | bottom panel / object list / page event の UI test、run 導出 helper の test |
+| V1-07 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/template_layout` と `crates/app` の template save/restore / guide geometry test |
+| PKG-01 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/13_risk_register.md` | `crates/media` の runtime discovery test、`scripts/package_release_asset.py` の archive test |
+| PKG-02 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/10_testing_and_done_criteria.md` | workflow YAML parse、packager script の dry-run |
+| QA-01 | `.docs/10_testing_and_done_criteria.md`, `.docs/13_risk_register.md` | 現在の workspace test、host export smoke、既知制約一覧 |
+
+## 5. Task 詳細
 
 ### V1-01: preset 境界の正規化と field-level reset / inherit
 
 **優先度:** P0
 **目的:** spec の preset category と reset semantics を実装可能な形へ整える。以後の effect / clear / combo 実装が後戻りしないよう、editor state と catalog 構造をここで固定する。
+
+**具体的に困る場面**
+
+- 利用者が「線の太さ preset はそのまま使いたいが、出現速度だけ project ごとに変えたい」と思っても、現状は style preset と entrance が混ざっているため、意図しない項目まで一緒に上書きされやすい。
+- 開発者が clear preset や combo preset を足そうとすると、現行の style preset schema に横から項目を増やすしかなく、後から schema を分けると loader と保存互換をまとめてやり直すことになる。
 
 **現状の問題**
 
@@ -121,6 +162,13 @@
   - `pauseink_data/config/clear_presets/`
   - `pauseink_data/config/combo_presets/`
 - 既存 style preset に埋まっている entrance 値は lenient load で `legacy_style_preset.entrance -> entrance preset candidate` として救済し、normalized save は新 schema へ寄せる。
+
+**着手前に決めるべきこと**
+
+- binding の粒度を field 単位にするか section 単位にするか。ここを後から変えると UI state と project save の互換を崩す。
+- binding metadata を `project.settings.pauseink_editor_ui` へ保存するか、別キーへ逃がすか。後からキーを動かすと recovery / reopen 互換が面倒になる。
+- legacy style preset の entrance 救済を「自動移行する」「読み込みだけ救済する」のどちらにするか。保存ポリシーが変わるため最初に固定する。
+- combo preset の優先順位を `combo override > category preset > resolved snapshot` のどこに置くか。後から precedence を変えると project 再現性が崩れる。
 
 **変更ファイル**
 
@@ -161,6 +209,11 @@
 
 **目的:** spec 5.3 の `none / solid / glow / comet-tail` を preview/export で正しく見せ、preset と project 保存に接続する。
 
+**具体的に困る場面**
+
+- 利用者が path trace の書き順を見せたくて head effect を想定しても、今は線の先頭が視認しづらく、動画で「どこまで書けたか」が分かりにくい。
+- 開発者目線では、head effect を static style として入れてしまうと、outline / glow / clear との前後関係を後から全部やり直すことになる。
+
 **現状の問題**
 
 - domain には `RevealHeadEffect` があるが、renderer は path front に head を描いていない。
@@ -174,6 +227,13 @@
 - `solid` は塗りつぶし円/楕円、`glow` は blur 付き halo、`comet_tail` は進行方向へ減衰する trail を描く。
 - `color_source` は `stroke_color`, `preset_accent`, `custom` の 3 系統で解決する。
 - `persistence` は reveal 完了後の残留時間として扱い、preview/export 双方で同じ式を使う。
+
+**着手前に決めるべきこと**
+
+- head の形状を「path front の点」「path front の短い接線付き trail」のどこまで持つか。後から形状モデルを変えると preset parameter が増減する。
+- `Instant` entrance で head effect を完全無効にするか、短時間だけ出すか。仕様差が preview/export の両方へ波及する。
+- `color_source` の優先順位を `custom > preset accent > stroke color` のように固定すること。ここが曖昧だと preset 再現性が崩れる。
+- head の描画順を `drop shadow / glow / outline / base / head` のどこに置くか。後から変えると見た目回帰が大きい。
 
 **変更ファイル**
 
@@ -212,6 +272,11 @@
 
 **目的:** `during reveal / after stroke / after glyph object / after group / after run` に対する built-in post-action を renderer と UI へ接続する。
 
+**具体的に困る場面**
+
+- 利用者が「書き終わった文字だけ少し発光させたい」「trace が終わった後に色を変えたい」と思っても、現状は reveal 以後の振る舞いを付けられない。
+- 開発者が group 単位の演出を入れようとしても、`after group` の定義が曖昧なまま進めると renderer と UI の時間軸が食い違う。
+
 **現状の問題**
 
 - domain の `PostAction` 型が死蔵されている。
@@ -230,6 +295,13 @@
   - `Blink`
 - `timing_scope` は `during reveal / after stroke / after glyph object / after group / after run` を実装する。`after group/run` は group/run の完了時刻導出が必要なので、その evaluator を renderer に追加する。
 - UI は複雑な graph editor にせず、`追加 / 削除 / 上下移動` の配列 editor とする。
+
+**着手前に決めるべきこと**
+
+- v1.0 で許可する post-action の最終集合。ここを広げすぎると evaluator と UI が一気に重くなる。
+- action が重なったときに「合成する」「後勝ち」「同種のみ合成」のどれにするか。後から変えると保存データの意味が変わる。
+- `after group` / `after run` の完了時刻を最後の timed entrance 完了で決めるか、instant object も含めるか。時間軸の根本なので最初に固定する。
+- post-action が visible style だけを変えるのか、object の persistent style snapshot まで変えたように扱うのか。export/reopen の整合に影響する。
 
 **変更ファイル**
 
@@ -269,6 +341,12 @@
 
 **目的:** clear event を `Instant / Ordered / ReverseOrdered / WipeOut / DissolveOut` まで UI と renderer で完結させ、clear preset と combo preset へ接続する。
 
+**具体的に困る場面**
+
+- 利用者が「このページだけ dissolve で消したい」「書いた順に消したい」と思っても、現状は `全消去` が instant clear 固定で、挿入後に直せない。
+- clear event を誤った時刻に打った場合も、page events 側で編集や複製ができないため、何度も打ち直しが必要になる。
+- 開発者視点では、ordering key を `capture_order` にするか `reveal_order` にするか曖昧なまま実装すると、後から clear 演出が全部ひっくり返る。
+
 **現状の問題**
 
 - app の `全消去` は `Instant` 挿入しかできない。
@@ -285,6 +363,13 @@
   - `ordering`: serial / reverse / parallel
 - combo preset は `style + entrance + clear` の束として挿入・適用できるようにする。
 - clear preset の resolved snapshot は project に保存し、preset file の変更で過去 project が崩れないようにする。
+
+**着手前に決めるべきこと**
+
+- ordered clear の順序キーを `capture_order`, `reveal_order`, `z-order` のどれにするか。後から変えると export 見た目が変わる。
+- `granularity=group` のとき loose stroke をどう扱うか。group model の意味に直結する。
+- quick clear が「現在選択中 clear preset」を使うのか、「最後に使った clear 設定」を使うのか。UI 期待値が変わる。
+- combo preset が clear preset を参照保持するか resolved 値を抱えるか。project 再現性と loader 複雑度に効く。
 
 **変更ファイル**
 
@@ -325,6 +410,11 @@
 
 **目的:** spec 9 の編集導線を成立させる。現在の単一 `selected_object_id` から multi-select と command 群へ拡張する。
 
+**具体的に困る場面**
+
+- 利用者が 3 文字まとめて色を変えたい、前面へ出したい、group 化して一緒に扱いたい、と思っても今は 1 object ずつしか触れない。
+- object outline を tree 化しても、selection の source of truth が単一選択のままだと batch edit と undo/redo がすぐ破綻する。
+
 **現状の問題**
 
 - selection は単一 object しか持てない。
@@ -343,9 +433,16 @@
   - `UpdateGroupMembershipCommand`
   - `BatchSetGlyphObjectStyleCommand`
   - `BatchSetGlyphObjectEntranceCommand`
-  - `NormalizeZOrderCommand`
+- `NormalizeZOrderCommand`
 - renderer 側には selection の概念を持ち込まない。
 - UI 操作はまず outline panel 起点にし、canvas direct-manipulation は後回しにする。
+
+**着手前に決めるべきこと**
+
+- selection の source of truth を app session に一本化するか、outline panel と inspector で別保持するか。後者は同期バグを生みやすい。
+- group の入れ子を v1.0 で禁止するか。後から禁止/許可を変えると command schema が壊れる。
+- z-order の操作単位を「selected objects だけ詰める」「全体正規化する」のどちらにするか。履歴と見た目に直結する。
+- canvas 直接選択を今回 scope に入れるか。outline 起点に絞るなら最初に明示しておく。
 
 **変更ファイル**
 
@@ -381,6 +478,12 @@
 
 **目的:** spec 10 の panel 要件へ近づける。flat list を tree / batch-edit 可能な panel に引き上げる。
 
+**具体的に困る場面**
+
+- 利用者が object 数の多い project を開くと、今の flat list では「どの stroke がどの group / run に属しているか」「今どの object が生きているか」がほぼ追えない。
+- clear event を多数打った project でも、page events が plain text だけだと時刻修正や比較がしづらい。
+- 開発者も tree / run 導出ルールが曖昧なままだと、selection や auto-follow を足すたびに UI 表示が揺れる。
+
 **現状の問題**
 
 - `オブジェクト一覧` は `object id / stroke count / page / z` の文字列羅列だけ。
@@ -395,6 +498,13 @@
 - run は `style/entrance/preset/page` が同じ連続 object から導出する view model とし、persistent data にはしない。
 - `alive` 判定は current preview time と clear/page interval から導く。
 - `lock / solo / visibility` は v1.0 では editor-only state とし、project へは保存しない。
+
+**着手前に決めるべきこと**
+
+- run 導出のキーを `page + preset + style + entrance` のどこまで含めるか。後から run 分割条件を変えると outline 操作感が変わる。
+- `lock / solo / visibility` を editor-only 一時 state にするか、relaunch まで戻すか。保存境界を最初に固定する。
+- auto-follow を再生中だけにするか、seek/selection change にも反応させるか。後から変えると UX が大きく変わる。
+- page events タブを「一覧 + 詳細編集」か「簡易 timeline 風」かのどちらへ寄せるか。実装コスト差が大きい。
 
 **変更ファイル**
 
@@ -431,6 +541,12 @@
 
 **目的:** spec 4.3 / 7 の template settings を UI へ露出し、slot fit を v1.0 範囲で入れる。
 
+**具体的に困る場面**
+
+- 利用者がかな/英字/句読点の混在したテンプレートを書いても、現状は advanced controls が無いため「英字だけ少し小さく」「行間を狭く」といった実運用上の調整ができない。
+- slot fit が無いので、template を薄い下書きとして使った後に位置だけ揃えたい場合も手で微調整するしかない。
+- 開発者が fit を後付けすると、transform を slot commit 時に掛けるのか、後から再配置でも掛け直すのかで手戻りが出やすい。
+
 **現状の問題**
 
 - `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` は内部 state にあるが UI に出ていない。
@@ -444,6 +560,13 @@
   - `MoveOnly`: slot center へ平行移動だけ
   - `WeakUniformScale`: bounding box 比から `1.0..=1.15` 程度の弱い uniform scale を掛ける
 - stroke の最終表示はユーザー手書き主体を守るため、非一様スケールや強制歪みは入れない。
+
+**着手前に決めるべきこと**
+
+- fit を「新規 commit 時だけ適用」するか、「設定変更後に既存 slot へ再適用」するか。後から変えると object transform の意味が変わる。
+- `WeakUniformScale` の上限値と下限値をどこに置くか。後から cap を変えると既存 project の見た目が変わる。
+- advanced controls を左ペイン常設にするか、折りたたみ詳細に寄せるか。UI の占有幅に効く。
+- mixed-script line height の基準を font size 基準に固定するか、最大 glyph height 基準にするか。slot 生成式の根本になる。
 
 **変更ファイル**
 
@@ -479,6 +602,12 @@
 
 **目的:** mainline runtime 方針を host `ffmpeg` 依存から脱し、portable sidecar runtime を release-ready にする。
 
+**具体的に困る場面**
+
+- 利用者が release archive を展開しても sidecar が入っていなければ、Windows では `winget` や `PATH` 設定が必要になり、v1.0 の「portable mainline」前提から外れる。
+- 配布した runtime の provenance や license summary が無いと、後から「この ffmpeg はどこ由来か」「GPL なのか」が追えず、配布判断で止まる。
+- 開発者が runner ごとに適当な layout で sidecar を詰めると、discovery / diagnostics / release packaging が全部ずれる。
+
 **現状の問題**
 
 - runtime discovery と manifest 読み込みはあるが、実際の sidecar を repository / release asset へ載せる手順が未整備。
@@ -495,6 +624,13 @@
   - supported families
 - release asset には app binary と sidecar runtime、notice file、manifest を同梱する。
 - optional codec pack は mainline asset と分離し、この task では触らない。
+
+**着手前に決めるべきこと**
+
+- mainline asset に sidecar を同梱するか、app archive と sidecar archive を別配布にするか。後から変えると release workflow も diagnostics も変わる。
+- manifest schema の必須項目を何にするか。後から field を足すと tooling 互換が揺れる。
+- notices を platform ごとに分けるか、runtime ごとに 1 つにまとめるか。asset layout に直結する。
+- runtime の取得元と更新手順を人手管理にするか、CI input artifact にするか。release 運用が変わる。
 
 **変更ファイル**
 
@@ -530,6 +666,11 @@
 
 **目的:** tag が `main` に入った時に 3 OS の app + sidecar + notices を GitHub Release へ確実に上げる。
 
+**具体的に困る場面**
+
+- release asset 名や中身が OS ごとに揺れると、利用者はどれを取ればよいか分からず、検品側も「不足 asset があるのか、命名が違うだけか」を毎回確認する羽目になる。
+- Linux/Windows は成功したのに macOS だけ落ちた場合、release 全体を止めるのか一部だけ出すのかが決まっていないと、workflow の failure policy が毎回ぶれる。
+
 **現状の問題**
 
 - 現 release workflow は app binary archive しか載せない。
@@ -540,6 +681,13 @@
 - workflow は各 OS job で app build -> sidecar assemble -> archive -> release upload の順に統一する。
 - asset 名は `pauseink-vX.Y.Z-<os>-<arch>.zip|tar.gz` を固定し、中身は共通 layout にする。
 - CI 側では unit tests と release packaging を分離し、release job では `cargo test --workspace` の再実行を避けず、artifact の一貫性を優先する。
+
+**着手前に決めるべきこと**
+
+- macOS lane を mainline 必須にするか、Windows/Linux 必須・macOS 任意にするか。failure policy と release completeness 判定が変わる。
+- release 完成条件を「全 asset 必須」にするか、「Windows/Linux 必須 + macOS 任意」にするか。`discover-release-targets` の期待 asset 集合に影響する。
+- sidecar assembly の source を workflow 内ダウンロードにするか、事前配置 artifact にするか。運用コストが大きく変わる。
+- partial success 時に release を作らない方針にするか、suffix を付けて暫定公開するか。後から変えると automation の契約が崩れる。
 
 **変更ファイル**
 
@@ -574,6 +722,11 @@
 
 **目的:** done criteria を最後に閉じる。Linux / Windows / macOS で build / import / save-load / composite export / transparent export を確認し、残制限を確定する。
 
+**具体的に困る場面**
+
+- 利用者が release を受け取っても、どの OS でどこまで確認済みか分からなければ、実質的に毎回手探りで同じ検証を繰り返すことになる。
+- export や recovery のような重い機能は、unit test だけ通っていても OS 差分で壊れやすく、最後の実機検証を飛ばすと mainline 判定が不正確になる。
+
 **現状の問題**
 
 - Linux では host runtime 検証があるが、Windows / macOS は runtime discovery unit test 中心で、実 export validation が不足している。
@@ -591,6 +744,13 @@
   - transparent export
   - runtime diagnostics
 - 実施不能項目は「なぜ不可か」「次に必要な環境」を exact に記録する。
+
+**着手前に決めるべきこと**
+
+- どの OS を「必須通過」、どれを「blocker 記録で可」とするか。done criteria の判定に直接関わる。
+- smoke 用 media / sample project を何で固定するか。後から素材が変わると比較不能になる。
+- report に残す証跡の粒度を「コマンド + exit code + 生成物 path」まで含めるかどうか。後から追跡できるかが変わる。
+- GUI 目視確認ができない環境でどこまでを local verify とみなすか。曖昧にすると完了判定がぶれる。
 
 **変更ファイル**
 
@@ -622,20 +782,32 @@
 - `progress.md` が最終状態になっている
 - `docs/implementation_report_v1.0.0.md` がコマンドと結果を含んで完結している
 
-## 5. 推奨実行順
+## 6. 着手おすすめ順
+
+上から順に依頼すれば、そのまま無理なく進めやすい順です。依存だけでなく、既存部分を壊しにくい順と、後戻りを減らしやすい順を優先しています。
 
 1. `V1-01` preset 境界正規化
-2. `V1-02` reveal-head effect
-3. `V1-03` post-action chain
+   - 以後の effect / clear / combo の保存境界をここで固定しないと schema の手戻りが大きい。
+2. `V1-07` template advanced controls / slot fit
+   - 独立性が高く、既存 UI を壊しにくい。早めに片付けると mixed-script/template 周りの残差が減る。
+3. `V1-02` reveal-head effect
+   - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
 4. `V1-04` clear / clear preset / combo preset
+   - 利用者が直接困る操作 gap が大きく、page-event track の source of truth をここで確定できる。
 5. `V1-05` selection / group / z-order foundation
+   - 以後の outline 強化と batch edit の前提になる。
 6. `V1-06` outline / page events panel 強化
-7. `V1-07` template advanced controls / slot fit
+   - `V1-04` と `V1-05` が揃ってから入ると UI だけ空洞になるのを避けられる。
+7. `V1-03` post-action chain
+   - 最も timing が複雑で、group/run の基盤と outline 可視化がある方が安全。
 8. `PKG-01` portable sidecar packaging
+   - productization 側の大きな未完了。release asset 設計をここで固定する。
 9. `PKG-02` release workflow sidecar 統合
+   - `PKG-01` の artifact layout が決まってから workflow へ落とす。
 10. `QA-01` cross-platform validation / closeout
+   - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
 
-## 6. task 指定時の返答ルール
+## 7. task 指定時の返答ルール
 
 利用者から `V1-03` や `PKG-01` のように task ID が指定されたら、開始時に次を短く共有してから着手すること。
 
@@ -644,14 +816,14 @@
 3. 最初に追加する failing test
 4. 完了時に回す verification command
 
-## 7. 先に確認しておくべき地雷
+## 8. 先に確認しておくべき地雷
 
 - `V1-01` を飛ばして `V1-04` へ行くと preset schema の後戻りが起きやすい。
 - `V1-05` を飛ばして `V1-06` を進めると outline tree の UI だけ出来て command が空洞になる。
 - `PKG-01` を飛ばして `PKG-02` を進めると release workflow が host runtime 前提に戻りやすい。
 - `QA-01` は単なる docs 更新ではなく、実 build / export / validation の証跡が必須。
 
-## 8. 受け入れの最終ライン
+## 9. 受け入れの最終ライン
 
 この計画の task をすべて閉じた時点で、PauseInk v1.0 の残差は以下に限定されているべきです。
 

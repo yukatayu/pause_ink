@@ -999,6 +999,11 @@
   - 判断理由: 以後 user が task 番号指定で implementation を依頼できるようにしつつ、v1.0 residual work と post-v1 future work を混同しないため。
   - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: reveal-head effect、post-action chain、clear/combo preset、selection/multi-select、group/ungroup/z-order、sidecar packaging、cross-platform validation、future work が明示的な task 台帳に整理された。
+- 2026-04-06T19:45:47+09:00
+  - 実施内容: `.docs/16_remaining_tasks_plan.md` を最終見直しし、各 task へ「利用者や開発者が具体的にどの操作で困るか」の例と、「後から変えると手戻りが出やすい先決事項」を追記した。あわせて、task 着手前に読むべき `.docs` と既存 test の共通チェックリストを追加し、`origin/develop` 前提の運用へ揃えた。
+  - 判断理由: user が上から順に task を依頼する前提では、単なる未実装一覧だけでなく、何が痛点で何を先に固定しないと危険かが見えている必要があるため。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: 大域計画が「困り方」「先決事項」「既存 docs/test の確認ポイント」まで含む実行可能な最終版になった。
 
 ## 9. Export / profile メモ
 
