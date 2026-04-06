@@ -53,9 +53,10 @@
 5. selection / multi-select / group / ungroup / z-order の編集導線
 6. object outline / page events panel の強化
 7. template / guide advanced controls
-8. portable FFmpeg sidecar packaging / provenance / notices
-9. GitHub Release への sidecar 統合
-10. Windows / macOS / Linux の最終検証
+8. side panel scroll / overflow hardening
+9. portable FFmpeg sidecar packaging / provenance / notices
+10. GitHub Release への sidecar 統合
+11. Windows / macOS / Linux の最終検証
 
 ### 1.2 この計画に含めないもの
 
@@ -92,9 +93,10 @@
 | V1-05 | selection / group / z-order foundation | なし | multi-select, group, ungroup, z-order の command と UI を入れる |
 | V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
 | V1-07 | template / guide advanced controls | なし | template 詳細設定を別ポップアップへ逃がし、guide の次文字字間調整を UI に露出する |
+| V1-08 | side panel scroll / overflow hardening | なし | 左右ペインを縦スクロール対応にし、項目増加でも画面外へはみ出さないようにする |
 | PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
-| PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 3 OS build + release asset に sidecar / notices を載せる |
-| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
+| PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 既存 release workflow を sidecar / notices 同梱の完成形へ引き上げる |
+| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, V1-08, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
 
 ## 3. 実装対象の現状スナップショット
 
@@ -106,7 +108,9 @@
 - `オブジェクト一覧` は flat text list、`ページイベント` は flat list で、spec の tree / batch edit / alive highlight / auto-follow に未達。
 - template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足している。
 - guide では `slope` しか編集できず、次文字用の縦線セットを直前文字からどれだけ離すかを調整する editor parameter がない。
+- 左右ペインは縦スクロール前提で作られておらず、今後 controls が増えると低い画面で操作不能になりやすい。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
+- GitHub Release workflow は app binary archive の build/upload までは済んでいるが、sidecar / notices / manifest 同梱は未完了。
 
 ## 4. 着手前に確認する既存 docs / test
 
@@ -121,6 +125,7 @@
 | V1-05 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/domain/src/project_commands.rs` と `crates/app` の selection/undo 系 test |
 | V1-06 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | bottom panel / object list / page event の UI test、run 導出 helper の test |
 | V1-07 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/template_layout` と `crates/app` の template save/restore / guide geometry test |
+| V1-08 | `.docs/03_ui_window_model.md`, `.docs/10_testing_and_done_criteria.md` | `crates/app/src/main.rs` の bottom panel / layout 系 test、panel 幅と canvas 安定性の test |
 | PKG-01 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/13_risk_register.md` | `crates/media` の runtime discovery test、`scripts/package_release_asset.py` の archive test |
 | PKG-02 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/10_testing_and_done_criteria.md` | workflow YAML parse、packager script の dry-run |
 | QA-01 | `.docs/10_testing_and_done_criteria.md`, `.docs/13_risk_register.md` | 現在の workspace test、host export smoke、既知制約一覧 |
@@ -442,13 +447,15 @@
 - `NormalizeZOrderCommand`
 - renderer 側には selection の概念を持ち込まない。
 - UI 操作はまず outline panel 起点にし、canvas direct-manipulation は後回しにする。
+- v1.0 では group の入れ子を禁止する。
+- z-order 操作は「選択中 object の相対順を保ったまま前後へ動かす」を基本とする。
 
 **着手前に決めるべきこと**
 
-- selection の source of truth を app session に一本化するか、outline panel と inspector で別保持するか。後者は同期バグを生みやすい。
-- group の入れ子を v1.0 で禁止するか。後から禁止/許可を変えると command schema が壊れる。
-- z-order の操作単位を「selected objects だけ詰める」「全体正規化する」のどちらにするか。履歴と見た目に直結する。
-- canvas 直接選択を今回 scope に入れるか。outline 起点に絞るなら最初に明示しておく。
+- selection の source of truth は app session に一本化する。
+- group の入れ子は v1.0 で禁止する。
+- z-order は selected objects を前後移動し、必要に応じて全体正規化できる方針で進める。
+- canvas 直接選択は今回 scope に入れず、outline 起点に絞る。
 
 **変更ファイル**
 
@@ -612,6 +619,63 @@
 - guide の次文字字間が GUI から編集できる
 - template 詳細と guide gap がリアルタイムで反映される
 
+### V1-08: side panel scroll / overflow hardening
+
+**優先度:** P1
+**依存:** なし
+**ひとことで言うと:** 左右ペインの中身が増えても画面外へ逃げず、低い画面でも操作不能にならないようにする task。
+
+**目的:** 左右ペインの縦方向 overflow を吸収し、今後 UI 項目が増えても main canvas と下部 panel のレイアウトを安定させる。
+
+**具体的に困る場面**
+
+- 左ペインや右ペインに設定項目が増えると、下の項目が画面外へ押し出されて触れなくなる。
+- 画面高さが低い環境や高 DPI 環境では、effect や export の controls に辿り着くためにウィンドウ自体を大きくし続ける必要がある。
+- これから `V1-05` や `V1-07` で項目が増えると、縦方向 overflow が実害に変わりやすい。
+
+**現状の問題**
+
+- 左右ペインは `egui::Panel::left/right` の中へそのまま controls を積んでおり、縦スクロール領域で包んでいない。
+- 下部 panel は固定高さ + scroll だが、左右ペインには同等の overflow 保護がない。
+
+**設計**
+
+- 左右ペインとも `固定ヘッダ + ScrollArea body` に分ける。
+- スクロール対象は panel 全体ではなく body 部分に限定し、width resize 挙動は現状維持する。
+- runtime status / title / preset 選択など上部で頻繁に触る要素は固定側へ残し、長い controls 群だけを scroll 側へ送る。
+- 既存の export panel や style editor の責務分割は触らず、まずはレイアウト層で overflow を解消する。
+
+**着手前に決めるべきこと**
+
+- 左右ペインをそれぞれ 1 本の大きい scroll にするか、section ごとに個別 scroll にするか。後から変えると操作感がかなり変わる。
+- ヘッダ行に何を固定し、何を scroll 側へ送るか。頻繁に触る操作の見え方に影響する。
+- スクロール導入後も中央 canvas と下部 panel の高さを絶対に揺らさない前提でいくか。レイアウト調整方針の根本になる。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. 左ペインを `固定ヘッダ + ScrollArea body` に分ける。
+2. 右ペインを `固定ヘッダ + ScrollArea body` に分ける。
+3. 既存の width resize と bottom panel 安定性を壊さないことを確認する。
+4. 項目数が増えても canvas 高さが揺れないことを確認する。
+
+**必要テスト**
+
+- `app`: 左ペイン overflow 時に body だけが scroll し、panel width resize は維持される
+- `app`: 右ペイン overflow 時に export panel まで到達できる
+- `app`: 左右ペインへ縦 scroll を入れても中央 canvas と下部 panel の高さが不必要に揺れない
+
+**完了条件**
+
+- 左右ペインが縦スクロール対応する
+- 低い画面でも主要 controls へ到達できる
+- 既存の width resize と bottom panel の安定性を壊さない
+
 ### PKG-01: portable FFmpeg sidecar packaging / provenance / notices
 
 **優先度:** P0
@@ -692,7 +756,7 @@
 
 **現状の問題**
 
-- 現 release workflow は app binary archive しか載せない。
+- 現 release workflow は app binary archive の build / upload までは既にできているが、sidecar / notices / manifest の同梱はまだ無い。
 - Windows / macOS / Linux で sidecar 同梱方針が workflow に落ちていない。
 
 **設計**
@@ -808,23 +872,25 @@
 
 1. `V1-01` preset 境界正規化
    - 以後の effect / clear / combo の保存境界をここで固定しないと schema の手戻りが大きい。
-2. `V1-07` template / guide advanced controls
+2. `V1-08` side panel scroll / overflow hardening
+   - 独立性が高く、先に入れておくと後続 task で UI 項目が増えても破綻しにくい。
+3. `V1-05` selection / group / z-order foundation
+   - 本質的な編集導線なので早めにやる価値は高い。入れ子禁止・outline 起点・app session 一本化を固定したので、手戻りリスクはかなり下がった。
+4. `V1-07` template / guide advanced controls
    - 独立性が高く、既存 UI を壊しにくい。template 詳細ポップアップと guide gap は軽めで、早めに片付けると運用上の細かなストレスを減らせる。
-3. `V1-02` reveal-head effect
+5. `V1-02` reveal-head effect
    - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
-4. `V1-04` clear / clear preset / combo preset
+6. `V1-04` clear / clear preset / combo preset
    - 利用者が直接困る操作 gap が大きく、page-event track の source of truth をここで確定できる。
-5. `V1-05` selection / group / z-order foundation
-   - 以後の outline 強化と batch edit の前提になる。
-6. `V1-06` outline / page events panel 強化
+7. `V1-06` outline / page events panel 強化
    - `V1-04` と `V1-05` が揃ってから入ると UI だけ空洞になるのを避けられる。
-7. `V1-03` post-action chain
+8. `V1-03` post-action chain
    - 最も timing が複雑で、group/run の基盤と outline 可視化がある方が安全。
-8. `PKG-01` portable sidecar packaging
+9. `PKG-01` portable sidecar packaging
    - productization 側の大きな未完了。release asset 設計をここで固定する。
-9. `PKG-02` release workflow sidecar 統合
-   - `PKG-01` の artifact layout が決まってから workflow へ落とす。
-10. `QA-01` cross-platform validation / closeout
+10. `PKG-02` release workflow sidecar 統合
+    - workflow 自体はあるので、PKG-01 完了後は sidecar 統合へ絞って進められる。
+11. `QA-01` cross-platform validation / closeout
    - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
 
 ## 7. task 指定時の返答ルール

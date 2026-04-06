@@ -1148,6 +1148,24 @@
   - 結果:
     - `V1-07` は軽めに片づけやすい task として再定義され、次に依頼されたときにそのまま実装へ入れる状態になった。
 
+- 2026-04-07T01:02:00+09:00
+  - 直近マイルストーン: `PKG-02` の現状達成度と、`V1-05 / V1-07 / V1-08` の着手 readiness を計画へ反映する。
+  - 調査:
+    - `.github/workflows/release.yml` と `manual/developer_guide.md` を確認し、release workflow 自体は app binary archive の build/upload まで実装済みで、未完了なのは sidecar / notices / manifest 同梱であることを再確認した。
+    - `crates/domain/src/project_commands.rs` と `crates/app/src/lib.rs` を確認し、group / z-order の型土台はあるが selection source of truth がまだ単一 object 選択のままであることを確認した。
+    - `crates/app/src/main.rs` を確認し、左右ペインは `Panel::left/right` 直下へ controls を積んでいるだけで、縦 scroll 保護が無いことを再確認した。
+  - 実施内容:
+    - `.docs/16_remaining_tasks_plan.md` に `V1-08: side panel scroll / overflow hardening` を追加した。
+    - `PKG-02` は「未着手」ではなく「release workflow 既存、sidecar 統合が未完了」という表現へ修正した。
+    - `V1-05` の未確定前提を app session 一本化 / group 入れ子禁止 / outline 起点 / selected objects の前後移動へ固定し、早期着手の手戻りを減らした。
+    - 着手おすすめ順を見直し、`V1-08` を軽量先行 task、`V1-05` を本質 task として早めへ寄せた。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 確認:
+    - `git diff --check`
+  - 結果:
+    - `V1-07` と `V1-08` は大きな前提未確定がなく、ほぼそのまま一気に実装へ入れる状態になった。
+    - `V1-05` も主要な前提を固定したため着手可能だが、変更面積は広く `V1-07` / `V1-08` より重い task として扱うのが妥当。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。

@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: 残タスク計画を保守し、`V1-07` を user 指定どおり「template 詳細ポップアップ + guide 字間」に絞り直す。
+- 現在の即時マイルストーン: 残タスク計画を保守し、`PKG-02` の現状達成度、`V1-05` の前提固定、`V1-08` の追加を反映する。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -17,6 +17,9 @@
   - guide 字間は `cell_width` 比、負値許可、guide slope と同じ保存経路で固定した
   - template 詳細は左ペインへ詰め込まず別ポップアップ前提にし、変更がリアルタイムで preview / placed slot へ反映される設計へ更新した
   - 各残 task に `ひとことで言うと` を追加し、利用者目線での意味が追いやすい計画書へ整えた
+  - `PKG-02` は「未着手」ではなく「release workflow 自体は実装済みで、sidecar/notices 同梱が未完了」という状態に計画書を修正した
+  - `V1-05` は app session 一本化 / group 入れ子禁止 / outline 起点 / z-order 前後移動を前提として固定し、早めに着手しても大きな手戻りが出にくい形にした
+  - `V1-08` として左右ペインの縦スクロール対応を追加し、先に片づける軽量 task として計画へ入れた
   - `.pauseink` lenient load / canonical save / unknown field 保持を実装
   - bounded undo/redo と history depth 設定を実装
   - portable settings、cache/autosave/runtime path、cache cleanup helper を実装
