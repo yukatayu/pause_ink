@@ -1045,6 +1045,35 @@
     - 配布 binary は repo が無い場所でも built-in style/export asset を読めるようになった。
     - release archive は app binary に加えて `README.md` と `presets/` を含むようになり、CI 生成物でも inspector の `style preset` と `書き出し` 欄が欠けない前提になった。
     - この Linux host では Windows 実機起動確認まではできないため、最終確認は CI artifact を Windows 上で起動して行う必要がある。
+- 2026-04-06T22:05:00+09:00
+  - 事象: user から「Windows 配布 build では起動時に一瞬大量のコマンドプロンプトが出てきて、再生を押すとさらに大量に出たり消えたりして操作できない」と報告が来た。
+  - root cause:
+    - 直前の修正で app 本体は `windows_subsystem = "windows"` になったため、`cargo run` のように親コンソールを共有しなくなった。
+    - 一方で `crates/media/src/lib.rs` の runtime version query / capability query / `probe()` / `preview_frame()` と、`crates/export/src/lib.rs` の export ffmpeg 実行は、Windows でも素の `std::process::Command` を使っていた。
+    - その結果、console subsystem の `ffmpeg.exe` / `ffprobe.exe` が起動のたびに個別の console window を作っていた。startup 時は runtime discovery、再生時は preview frame 抽出の頻発が症状として見えていた。
+  - 実施内容:
+    - `crates/media/src/lib.rs` に `command_without_console(program: &Path) -> Command` を追加し、Windows だけ `CommandExt::creation_flags(CREATE_NO_WINDOW)` を付ける helper にした。Linux/macOS では no-op。
+    - production 側の media command をすべて同 helper 経由へ置き換えた。対象は `probe()`、`preview_frame()`、`run_ffmpeg_query()`、`capture_version_output()`。
+    - `crates/export/src/lib.rs` でも export 用 ffmpeg command 生成を同 helper 経由へ統一した。対象は transparent export と composite export。
+    - source-level regression として `windows_media_commands_use_hidden_process_helper`、`windows_export_commands_use_hidden_process_helper` を追加し、対象 command が helper を通ることを固定した。
+    - sanity check として `rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs` を確認し、production 側に残る `Command::new` は helper 本体のみで、他は host smoke test fixture 作成だけであることを確認した。
+  - 変更ファイル: `crates/media/src/lib.rs`, `crates/export/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red: `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`
+    - red: `cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`
+    - green: `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`
+    - green: `cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`
+    - 回帰: `cargo test --workspace`
+    - 回帰: `cargo check -p pauseink-app --all-targets`
+    - packaging 回帰: `python3 -m unittest scripts/package_release_asset_test.py`
+    - 実確認補助: `rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs`
+  - 他 OS sanity:
+    - helper は `#[cfg(windows)]` のみ `CREATE_NO_WINDOW` を付与し、Linux/macOS では no-op なので挙動変更は無い。
+    - release workflow / packager を再確認したが、Linux/macOS artifact へ OS 固有の launcher/wrapper は追加していない。
+    - ただし Windows/macOS 実機での起動確認はこの Linux host では未実施。最終的な実機確認は引き続き必要。
+  - 結果:
+    - Windows 配布 build で app 本体は GUI subsystem、child `ffmpeg` / `ffprobe` は hidden process として動く設計になった。
+    - 起動時の runtime discovery と再生中の preview extraction が同じ修正範囲に入ったため、報告されていた 2 種類の console 点滅症状を同時に抑止できる見込み。
 
 ## 9. Export / profile メモ
 

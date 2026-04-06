@@ -74,6 +74,23 @@ pub fn default_platform_id() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
+pub fn command_without_console(program: &Path) -> Command {
+    let mut command = Command::new(program);
+    configure_background_command(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn configure_background_command(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_background_command(_command: &mut Command) {}
+
 pub fn sidecar_runtime_dir(runtime_root: &Path, platform_id: &str) -> PathBuf {
     runtime_root.join("ffmpeg").join(platform_id)
 }
@@ -232,7 +249,7 @@ impl FfprobeMediaProvider {
 
 impl MediaProvider for FfprobeMediaProvider {
     fn probe(&self, source_path: &Path) -> Result<MediaProbe, MediaError> {
-        let output = Command::new(&self.runtime.ffprobe_path)
+        let output = command_without_console(&self.runtime.ffprobe_path)
             .args([
                 "-v",
                 "error",
@@ -269,7 +286,7 @@ impl MediaProvider for FfprobeMediaProvider {
         max_width: u32,
         max_height: u32,
     ) -> Result<PreviewFrame, MediaError> {
-        let mut command = Command::new(&self.runtime.ffmpeg_path);
+        let mut command = command_without_console(&self.runtime.ffmpeg_path);
         command.args([
             "-loglevel",
             "error",
@@ -527,7 +544,7 @@ fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
 }
 
 fn run_ffmpeg_query(binary_path: &Path, flag: &str) -> Result<String, MediaError> {
-    let output = Command::new(binary_path).arg(flag).output()?;
+    let output = command_without_console(binary_path).arg(flag).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(MediaError::CommandFailed(stderr));
@@ -838,7 +855,9 @@ fn ensure_file_exists(path: &Path, label: &str) -> Result<(), MediaError> {
 }
 
 fn capture_version_output(binary_path: &Path) -> Result<VersionOutput, MediaError> {
-    let output = Command::new(binary_path).arg("-version").output()?;
+    let output = command_without_console(binary_path)
+        .arg("-version")
+        .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(MediaError::CommandFailed(stderr));
@@ -1468,6 +1487,20 @@ cuda
         assert_eq!(
             frame.rgba_pixels.len(),
             (frame.width * frame.height * 4) as usize
+        );
+    }
+
+    #[test]
+    fn windows_media_commands_use_hidden_process_helper() {
+        let source = include_str!("lib.rs");
+
+        assert!(
+            source.contains("command_without_console(&self.runtime.ffprobe_path)")
+                && source.contains("command_without_console(&self.runtime.ffmpeg_path)")
+                && source.contains("command_without_console(binary_path).arg(flag)")
+                && source.contains("command_without_console(binary_path)")
+                && source.contains(".arg(\"-version\")"),
+            "Windows 配布 build では ffprobe/ffmpeg 子プロセスごとに console window を出さない helper を通したい"
         );
     }
 }
