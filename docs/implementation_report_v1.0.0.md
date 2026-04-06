@@ -994,6 +994,11 @@
   - 実施内容: reviewer sub-agent `Herschel` の結果を統合し、preview の current paused batch だけを強制可視化する `preview_force_visible_batch` 経路、`created_at` ごとの paused batch lane 直列化、`drop_shadow -> glow -> outline -> base` の layer-first compositor が今回の最小安全修正であることを report へ反映した。あわせて user / developer guide に「preview 専用 override は再生 / 保存 / 書き出しで通常 timeline へ戻る」旨を追記し、`progress.md` の即時マイルストーンを完了済みへ更新した。
   - 変更ファイル: `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: bugfix バッチの仕様意図、採用理由、検証結果、残タスク整理が docs 上でも一致した。
+- 2026-04-06T18:01:50+09:00
+  - 実施内容: `.docs/11_implementation_plan.md`、`.docs/12_future_work.md`、`README.md`、`progress.md`、既知制約、current code entrypoints を突き合わせ、未実装の v1.0 残項目と future work を task 番号つきで実行計画へ落とした。新しい計画書は `.docs/16_remaining_tasks_plan.md` とし、`V1-*`、`PKG-*`、`FUT-*` の 3 系統で管理する方針にした。
+  - 判断理由: 以後 user が task 番号指定で implementation を依頼できるようにしつつ、v1.0 residual work と post-v1 future work を混同しないため。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: reveal-head effect、post-action chain、clear/combo preset、selection/multi-select、group/ungroup/z-order、sidecar packaging、cross-platform validation、future work が明示的な task 台帳に整理された。
 
 ## 9. Export / profile メモ
 

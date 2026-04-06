@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: paused batch preview / cross-object effect order / workspace 復元まわりの修正は完了。次は reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを v1.0 残項目として整理する。
+- 現在の即時マイルストーン: v1.0 残タスクの整理を完了し、`.docs/16_remaining_tasks_plan.md` を task 指定可能な実行計画として維持する。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -84,6 +84,7 @@
   - 再生中に canvas input が来た場合は stroke draft を開始せず、既存 drag も cancel して free-ink を無効化するようにした
   - `settings.json5` に editor UI / base style / entrance の resolved snapshot を保存し、次回起動時に style / effect / font / template / guide が戻るようにした
   - 上記 bugfix バッチについて `cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過し、manual / report / progress も同期した
+  - `.docs/16_remaining_tasks_plan.md` を新設し、未実装の v1.0 残項目と future work を task 番号つきで整理した
   - `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`、`cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`、`cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`、`cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`、`cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture` を red/green で通した
   - `cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
@@ -132,8 +133,8 @@
 | Phase 14 | 進行中 | 92% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save は接続済み。reveal-head effect と post-action chain が残る |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
-| Phase 17 | 進行中 | 98% | README / manuals / tutorials / polish | paused batch preview / settings 復元 / effect 合成順の修正内容を docs へ同期済み |
-| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。workspace 再検証と最終記録を反映済みで、残るのは v1.0 残項目整理 |
+| Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理済み |
+| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。残るのは packaging / 実機検証 / spec 残項目の実装 |
 
 ## 次の具体的な一手
 
