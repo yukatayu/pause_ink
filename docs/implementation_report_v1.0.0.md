@@ -1297,3 +1297,49 @@
     - exit 0。`pauseink-app` 48 tests と `--all-targets` check が通過。
     - `side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport` で overflow 時に body viewport を超える content が scroll 対象になることを固定した。
     - `side_panel_scroll_body_uses_full_available_width` で overflow の有無で本文幅が変わらないことを固定した。
+- 2026-04-07T05:05:00+09:00
+  - 直近マイルストーン: `V1-07 template / guide advanced controls`
+  - 方針:
+    - 既存の `font_size / tracking / slope` は左ペインに残し、advanced controls だけを `テンプレート詳細` の別 window へ逃がす。
+    - guide 次文字字間は `cell_width` 比で保存し、負値を許可する。ただし bounds 無し advance の歩幅だけは正方向へ clamp する。
+    - UI 実装より先に、`TemplateSettings` の即時 reflow と `guide_next_gap_ratio` の save/restore・geometry math を test で固定する。
+  - 着手前確認:
+    - `crates/template_layout/src/lib.rs` の `TemplateSettings` / `GuidePlacement` / `build_guide_geometry()` を読み直した。
+    - `crates/app/src/main.rs` の `StoredTemplateUiState`, `ProjectEditorUiState`, `GuideOverlayState`, `refresh_placed_template_slots()`, `refresh_guide_geometry()` を確認した。
+    - 既存 test `placed_template_slots_reflow_when_font_size_changes_after_placement`、`save_and_reopen_project_restores_style_template_and_guide_state`、guide overlay 系 test を再確認した。
+- 2026-04-07T06:05:00+09:00
+  - Task: `V1-07 template / guide advanced controls`
+  - sub-agent:
+    - explorer `Feynman` に template settings / guide 保存経路 / popup 化の注意点を調査させた。
+    - 採用した指摘:
+      - 置済み slot の再計算は `mark_project_ui_dirty() + refresh_placed_template_slots(ctx)` の経路を維持し、popup 側でも草稿 state を持たず live state を直接編集する。
+      - `guide_next_gap_ratio` は `Settings` と `ProjectEditorUiState` に足すのが最小で、guide slope と同じ reopen / relaunch 経路に載せられる。
+      - outer template placement state (`placed_origin`, `current_slot_index`) は popup open/close で触らない。
+    - 補足:
+      - sub-agent は template slot 本線が `template_slots_at_origin()` / `layout_template_line()` である点も再確認した。advanced controls は app 側 reflow helper で吸収する実装にした。
+  - 実施内容:
+    - `crates/portable_fs/src/lib.rs` に `guide_next_gap_ratio: f32` を追加し、`Settings` を `#[serde(default)]` 化して旧 settings file の欠損 field も 0.0 で読むようにした。
+    - `crates/app/src/main.rs` の `ProjectEditorUiState` に `guide_next_gap_ratio` を追加し、project save/reopen と settings relaunch の両方で復元されるようにした。
+    - `GuideOverlayState` は `next_cell_anchor_x` を持つ形へ整理し、表示位置は `guide_next_cell_origin_x(anchor, cell_width, gap_ratio)` で、bounds 無し advance は `guide_fallback_advance_step()` で正方向へ clamp する形へ更新した。
+    - `crates/template_layout/src/lib.rs` に gap 用 helper を追加し、cell width 比と負値 fallback を unit test で固定した。
+    - UI は `テンプレート詳細` window を追加し、`line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` を即時反映で編集できるようにした。
+    - main inspector と設定 window の両方に `次文字字間` slider を追加し、`guide_slope_degrees` と同じ source of truth を共有するようにした。
+    - `manual/user_guide.md` と `manual/developer_guide.md` を、template details popup / guide gap / 保存経路の実態へ更新した。
+  - テスト:
+    - red:
+      - `cargo test -p pauseink-app template_advanced_settings_change_reflows_placed_slots_immediately -- --nocapture`
+      - `cargo test -p pauseink-app guide_overlay_state_ -- --nocapture`
+      - いずれも `guide_next_gap_ratio` / `apply_template_settings_change()` / gap 対応 `GuideOverlayState` 未実装で compile fail を確認。
+    - green:
+      - `cargo test -p pauseink-app template_advanced_settings_change_reflows_placed_slots_immediately -- --nocapture`
+      - `cargo test -p pauseink-app guide_overlay_state_ -- --nocapture`
+      - `cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`
+      - `cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`
+      - `cargo test -p pauseink-template-layout -- --nocapture`
+      - `cargo test --workspace`
+      - `cargo check -p pauseink-app --all-targets`
+  - 結果:
+    - exit 0。workspace 全体 test と `pauseink-app --all-targets` check が通過。
+    - `template_advanced_settings_change_reflows_placed_slots_immediately` で advanced controls の即時 reflow を固定した。
+    - `guide_overlay_state_applies_gap_ratio_without_changing_vertical_set_width` と `guide_overlay_state_negative_gap_ratio_still_advances_forward_without_bounds` で、gap が位置だけに効き縦線セット幅は一定であることを固定した。
+    - save/reopen と settings relaunch の両方で、`line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode / guide_next_gap_ratio` が戻ることを固定した。

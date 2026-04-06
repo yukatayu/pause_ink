@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 98%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロールまで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-07` として template 詳細ポップアップと guide 次文字字間スライダーを実装し、UI を詰まらせず細かい調整を追加する。
+- 現在の即時マイルストーン: `V1-05` として selection / group / z-order foundation を実装し、outline 起点の複数選択編集の土台を固める。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -125,6 +125,11 @@
   - `V1-08` では panel 幅リサイズは現状維持、ヘッダは常時表示、本文だけを縦スクロールに閉じる方針で進める
   - `V1-08` を完了し、left/right panel の outer ID と resize を保ったまま、本文だけを `show_side_panel_scroll_body()` へ逃がして低い画面でも `書き出し` / `Google Fonts 設定` まで辿れるようにした
   - side panel scroll の回帰として `side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport` と `side_panel_scroll_body_uses_full_available_width` を追加し、body overflow と width 安定性を固定した
+  - `V1-07` に着手し、template advanced settings を popup 化しつつ、guide 次文字字間を `cell_width` 比で保存・反映するために `TemplateSettings` / `GuideOverlayState` / `ProjectEditorUiState` / `Settings` の境界を再確認した
+  - `V1-07` では state と geometry の回帰を先に固定し、その後で popup UI と slider UI を接続する方針で進める
+  - `V1-07` を完了し、`テンプレート詳細` window から行間 / かな倍率 / 英字倍率 / 句読点倍率 / 下敷き表示を即時反映できるようにした
+  - guide は `次文字字間` を `cell_width` 比で保存し、負値を許可したまま、縦線セット幅を変えず位置だけ動かすようにした
+  - `guide_next_gap_ratio` は guide slope と同じ reopen / relaunch 経路へ保存され、project / settings の両方で復元される
   - 今回の確認として `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`、`cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、production 側の child process spawn が helper へ集約され、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
@@ -170,7 +175,7 @@
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
 | Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
-| Phase 18 | 進行中 | 98% | `V1-07 -> V1-05` の順で残 task を閉じる | `V1-08` 完了。次は template 詳細ポップアップと guide 次文字字間 |
+| Phase 18 | 進行中 | 99% | `V1-05` の選択・グループ・前後移動基盤を閉じる | `V1-08` と `V1-07` 完了。次は selection / group / z-order foundation |
 
 ## 次の具体的な一手
 

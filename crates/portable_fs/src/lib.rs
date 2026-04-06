@@ -135,10 +135,12 @@ impl Default for GoogleFontsSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub history_depth: usize,
     pub guide_modifier: String,
     pub guide_slope_degrees: f32,
+    pub guide_next_gap_ratio: f32,
     pub gpu_preview_enabled: bool,
     pub media_hwaccel_enabled: bool,
     pub autosave_interval_seconds: u64,
@@ -156,6 +158,7 @@ impl Default for Settings {
             history_depth: 256,
             guide_modifier: "platform_default".to_owned(),
             guide_slope_degrees: 0.0,
+            guide_next_gap_ratio: 0.0,
             gpu_preview_enabled: true,
             media_hwaccel_enabled: true,
             autosave_interval_seconds: 10,
@@ -295,6 +298,7 @@ mod tests {
         let loaded = load_settings_from_str(&saved).expect("settings load should succeed");
 
         assert_eq!(loaded.history_depth, 256);
+        assert!((loaded.guide_next_gap_ratio - 0.0).abs() < f32::EPSILON);
         assert!(loaded.gpu_preview_enabled);
         assert!(loaded.media_hwaccel_enabled);
         assert_eq!(loaded.autosave_interval_seconds, 10);
@@ -345,6 +349,7 @@ mod tests {
         let loaded = load_settings_from_file(&paths).expect("settings load should work");
 
         assert_eq!(loaded.history_depth, settings.history_depth);
+        assert!((loaded.guide_next_gap_ratio - settings.guide_next_gap_ratio).abs() < f32::EPSILON);
         assert!(paths.thumbnail_cache_dir().is_dir());
         assert!(paths.user_style_presets_dir().is_dir());
         assert!(paths.user_entrance_presets_dir().is_dir());
@@ -360,6 +365,7 @@ mod tests {
         let loaded = load_settings_or_default(&paths).expect("default settings should load");
 
         assert_eq!(loaded.history_depth, 256);
+        assert!((loaded.guide_next_gap_ratio - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]

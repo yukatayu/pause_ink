@@ -35,8 +35,9 @@ use pauseink_presets_core::{
 };
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
-    build_guide_geometry, template_grapheme_scale, GuideGeometry, GuideLineKind, GuidePlacement,
-    Point, TemplateSettings, UnderlayMode,
+    build_guide_geometry, guide_fallback_advance_step, guide_next_cell_origin_x,
+    template_grapheme_scale, GuideGeometry, GuideLineKind, GuidePlacement, Point, TemplateSettings,
+    UnderlayMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -259,6 +260,8 @@ impl Default for TemplatePreviewState {
 struct ProjectEditorUiState {
     template: StoredTemplateUiState,
     guide_slope_degrees: f32,
+    #[serde(default)]
+    guide_next_gap_ratio: f32,
     style_binding: StylePresetBindingState,
     entrance_binding: EntrancePresetBindingState,
 }
@@ -268,6 +271,7 @@ impl ProjectEditorUiState {
         Self {
             template: StoredTemplateUiState::capture(&app.template),
             guide_slope_degrees: app.settings.guide_slope_degrees,
+            guide_next_gap_ratio: app.settings.guide_next_gap_ratio,
             style_binding: app.style_binding.clone(),
             entrance_binding: app.entrance_binding.clone(),
         }
@@ -668,7 +672,7 @@ struct GuideOverlayState {
     horizontal_origin: Point,
     cell_width: f32,
     cell_height: f32,
-    next_cell_origin_x: f32,
+    next_cell_anchor_x: f32,
 }
 
 impl GuideOverlayState {
@@ -679,18 +683,22 @@ impl GuideOverlayState {
             horizontal_origin: Point::new(min.x, min.y),
             cell_width,
             cell_height,
-            next_cell_origin_x: max.x,
+            next_cell_anchor_x: max.x,
         }
     }
 
-    fn build_geometry(&self, slope_degrees: f32) -> GuideGeometry {
+    fn build_geometry(&self, slope_degrees: f32, gap_ratio: f32) -> GuideGeometry {
         build_guide_geometry(
             self.horizontal_origin,
             GuidePlacement {
                 cell_width: self.cell_width,
                 cell_height: self.cell_height,
                 slope_degrees,
-                next_cell_origin_x: Some(self.next_cell_origin_x),
+                next_cell_origin_x: Some(guide_next_cell_origin_x(
+                    self.next_cell_anchor_x,
+                    self.cell_width,
+                    gap_ratio,
+                )),
             },
         )
     }
@@ -698,11 +706,12 @@ impl GuideOverlayState {
     fn advance_to_next_from_bounds(
         &mut self,
         bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
+        gap_ratio: f32,
     ) {
         if let Some((_, max)) = bounds {
-            self.next_cell_origin_x = max.x;
+            self.next_cell_anchor_x = max.x;
         } else {
-            self.next_cell_origin_x += self.cell_width;
+            self.next_cell_anchor_x += guide_fallback_advance_step(self.cell_width, gap_ratio);
         }
     }
 }
@@ -894,6 +903,7 @@ struct DesktopApp {
     guide_modifier_used_for_stroke: bool,
     guide_modifier_tap_suppressed: bool,
     recovery_prompt_open: bool,
+    template_details_open: bool,
     preferences_open: bool,
     cache_manager_open: bool,
     runtime_diagnostics_open: bool,
@@ -1008,6 +1018,7 @@ impl DesktopApp {
             guide_modifier_used_for_stroke: false,
             guide_modifier_tap_suppressed: false,
             recovery_prompt_open,
+            template_details_open: false,
             preferences_open: false,
             cache_manager_open: false,
             runtime_diagnostics_open: false,
@@ -1667,6 +1678,7 @@ impl DesktopApp {
         {
             editor_state.template.apply_to(&mut self.template);
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+            self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
             self.style_binding = editor_state.style_binding;
             self.entrance_binding = editor_state.entrance_binding;
         }
@@ -1721,6 +1733,7 @@ impl DesktopApp {
         {
             editor_state.template.apply_to(&mut self.template);
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+            self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
             self.style_binding = editor_state.style_binding;
             self.entrance_binding = editor_state.entrance_binding;
         }
@@ -1917,9 +1930,12 @@ impl DesktopApp {
     }
 
     fn refresh_guide_geometry(&mut self) {
-        self.guide_geometry = self
-            .guide_state
-            .map(|guide_state| guide_state.build_geometry(self.settings.guide_slope_degrees));
+        self.guide_geometry = self.guide_state.map(|guide_state| {
+            guide_state.build_geometry(
+                self.settings.guide_slope_degrees,
+                self.settings.guide_next_gap_ratio,
+            )
+        });
     }
 
     fn capture_guide_from_object(&mut self, object_id: &pauseink_domain::GlyphObjectId) {
@@ -1947,7 +1963,10 @@ impl DesktopApp {
         let Some(guide_state) = &mut self.guide_state else {
             return;
         };
-        guide_state.advance_to_next_from_bounds(self.pending_guide_character_bounds.take());
+        guide_state.advance_to_next_from_bounds(
+            self.pending_guide_character_bounds.take(),
+            self.settings.guide_next_gap_ratio,
+        );
         self.refresh_guide_geometry();
         self.push_log("ガイド縦線を次文字位置へ進めました。");
     }
@@ -2011,6 +2030,78 @@ impl DesktopApp {
                 .min(slots.len().saturating_sub(1))
         };
         self.template.placed_slots = Some(slots);
+    }
+
+    fn apply_template_settings_change(&mut self, ctx: &egui::Context) {
+        self.mark_project_ui_dirty();
+        self.refresh_placed_template_slots(ctx);
+    }
+
+    fn draw_template_details_window(&mut self, ctx: &egui::Context) {
+        if !self.template_details_open {
+            return;
+        }
+
+        let mut open = self.template_details_open;
+        egui::Window::new("テンプレート詳細")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.label("変更はその場で preview と配置済み slot に反映されます。");
+                let mut changed = false;
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.template.settings.line_height, 0.6..=2.2)
+                            .text("行間"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.template.settings.kana_scale, 0.4..=1.6)
+                            .text("かな倍率"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.template.settings.latin_scale, 0.4..=1.6)
+                            .text("英字倍率"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.template.settings.punctuation_scale, 0.4..=1.6)
+                            .text("句読点倍率"),
+                    )
+                    .changed();
+
+                let mut underlay_mode = self.template.settings.underlay_mode;
+                egui::ComboBox::from_label("下敷き表示")
+                    .selected_text(underlay_mode_label(underlay_mode))
+                    .show_ui(ui, |ui| {
+                        for candidate in [
+                            UnderlayMode::Outline,
+                            UnderlayMode::FaintFill,
+                            UnderlayMode::SlotBoxOnly,
+                            UnderlayMode::OutlineAndSlotBox,
+                        ] {
+                            ui.selectable_value(
+                                &mut underlay_mode,
+                                candidate,
+                                underlay_mode_label(candidate),
+                            );
+                        }
+                    });
+                if underlay_mode != self.template.settings.underlay_mode {
+                    self.template.settings.underlay_mode = underlay_mode;
+                    changed = true;
+                }
+
+                if changed {
+                    self.apply_template_settings_change(ctx);
+                }
+            });
+        self.template_details_open = open;
     }
 
     fn current_style_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
@@ -3109,6 +3200,16 @@ impl DesktopApp {
                     self.mark_project_ui_dirty();
                     self.refresh_guide_geometry();
                 }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.settings.guide_next_gap_ratio, -0.5..=1.5)
+                            .text("次文字字間"),
+                    )
+                    .changed()
+                {
+                    self.mark_project_ui_dirty();
+                    self.refresh_guide_geometry();
+                }
                 ui.checkbox(
                     &mut self.settings.gpu_preview_enabled,
                     "プレビュー GPU を有効",
@@ -3641,8 +3742,10 @@ impl DesktopApp {
             )
             .changed();
         if template_layout_changed {
-            self.mark_project_ui_dirty();
-            self.refresh_placed_template_slots(ui.ctx());
+            self.apply_template_settings_change(ui.ctx());
+        }
+        if ui.button("テンプレート詳細").clicked() {
+            self.template_details_open = true;
         }
         ui.horizontal(|ui| {
             if ui.button("テンプレート配置").clicked() {
@@ -4486,6 +4589,16 @@ impl DesktopApp {
             self.mark_project_ui_dirty();
             self.refresh_guide_geometry();
         }
+        if ui
+            .add(
+                egui::Slider::new(&mut self.settings.guide_next_gap_ratio, -0.5..=1.5)
+                    .text("次文字字間"),
+            )
+            .changed()
+        {
+            self.mark_project_ui_dirty();
+            self.refresh_guide_geometry();
+        }
         if ui.button("ガイド解除").clicked() {
             self.clear_guide_state();
         }
@@ -4711,6 +4824,7 @@ impl eframe::App for DesktopApp {
         });
 
         self.draw_preferences_window(&ctx);
+        self.draw_template_details_window(&ctx);
         self.draw_cache_manager_window(&ctx);
         self.draw_runtime_diagnostics_window(&ctx);
 
@@ -5302,6 +5416,15 @@ fn underlay_mode_key(mode: UnderlayMode) -> &'static str {
     }
 }
 
+fn underlay_mode_label(mode: UnderlayMode) -> &'static str {
+    match mode {
+        UnderlayMode::Outline => "アウトライン",
+        UnderlayMode::FaintFill => "淡色塗り",
+        UnderlayMode::SlotBoxOnly => "枠のみ",
+        UnderlayMode::OutlineAndSlotBox => "アウトライン + 枠",
+    }
+}
+
 fn parse_underlay_mode(raw: &str) -> UnderlayMode {
     match raw {
         "faint_fill" => UnderlayMode::FaintFill,
@@ -5573,9 +5696,14 @@ mod tests {
         app.template.font_family = "BIZ UDPGothic".to_owned();
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
+        app.template.settings.line_height = 1.45;
+        app.template.settings.kana_scale = 1.15;
+        app.template.settings.latin_scale = 0.9;
+        app.template.settings.punctuation_scale = 0.75;
         app.template.settings.slope_degrees = 9.5;
         app.template.settings.underlay_mode = UnderlayMode::FaintFill;
         app.settings.guide_slope_degrees = -6.0;
+        app.settings.guide_next_gap_ratio = 0.25;
 
         app.save_project(path.clone());
 
@@ -5612,12 +5740,17 @@ mod tests {
         assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
+        assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
+        assert!((reopened.template.settings.kana_scale - 1.15).abs() < 0.01);
+        assert!((reopened.template.settings.latin_scale - 0.9).abs() < 0.01);
+        assert!((reopened.template.settings.punctuation_scale - 0.75).abs() < 0.01);
         assert!((reopened.template.settings.slope_degrees - 9.5).abs() < 0.01);
         assert_eq!(
             reopened.template.settings.underlay_mode,
             UnderlayMode::FaintFill
         );
         assert!((reopened.settings.guide_slope_degrees - -6.0).abs() < 0.01);
+        assert!((reopened.settings.guide_next_gap_ratio - 0.25).abs() < 0.01);
     }
 
     #[test]
@@ -5648,9 +5781,14 @@ mod tests {
         app.template.font_family = "BIZ UDPGothic".to_owned();
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
+        app.template.settings.line_height = 1.45;
+        app.template.settings.kana_scale = 1.15;
+        app.template.settings.latin_scale = 0.9;
+        app.template.settings.punctuation_scale = 0.75;
         app.template.settings.slope_degrees = 9.5;
         app.template.settings.underlay_mode = UnderlayMode::FaintFill;
         app.settings.guide_slope_degrees = -6.0;
+        app.settings.guide_next_gap_ratio = 0.25;
 
         app.save_settings();
 
@@ -5690,12 +5828,17 @@ mod tests {
         assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
+        assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
+        assert!((reopened.template.settings.kana_scale - 1.15).abs() < 0.01);
+        assert!((reopened.template.settings.latin_scale - 0.9).abs() < 0.01);
+        assert!((reopened.template.settings.punctuation_scale - 0.75).abs() < 0.01);
         assert!((reopened.template.settings.slope_degrees - 9.5).abs() < 0.01);
         assert_eq!(
             reopened.template.settings.underlay_mode,
             UnderlayMode::FaintFill
         );
         assert!((reopened.settings.guide_slope_degrees - -6.0).abs() < 0.01);
+        assert!((reopened.settings.guide_next_gap_ratio - 0.25).abs() < 0.01);
     }
 
     #[test]
@@ -6264,12 +6407,15 @@ mod tests {
         );
         let original_origin = state.horizontal_origin;
 
-        state.advance_to_next_from_bounds(Some((
-            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
-            pauseink_domain::Point2 { x: 250.0, y: 282.0 },
-        )));
+        state.advance_to_next_from_bounds(
+            Some((
+                pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+                pauseink_domain::Point2 { x: 250.0, y: 282.0 },
+            )),
+            0.0,
+        );
 
-        let geometry = state.build_geometry(12.0);
+        let geometry = state.build_geometry(12.0, 0.0);
         let first_vertical = geometry
             .vertical_lines
             .iter()
@@ -6291,14 +6437,17 @@ mod tests {
         let original_width = state.cell_width;
 
         assert!((original_width - 40.0).abs() < 0.01);
-        assert!((state.next_cell_origin_x - 130.0).abs() < 0.01);
+        assert!((state.next_cell_anchor_x - 130.0).abs() < 0.01);
 
-        state.advance_to_next_from_bounds(Some((
-            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
-            pauseink_domain::Point2 { x: 245.0, y: 282.0 },
-        )));
+        state.advance_to_next_from_bounds(
+            Some((
+                pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+                pauseink_domain::Point2 { x: 245.0, y: 282.0 },
+            )),
+            0.0,
+        );
 
-        let geometry = state.build_geometry(0.0);
+        let geometry = state.build_geometry(0.0, 0.0);
         let main_verticals = geometry
             .vertical_lines
             .iter()
@@ -6307,7 +6456,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!((state.cell_width - original_width).abs() < 0.01);
-        assert!((state.next_cell_origin_x - 245.0).abs() < 0.01);
+        assert!((state.next_cell_anchor_x - 245.0).abs() < 0.01);
         assert!((main_verticals[0] - 245.0).abs() < 0.01);
         assert!((main_verticals[2] - (245.0 + original_width)).abs() < 0.01);
     }
@@ -6320,12 +6469,15 @@ mod tests {
         );
         let original_width = state.cell_width;
 
-        state.advance_to_next_from_bounds(Some((
-            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
-            pauseink_domain::Point2 { x: 250.0, y: 282.0 },
-        )));
+        state.advance_to_next_from_bounds(
+            Some((
+                pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+                pauseink_domain::Point2 { x: 250.0, y: 282.0 },
+            )),
+            0.0,
+        );
 
-        let geometry = state.build_geometry(0.0);
+        let geometry = state.build_geometry(0.0, 0.0);
         let main_verticals = geometry
             .vertical_lines
             .iter()
@@ -6335,6 +6487,56 @@ mod tests {
         assert!((state.cell_width - original_width).abs() < 0.01);
         assert!((main_verticals[0].start.x - 250.0).abs() < 0.01);
         assert!((main_verticals[2].start.x - 310.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_overlay_state_applies_gap_ratio_without_changing_vertical_set_width() {
+        let state = GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        );
+
+        let geometry = state.build_geometry(0.0, 0.25);
+        let main_verticals = geometry
+            .vertical_lines
+            .iter()
+            .filter(|line| line.kind == GuideLineKind::Main)
+            .map(|line| line.start.x)
+            .collect::<Vec<_>>();
+
+        assert!((main_verticals[0] - 175.0).abs() < 0.01);
+        assert!((main_verticals[2] - 235.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_overlay_state_negative_gap_ratio_still_advances_forward_without_bounds() {
+        let mut state = GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 140.0, y: 280.0 },
+        );
+
+        let before = state
+            .build_geometry(0.0, -0.5)
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical before")
+            .start
+            .x;
+
+        state.advance_to_next_from_bounds(None, -0.5);
+
+        let after = state
+            .build_geometry(0.0, -0.5)
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical after")
+            .start
+            .x;
+
+        assert!(after > before);
+        assert!((after - before - 20.0).abs() < 0.01);
     }
 
     #[test]
@@ -6538,6 +6740,38 @@ mod tests {
 
         assert!(after[0].height > before[0].height);
         assert!(after[1].origin.x > before[1].origin.x);
+    }
+
+    #[test]
+    fn template_advanced_settings_change_reflows_placed_slots_immediately() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let origin = Point::new(24.0, 36.0);
+        app.template.text = "あ\nA".to_owned();
+        app.template.placed_origin = Some(origin);
+        app.refresh_placed_template_slots(&ctx);
+
+        let before = app
+            .template
+            .placed_slots
+            .clone()
+            .expect("slots should exist after placement");
+
+        app.template.settings.kana_scale = 1.35;
+        app.template.settings.line_height = 1.6;
+        app.apply_template_settings_change(&ctx);
+
+        let after = app
+            .template
+            .placed_slots
+            .clone()
+            .expect("slots should still exist");
+
+        assert!(after[0].height > before[0].height);
+        assert!(after[1].origin.y > before[1].origin.y);
     }
 
     #[test]
@@ -7086,7 +7320,7 @@ mod tests {
         ));
         app.guide_geometry = app
             .guide_state
-            .map(|guide_state| guide_state.build_geometry(0.0));
+            .map(|guide_state| guide_state.build_geometry(0.0, 0.0));
         app.last_committed_object_bounds = Some((
             pauseink_domain::Point2 { x: 100.0, y: 200.0 },
             pauseink_domain::Point2 { x: 160.0, y: 280.0 },

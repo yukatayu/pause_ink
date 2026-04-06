@@ -228,6 +228,9 @@ UI 回帰メモ:
 
 - 左右ペインは `show_side_panel_scroll_body()` で `固定ヘッダ + ScrollArea::vertical()` に分け、outer panel の ID と `resizable(true)` は維持して幅変更を壊さない
 - left は `draw_left_panel_scroll_body()`、right は `draw_right_panel_scroll_body()` へ本文を逃がし、低い画面でも export や font controls へ到達できるようにしている
+- template advanced controls は `draw_template_details_window()` の別 window に置き、`apply_template_settings_change()` で placed slot / preview を即時更新する
+- `guide_next_gap_ratio` は `Settings` と `ProjectEditorUiState` の両方へ保存し、guide slope と同じ reopen / relaunch 経路で復元する
+- guide の次文字位置は `GuideOverlayState::next_cell_anchor_x` を基準に持ち、表示位置は `guide_next_cell_origin_x(anchor, cell_width, gap_ratio)` で解決する。縦線セット幅は変えず、bounds 無し advance だけ `guide_fallback_advance_step()` で正方向へ clamp する
 - 下部パネルは `bottom_panel_content_width` を state に持ち、`ScrollArea::both().auto_shrink([false, false])` で固定高さのまま内容だけを scroll させる
 - object list や log の件数増加で bottom panel 自体の高さを揺らさない
 - export 実行中は `PendingExportJob` が progress fraction と stage label を保持し、右ペインと `書き出しキュー` の両方で progress bar を描く

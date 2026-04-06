@@ -157,6 +157,14 @@ pub fn build_guide_geometry(origin: Point, placement: GuidePlacement) -> GuideGe
     }
 }
 
+pub fn guide_next_cell_origin_x(next_cell_anchor_x: f32, cell_width: f32, gap_ratio: f32) -> f32 {
+    next_cell_anchor_x + cell_width * gap_ratio
+}
+
+pub fn guide_fallback_advance_step(cell_width: f32, gap_ratio: f32) -> f32 {
+    (cell_width * (1.0 + gap_ratio)).max((cell_width * 0.1).max(1.0))
+}
+
 pub fn template_grapheme_scale(grapheme: &str, settings: &TemplateSettings) -> f32 {
     let mut chars = grapheme.chars();
     let Some(first) = chars.next() else {
@@ -305,5 +313,17 @@ mod tests {
         assert!((first_vertical.start.x - 260.0).abs() < 0.01);
         assert!((top_horizontal.start.x - 100.0).abs() < 0.01);
         assert!((top_horizontal.start.y - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_gap_offset_uses_cell_width_ratio() {
+        assert!((guide_next_cell_origin_x(160.0, 60.0, 0.25) - 175.0).abs() < 0.01);
+        assert!((guide_next_cell_origin_x(160.0, 60.0, -0.5) - 130.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn guide_fallback_advance_step_stays_positive_even_for_negative_gap() {
+        assert!((guide_fallback_advance_step(40.0, -0.5) - 20.0).abs() < 0.01);
+        assert!(guide_fallback_advance_step(40.0, -2.0) > 0.0);
     }
 }
