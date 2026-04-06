@@ -1,704 +1,662 @@
-# 未実装要素タスク計画
+# v1.0 残タスク実装計画
 
-この文書は、2026-04-06 時点の PauseInk repository に残っている **未実装要素 / 未接続要素 / productization gap** を、あとから task 番号指定だけで着手できる粒度まで落とした実行計画です。
+> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` を推奨。各タスクは task ID 単位で着手し、task 内の設計・実装・検証・docs 更新・commit/push まで完了させること。
 
-実装時は `AGENTS.md` の優先順位を守り、この文書はその下位計画として使います。  
-将来 user が「`V1-03` を実装してください」のように指定した場合、本書の該当 task をそのまま実装起点にしてください。
+**Goal:** 現在の PauseInk 実装に残っている v1.0 未接続要素を、仕様準拠の順序で実装完了できる形に分解し、task ID 指定だけで最後まで進められる実行計画へ落とし込む。
 
----
+**Architecture:** 既存の crate 境界は維持し、`domain` はデータモデル、`renderer` は可視化評価、`presets_core` は宣言的 catalog、`app` は editor state と GUI だけを持つ。残タスクは「preset/clear/effect の意味論」「selection/outline の編集 UI」「portable sidecar packaging / release / validation」の 3 系統へ分け、依存関係が薄いものから順に閉じる。
 
-## 1. この計画の使い方
-
-- `V1-*`
-  v1.0 の spec 上は残っているが、現 repository では未完了の task。
-- `PKG-*`
-  productization / release / cross-platform validation 上の残 task。
-- `FUT-*`
-  `.docs/12_future_work.md` で明示的に future work とされている task。v1.0 の mainline 完了条件には含めない。
-
-各 task には次を必ず入れています。
-
-- 何が未実装か
-- どこが根拠か
-- どの crate / file を触るか
-- 先に終わっているべき依存 task
-- acceptance criteria
-- 必須 test / validation
-
-共通の実行ルール:
-
-1. 実装前に `progress.md` の即時マイルストーンを task 番号で更新する。
-2. `docs/implementation_report_v1.0.0.md` に、その task に入る理由、採用設計、実行コマンド、結果を書く。
-3. UI や保存仕様が変わる task では `README.md`、`manual/user_guide.md`、`manual/developer_guide.md` を同期する。
-4. commit は日本語で切り、`git -c commit.gpgsign=false commit ...` を使う。
-5. commit 後は `origin/prototype` へ push する。
+**Tech Stack:** Rust workspace, `eframe/egui`, JSON5 project/settings, FFmpeg provider abstraction, GitHub Actions Release
 
 ---
 
-## 2. 優先順位つき一覧
+## 0. この計画の使い方
 
-| ID | 優先度 | 種別 | 概要 | 依存 |
-|---|---|---|---|---|
-| `V1-01` | P0 | renderer / UI | reveal-head effect を renderer / preset / inspector まで接続する | なし |
-| `V1-02` | P0 | renderer / domain | post-action chain を最小安全解釈で実装する | `V1-01` 推奨 |
-| `V1-03` | P0 | preset / clear | clear preset を schema / UI / save/load / clear insertion に接続する | なし |
-| `V1-04` | P0 | preset / resolver | combo preset を schema / UI / resolver に接続する | `V1-01`, `V1-02`, `V1-03` |
-| `V1-05` | P1 | editor state | selection / multi-select の state model と hit-test を入れる | なし |
-| `V1-06` | P1 | panel UI | object outline panel を tree / current / batch edit の土台まで仕上げる | `V1-05` |
-| `V1-07` | P1 | commands / UI | group / ungroup / bulk style-edit を UI まで接続する | `V1-05`, `V1-06` |
-| `V1-08` | P1 | commands / UI | z-order 並べ替え UI と reorder action を接続する | `V1-05`, `V1-06` |
-| `V1-09` | P1 | editor UX | visibility / lock / solo / auto-follow-current を editor-only state として入れる | `V1-05`, `V1-06` |
-| `PKG-01` | P0 | release | portable FFmpeg sidecar bundling / provenance / notices を release packaging に入れる | なし |
-| `PKG-02` | P0 | validation | Windows / macOS / Linux の build / runtime / export 実検証を揃える | `PKG-01` 推奨 |
-| `PKG-03` | P2 | maintenance | `egui` deprecation cleanup と GUI smoke 導線を整える | なし |
-| `FUT-01` | P3 | future | partial clear | なし |
-| `FUT-02` | P3 | future | real pressure support | なし |
-| `FUT-03` | P3 | future | pseudo-pressure / auto taper | `FUT-02` 非依存 |
-| `FUT-04` | P3 | future | proxy media | なし |
-| `FUT-05` | P3 | future | GPU export compositor | なし |
-| `FUT-06` | P3 | future | codec-pack helper tool | `PKG-01` 推奨 |
-| `FUT-07` | P3 | future | effect scripting | なし |
+- この文書の task ID は実行順を兼ねます。原則として前の依存 task を終えてから次へ進めます。
+- 利用者が `V1-03 を実装` や `PKG-01 を実装` のように指定した場合、その task の `スコープ`, `設計`, `変更ファイル`, `テスト`, `完了条件` を満たすまで止めない前提です。
+- すべての task で共通して守ること:
+  - `progress.md` を開始時 / 完了時に更新する
+  - `docs/implementation_report_v1.0.0.md` に判断・コマンド・結果を追記する
+  - テストを先に足すか、最低でも red/green の形で回帰を固定する
+  - commit は `git -c commit.gpgsign=false commit ...` を使い、日本語メッセージにする
+  - commit 後は都度 `origin/prototype` へ push する
 
-推奨の実装順:
+## 1. 範囲の切り分け
 
-1. `V1-01` → `V1-02` → `V1-03` → `V1-04`
-2. `V1-05` → `V1-06` → `V1-07` / `V1-08` / `V1-09`
-3. `PKG-01` → `PKG-02`
-4. `PKG-03`
-5. `FUT-*` は v1.0 mainline 完了後
+### 1.1 この計画に含めるもの
 
----
+以下は v1.0 仕様に対して未接続または最小実装のまま残っているため、この計画で扱います。
 
-## 3. 現状の根拠まとめ
+1. preset 境界の正規化と field-level reset / inherit
+2. reveal-head effect
+3. post-action chain
+4. clear effect の実装完了と clear / combo preset UI
+5. selection / multi-select / group / ungroup / z-order の編集導線
+6. object outline / page events panel の強化
+7. template advanced controls と slot fit
+8. portable FFmpeg sidecar packaging / provenance / notices
+9. GitHub Release への sidecar 統合
+10. Windows / macOS / Linux の最終検証
 
-### 3.1 reveal-head / post-action / clear-combo preset
+### 1.2 この計画に含めないもの
 
-- spec:
-  - `.docs/02_final_spec_v1.0.0.md`
-  - reveal-head effect: 5.3
-  - post-action: 5.4
-  - clear / combo preset: 6.1
-- 現状コード:
-  - `crates/domain/src/annotations.rs:323`
-    `RevealHeadEffect` 型はある
-  - `crates/domain/src/annotations.rs:349`
-    `EntranceBehavior.head_effect` はある
-  - `crates/domain/src/annotations.rs:409`
-    `PostAction` 型はある
-  - `crates/domain/src/annotations.rs:185`
-    `PresetBindings.clear` / `combo` はある
-  - `crates/app/src/main.rs:3550`
-    inspector は `EntranceKind` / `duration_mode` / `duration` / `speed_scalar` まで
-  - `crates/renderer/src/lib.rs:287`
-    renderer は `EntranceKind` と duration 系だけを消費
-  - `manual/user_guide.md:202`
-    reveal-head / post-action / clear-combo preset UI は未実装と明記
+以下は `.docs/12_future_work.md` に従い future work として維持し、ここでは実装対象にしません。
 
-### 3.2 selection / outline / group / z-order
+- `FUT-01`: partial clear
+- `FUT-02`: pen pressure
+- `FUT-03`: auto taper / pseudo-pressure の高度化
+- `FUT-04`: proxy media
+- `FUT-05`: GPU export compositor
+- `FUT-06`: optional codec-pack 取得ツール
+- `FUT-07`: arbitrary effect scripting
 
-- spec:
-  - `.docs/02_final_spec_v1.0.0.md:9`
-    object 選択、複数選択、group/ungroup、z-order 並べ替え、一括編集
-  - `.docs/02_final_spec_v1.0.0.md:10.1`
-    object outline tree, visibility / lock / solo, auto-follow-current
-- 現状コード:
-  - `crates/domain/src/project_commands.rs:103`
-    z-index command はある
-  - `crates/app/src/main.rs:2921`
-    bottom tab の outline は flat text list のみ
-  - `crates/app/src/lib.rs:345`
-    shift-group append はあるが、group / ungroup UI はない
-  - `docs/implementation_report_v1.0.0.md:1039`
-    selection / multi-select / group / ungroup / z-order UI はまだ最小と記録済み
+### 1.3 Future work 参照 ID
 
-### 3.3 sidecar packaging / release / validation
+| Task ID | 項目 | 今回含めない理由 |
+|---|---|---|
+| FUT-01 | partial clear | `AGENTS.md` と `.docs/02_final_spec_v1.0.0.md` が v1.0 非対象として固定 |
+| FUT-02 | pen pressure | v1.0 UX の前提にしないと明記済み |
+| FUT-03 | auto taper / pseudo-pressure | 将来 hook は残すが、本体機能は future work |
+| FUT-04 | proxy media | media 層を塞がない設計だけ確保し、本実装は v1.0 外 |
+| FUT-05 | GPU export compositor | correctness 優先で CPU-safe baseline を維持するため |
+| FUT-06 | optional codec-pack 取得ツール | provenance / compliance が mainline と別問題のため |
+| FUT-07 | effect scripting | v1.0 は built-in effect + declarative preset に限定 |
 
-- spec:
-  - `AGENTS.md:11`
-    v1.0 mainline は portable sidecar runtime 前提
-  - `.docs/07_media_runtime_and_ffmpeg.md`
-    provenance / compliance と packaging を明記する前提
-- 現状コード / docs:
-  - `crates/media/src/lib.rs:15`
-    `RuntimeOrigin`, `manifest_path`, `license_summary` はある
-  - `.github/workflows/release.yml`
-    app binary archive だけを GitHub Release に載せる
-  - `manual/developer_guide.md:222`
-    sidecar 同梱は別タスク
-  - `docs/implementation_report_v1.0.0.md:1034-1037`
-    sidecar bundling 未完、Windows/macOS runtime 実検証未完
+## 2. 依存関係マップ
 
----
+| Task ID | タイトル | 依存 | 目的の要点 |
+|---|---|---|---|
+| V1-01 | preset 境界の正規化 | なし | style / entrance / clear / combo を分け、reset / inherit を扱える editor state を入れる |
+| V1-02 | reveal-head effect | V1-01 | head effect を renderer / preview / export / preset に接続する |
+| V1-03 | post-action chain | V1-01 | built-in post-action を renderer / UI / project に接続する |
+| V1-04 | clear effect / clear preset / combo preset | V1-01 | clear kind / ordering / granularity を UI と renderer で完結させる |
+| V1-05 | selection / group / z-order foundation | なし | multi-select, group, ungroup, z-order の command と UI を入れる |
+| V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
+| V1-07 | template advanced controls / slot fit | なし | line height / script scale / underlay mode / fit option を UI に露出する |
+| PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
+| PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 3 OS build + release asset に sidecar / notices を載せる |
+| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
 
-## 4. v1.0 残 task
+## 3. 実装対象の現状スナップショット
 
-### `V1-01` reveal-head effect を renderer / preset / inspector まで接続する
+- `reveal-head effect` は `crates/domain/src/annotations.rs` に型だけあるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
+- `post-action chain` も domain に型だけあり、app / renderer / preset へ未接続。
+- clear event は domain と renderer に最小 primitive があるが、app 側は `全消去 -> Instant clear 挿入` のみで、`kind / duration / granularity / ordering` の編集 UI と preset 導線が無い。
+- preset は現状 `style preset` に entrance まで同居しており、spec の `base style / entrance / clear / combo` 分離と `inherit / reset` UI がまだ無い。
+- selection は `selected_object_id: Option<GlyphObjectId>` の単一選択だけで、multi-select / group / ungroup / z-order 操作が未整備。
+- `オブジェクト一覧` は flat text list、`ページイベント` は flat list で、spec の tree / batch edit / alive highlight / auto-follow に未達。
+- template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足し、`slot fit` は未実装。
+- FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 
-- 優先度:
-  - `P0`
-- 目的:
-  - `EntranceBehavior.head_effect` を dead field のまま残さず、path-based entrance に対して見える効果として実装する。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:204-219`
-  - `crates/domain/src/annotations.rs:323`
-  - `crates/renderer/src/lib.rs:287`
-  - `manual/user_guide.md:202`
-- 触る file:
-  - `crates/domain/src/annotations.rs`
-  - `crates/presets_core/src/lib.rs`
-  - `crates/renderer/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `presets/style_presets/*.json5`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - v1.0 の安全解釈として、head effect は `PathTrace` と `Wipe` でのみ有効にする。
-  - `Instant` と `Dissolve` は head を持たない。UI では選べても renderer では no-op にせず、UI 側で無効化して誤解を防ぐ。
-  - color source は `stroke color`、`preset accent`、`custom` をサポートする。
-  - `comet tail` は visible progress の trailing window を使って alpha 減衰させる。geometry 自体は path を変形せず、renderer overlay 上の付加効果として扱う。
-  - base style の `glow` と混同しない。head effect は entrance の一時効果であり、object 完了後に残さない。
-- 実装ステップ:
-  1. `presets_core` に `head_effect` の file schema を追加する。
-  2. `app` の `SavedEntrancePresetState` と project 保存経路に `head_effect` を含める。
-  3. inspector に head kind / color source / size / blur / tail / persistence / blend mode の UI を追加する。
-  4. renderer に current reveal progress 上の head position 算出 helper を追加する。
-  5. `PathTrace` / `Wipe` の visible path 先端へ head effect を描く。
-  6. preview と export の双方で同一挙動になるよう `RenderRequest` ベースで統一する。
-- 依存:
-  - なし
-- acceptance criteria:
-  - `PathTrace` object で、preview と export の両方に head effect が見える。
-  - head effect は reveal 完了後に残らない。
-  - `Instant` / `Dissolve` では head 設定 UI が disable されるか、少なくとも効果が適用されないことが明示される。
-  - style preset 保存 / project 保存 / 再起動復元で head 設定が戻る。
-- 必須 test:
-  - renderer unit:
-    - `path_trace_head_effect_tracks_reveal_front`
-    - `head_effect_disappears_after_reveal_completion`
-    - `dissolve_ignores_head_effect`
-  - app unit:
-    - `head_effect_persists_through_settings_restart`
-    - `style_preset_roundtrip_keeps_head_effect`
+## 4. Task 詳細
 
-### `V1-02` post-action chain を最小安全解釈で実装する
+### V1-01: preset 境界の正規化と field-level reset / inherit
 
-- 優先度:
-  - `P0`
-- 目的:
-  - `GlyphObject.post_actions` / `Group.post_actions` を renderer が消費し、reveal 後または途中の built-in action を実際の見た目に反映する。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:221-235`
-  - `crates/domain/src/annotations.rs:409`
-  - `docs/implementation_report_v1.0.0.md:1041`
-- 触る file:
-  - `crates/domain/src/annotations.rs`
-  - `crates/presets_core/src/lib.rs`
-  - `crates/renderer/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `crates/app/src/lib.rs`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - v1.0 の最小安全実装は `NoOp`、`StyleChange`、`InterpolatedStyleChange`、`Pulse`、`Blink` の順に実装する。
-  - geometry や stroke path を後から書き換えない。post-action は style / alpha / thickness など renderer が合成できる範囲に限定する。
-  - `timing_scope` は `GlyphObject` と `Group` の 2 段階から開始し、`Run` は group/object 経由で安全に畳み込む。`DuringReveal` は `PathTrace` / `Wipe` にのみ適用する。
-  - post-action evaluator は immutable project snapshot と `time` から `effective_style` を返す純関数で持つ。
-- 実装ステップ:
-  1. evaluator 層を renderer 内に追加し、現在時刻で有効な post-action window を計算する。
-  2. `StyleChange` と `InterpolatedStyleChange` を `StyleSnapshot` 上の overlay として反映する。
-  3. `Pulse` / `Blink` は opacity / glow / scale 相当の安全な見た目に落とす。
-  4. inspector に post-action editor を追加する。
-  5. style preset と project 保存経路に post-action を含めるか、少なくとも combo preset 経由で扱えるよう布石を入れる。
-- 依存:
-  - `V1-01` 推奨
-- acceptance criteria:
-  - reveal 完了後に style change が発生し、preview と export の結果が一致する。
-  - post-action は undo/redo と project save/load で壊れない。
-  - `DuringReveal` の action が `Instant` object に誤適用されない。
-- 必須 test:
-  - renderer unit:
-    - `style_change_applies_after_glyph_reveal_completion`
-    - `interpolated_style_change_blends_over_requested_duration`
-    - `pulse_and_blink_do_not_mutate_base_style_snapshot`
-  - app/project_io:
-    - `post_actions_roundtrip_through_project_save`
+**優先度:** P0
+**目的:** spec の preset category と reset semantics を実装可能な形へ整える。以後の effect / clear / combo 実装が後戻りしないよう、editor state と catalog 構造をここで固定する。
 
-### `V1-03` clear preset を schema / UI / clear insertion に接続する
+**現状の問題**
 
-- 優先度:
-  - `P0`
-- 目的:
-  - clear event を毎回 hard-code せず、declarative preset として選んで挿入できるようにする。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:239-265`
-  - `crates/domain/src/annotations.rs:185`
-  - `crates/app/src/lib.rs:510`
-  - `crates/app/src/main.rs:3085`
-- 触る file:
-  - `crates/domain/src/lib.rs`
-  - `crates/presets_core/src/lib.rs`
-  - `crates/app/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `presets/clear_presets/*.json5` 新設
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `README.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - v1.0 locked rule に従い、target granularity は `AllParallel` 固定を維持する。
-  - clear preset が変更できるのは `kind` と、必要なら `ordering` だけに絞る。
-  - UI は top bar の `全消去` を split button 相当にし、直近 preset を 1 click、他 preset は dropdown で選ぶ。
-  - project 側には clear event ごとの resolved value を保存し、preset file の live 値には依存しない。
-- 実装ステップ:
-  1. `presets_core` に clear preset schema と catalog loader を追加する。
-  2. built-in clear preset を少数用意する。`instant`, `wipe_out`, `dissolve_out`, `ordered`, `reverse_ordered`。
-  3. `AppSession::insert_clear_event` が `ClearPreset` を受け取れるようにする。
-  4. UI に clear preset 選択と current preset 表示を追加する。
-  5. save/load と restart restore を接続する。
-- 依存:
-  - なし
-- acceptance criteria:
-  - user が UI で clear preset を選んで挿入できる。
-  - clear event track と export に preset の見た目が反映される。
-  - project reopen 後も、既存 clear event の resolved 値は保たれる。
-- 必須 test:
-  - presets_core:
-    - `repository_clear_presets_load_from_json5_files`
-  - app:
-    - `insert_clear_uses_selected_clear_preset`
-    - `clear_preset_selection_persists_across_restart`
-  - renderer:
-    - 既存 clear tests に preset 経由ケースを追加
+- `crates/presets_core/src/lib.rs` の `BaseStylePreset` に entrance が混在しており、`style / entrance / clear / combo` が分離されていない。
+- editor UI は effective snapshot を直接編集しているため、「preset から継承」「override」「preset 値に戻す」の 3 状態を表現できない。
+- project 保存は resolved snapshot を持っているが、field-level binding state を持っていない。
 
-### `V1-04` combo preset を schema / UI / resolver に接続する
+**設計**
 
-- 優先度:
-  - `P0`
-- 目的:
-  - style + entrance + clear をまとめて再利用できる combo preset を入れ、宣言的 preset 設計を v1.0 仕様まで閉じる。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:239-265`
-  - `crates/domain/src/annotations.rs:185`
-  - `manual/user_guide.md:202`
-- 触る file:
-  - `crates/presets_core/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `crates/app/src/lib.rs`
-  - `presets/combo_presets/*.json5` 新設
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `README.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - combo preset 自体は snapshot を持たず、`style preset id`、`entrance preset id`、`clear preset id` の参照束ねと表示名だけを持つ。
-  - apply 時は各 preset を順に解決し、現在の active style / entrance / clear selection に適用する。
-  - project 保存は今までどおり resolved snapshot 優先とし、combo preset id は任意メタデータに留める。
-- 実装ステップ:
-  1. combo preset schema と catalog loader を追加する。
-  2. UI に combo preset dropdown と apply button を追加する。
-  3. apply 時の競合解決順を `combo -> style / entrance / clear resolved snapshot` に固定する。
-  4. user preset については v1.0 では read-only でもよいが、最低でも built-in combo を扱えるようにする。
-- 依存:
-  - `V1-01`, `V1-02`, `V1-03`
-- acceptance criteria:
-  - combo preset 1 回の適用で style / entrance / clear selection が切り替わる。
-  - project の見た目再現は resolved snapshot に依存し、preset file 編集で壊れない。
-  - developer が新しい combo preset を declarative file だけで追加できる。
-- 必須 test:
-  - presets_core:
-    - `repository_combo_presets_resolve_style_entrance_and_clear_refs`
-  - app:
-    - `combo_preset_application_updates_active_style_entrance_and_clear_selection`
+- `presets_core` に次の catalog を追加する。
+  - `StylePreset`
+  - `EntrancePreset`
+  - `ClearPreset`
+  - `ComboPreset`
+- `ComboPreset` は値そのものを重複保持せず、`style / entrance / clear` への参照束と optional override だけを持つ。
+- app 側には renderer/domain へ漏らさない editor 専用状態 `PresetBound<T>` を導入する。
+  - `BindingMode::Inherited`
+  - `BindingMode::Overridden`
+  - `effective_value()`
+  - `reset_to_preset()`
+- project save は引き続き resolved snapshot + optional preset ID を canonical に保存し、editor の binding mode は `project.settings.pauseink_editor_ui` 側へ持つ。
+- 既存の user style preset directory は維持しつつ、portable root 配下へ以下を追加する。
+  - `pauseink_data/config/style_presets/`
+  - `pauseink_data/config/entrance_presets/`
+  - `pauseink_data/config/clear_presets/`
+  - `pauseink_data/config/combo_presets/`
+- 既存 style preset に埋まっている entrance 値は lenient load で `legacy_style_preset.entrance -> entrance preset candidate` として救済し、normalized save は新 schema へ寄せる。
 
-### `V1-05` selection / multi-select の state model と hit-test を入れる
+**変更ファイル**
 
-- 優先度:
-  - `P1`
-- 目的:
-  - object 単位の選択、複数選択、現在の selection 表示を入れ、後続の outline/group/z-order task の基礎にする。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:306-314`
-  - `.docs/03_ui_window_model.md:102-109`
-  - `docs/implementation_report_v1.0.0.md:1039`
-- 触る file:
-  - `crates/app/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `crates/renderer/src/lib.rs` 必要なら selection overlay helper
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - selection state は editor-only。`HashSet<GlyphObjectId>` と `last_primary_selection` を app 側で持つ。
-  - canvas hit-test は derived path の expanded bounds → 必要なら path distance の 2 段階で行う。
-  - `Ctrl/Cmd` で toggle selection、plain click で単一 selection にする。
-  - 既定では stroke capture と selection を同時に有効にしない。mode conflict を避けるため、selection は object がある地点の click 優先、drag drawing は空白か template/guide 文脈時のみ開始する。
-- 実装ステップ:
-  1. selection state と helper を app session に追加する。
-  2. canvas click hit-test を追加する。
-  3. selected object の簡易枠表示を overlay に追加する。
-  4. inspector に「選択中 object 数」を出す。
-- 依存:
-  - なし
-- acceptance criteria:
-  - 単一 object を click で選択できる。
-  - modifier 付き click で複数選択できる。
-  - selection 変更が drawing の press 起点を誤って潰さない。
-- 必須 test:
-  - app:
-    - `canvas_click_selects_single_object`
-    - `modifier_click_toggles_multi_selection`
-    - `drawing_on_empty_canvas_still_starts_stroke`
+- Modify: `crates/presets_core/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/portable_fs/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
 
-### `V1-06` object outline panel を tree / current / batch edit の土台まで仕上げる
+**実装ステップ**
 
-- 優先度:
-  - `P1`
-- 目的:
-  - flat list の object tab を、spec どおり run / group / glyph object / stroke の tree に引き上げる。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:318-326`
-  - `crates/app/src/main.rs:2921`
-- 触る file:
-  - `crates/app/src/main.rs`
-  - `crates/app/src/lib.rs`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - run は page 内の reveal lane 単位ではなく、v1.0 では「page 内の created_at batch」表示でよい。
-  - group が無い object は ungrouped セクションに置く。
-  - tree state は editor-only で、展開/折りたたみ状態だけ project UI state に入れてよい。
-  - panel 自体は編集の single source ではなく、selection の別操作面とする。
-- 実装ステップ:
-  1. outline tree data builder を追加する。
-  2. `egui::CollapsingHeader` などで tree を表示する。
-  3. row click で selection を同期する。
-  4. 現在生存中 object を強調表示する。
-  5. row に `page / z / stroke count / created_at` を出す。
-- 依存:
-  - `V1-05`
-- acceptance criteria:
-  - panel が run / group / object / stroke の階層で見える。
-  - row click と canvas selection が同期する。
-  - 現在時刻で visible な object が分かる。
-- 必須 test:
-  - app:
-    - `outline_tree_groups_objects_by_page_and_group`
-    - `outline_selection_syncs_with_canvas_selection`
+1. `presets_core` に 4 category の schema と loader/save helper を追加する。
+2. legacy style preset の entrance 混在 schema を読み取る lenient migration path を入れる。
+3. app の active editor state を `effective snapshot + binding metadata` へ置き換える。
+4. inspector に `継承 / 上書き / リセット` の UI affordance を追加する。
+5. user preset CRUD を category ごとに分離する。
+6. project reopen / app relaunch / autosave recovery で binding state が復元されるようにする。
 
-### `V1-07` group / ungroup と bulk style-edit を UI まで接続する
+**必要テスト**
 
-- 優先度:
-  - `P1`
-- 目的:
-  - spec にある group / ungroup / 一括編集を、multi-select 後の操作として成立させる。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:306-314`
-  - `crates/domain/src/project_commands.rs:63`
-  - `crates/app/src/lib.rs:665`
-- 触る file:
-  - `crates/domain/src/project_commands.rs`
-  - `crates/app/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - group command は selected object IDs を `Group` にまとめる。
-  - ungroup は selected groups を解く。
-  - bulk style edit は selected object へ同一 `StyleSnapshot` / `EntranceBehavior` を一括適用する。
-  - project save は既存 schema の `groups` を使う。editor-only wrapper を増やさない。
-- 実装ステップ:
-  1. `CreateGroupCommand` / `DeleteGroupCommand` 相当を必要なら追加する。
-  2. UI に `グループ化` / `グループ解除` ボタンを置く。
-  3. selection 中は inspector の style 変更を selected set へ反映できるようにする。
-  4. undo/redo を grouped command で扱う。
-- 依存:
-  - `V1-05`, `V1-06`
-- acceptance criteria:
-  - 複数選択 object を group 化できる。
-  - ungroup で元の object 群へ戻る。
-  - inspector の色 / 太さ / effect / entrance が selected set へ一括反映される。
-- 必須 test:
-  - domain/app:
-    - `group_command_roundtrips_selected_objects`
-    - `ungroup_restores_original_members`
-    - `bulk_style_edit_updates_all_selected_objects`
+- `presets_core`: legacy style preset の entrance 混在を新 schema へ正規化できる
+- `presets_core`: combo preset が style/entrance/clear を正しく合成する
+- `app`: inherited field を reset すると preset 値へ戻る
+- `app`: overridden field は project save/reopen で保持される
+- `portable_fs`: 新しい preset directory 群が portable root 配下に作られる
 
-### `V1-08` z-order 並べ替え UI と reorder 操作を接続する
+**完了条件**
 
-- 優先度:
-  - `P1`
-- 目的:
-  - domain にある `z_index` command を UI から使えるようにし、capture/reveal order と分離した編集を成立させる。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:313-314`
-  - `.docs/04_architecture.md:126-133`
-  - `crates/domain/src/project_commands.rs:103`
-- 触る file:
-  - `crates/app/src/lib.rs`
-  - `crates/app/src/main.rs`
-  - `crates/domain/src/project_commands.rs`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - v1.0 では `最前面へ`、`前へ`、`後ろへ`、`最背面へ` の 4 操作で十分。
-  - reorder は selected set 全体に対して stable に適用する。
-  - renderer の draw order は引き続き `z_index` 優先、同値時に created/capture order fallback とする。
-- 実装ステップ:
-  1. selected set の reorder helper を追加する。
-  2. outline panel または inspector に z-order buttons を追加する。
-  3. redraw / export が新 z-order を反映することを確認する。
-- 依存:
-  - `V1-05`, `V1-06`
-- acceptance criteria:
-  - selected object を最前面 / 最背面へ送れる。
-  - capture/reveal order は変わらず、見た目だけが変わる。
-  - save/load 後も z-order が保たれる。
-- 必須 test:
-  - domain/app:
-    - `z_order_buttons_update_only_z_index`
-    - `save_and_reload_preserves_reordered_z_index`
+- style / entrance / clear / combo が別 catalog として読める
+- UI から field 単位に inherit / override / reset ができる
+- 既存 project と既存 style preset を壊さない
 
-### `V1-09` visibility / lock / solo / auto-follow-current を editor-only state として入れる
+### V1-02: reveal-head effect
 
-- 優先度:
-  - `P1`
-- 目的:
-  - object outline panel の実用性を上げる。
-- 根拠:
-  - `.docs/02_final_spec_v1.0.0.md:324-326`
-  - `crates/app/src/main.rs:2921`
-- 触る file:
-  - `crates/app/src/main.rs`
-  - `crates/app/src/lib.rs`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - `visibility` / `lock` / `solo` は v1.0 では editor-only workspace state として扱う。
-  - project export の truth を変える設定ではなく、preview/selection/filter にだけ効かせる。
-  - auto-follow-current は current time で visible な run/object を panel scroll で追うだけに留める。
-- 実装ステップ:
-  1. editor-only object flags を app state に追加する。
-  2. outline row に icon toggle を追加する。
-  3. canvas hit-test と renderer preview に hidden/locked/solo を反映する。
-  4. auto-follow-current toggle を bottom tab toolbar に追加する。
-- 依存:
-  - `V1-05`, `V1-06`
-- acceptance criteria:
-  - hidden object は preview で見えず、export は既定では影響を受けない。
-  - locked object は selection / edit 対象から除外される。
-  - solo は対象だけを preview 上で残す。
-  - auto-follow-current 有効時に current object が panel 内で追従する。
-- 必須 test:
-  - app:
-    - `hidden_objects_are_filtered_only_in_editor_preview`
-    - `locked_objects_cannot_be_selected`
-    - `solo_mode_filters_outline_and_canvas_consistently`
+**優先度:** P0
+**依存:** V1-01
 
----
+**目的:** spec 5.3 の `none / solid / glow / comet-tail` を preview/export で正しく見せ、preset と project 保存に接続する。
 
-## 5. packaging / validation task
+**現状の問題**
 
-### `PKG-01` portable FFmpeg sidecar bundling / provenance / notices を release packaging に入れる
+- domain には `RevealHeadEffect` があるが、renderer は path front に head を描いていない。
+- inspector に head effect editor が無い。
+- preset / project restore / export smoke が head effect を検証していない。
 
-- 優先度:
-  - `P0`
-- 目的:
-  - mainline spec の sidecar runtime 方針を、GitHub Release artifact まで閉じる。
-- 根拠:
-  - `AGENTS.md:11`
-  - `.docs/07_media_runtime_and_ffmpeg.md`
-  - `manual/developer_guide.md:222`
-  - `docs/implementation_report_v1.0.0.md:1034-1035`
-- 触る file:
-  - `.github/workflows/release.yml`
-  - `scripts/package_release_asset.py`
-  - `crates/media/src/lib.rs`
-  - `manual/developer_guide.md`
-  - `README.md`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-  - `pauseink_data/runtime/ffmpeg/<platform>/manifest.json` のサンプル設計文書
-- 設計方針:
-  - app binary archive と sidecar runtime archive を混ぜない。まずは同一 release の別 asset として配布し、`manifest.json` / notices / provenance を同梱する。
-  - GPL 系 codec を含む host runtime を mainline 同梱前提にしない。
-  - runtime の source URL、license summary、build summary、sha256 を manifest に含める。
-  - release workflow は platform ごとの runtime asset が揃った時だけ sidecar-inclusive release を publish する。
-- 実装ステップ:
-  1. release asset layout を決める。
-  2. sidecar manifest schema と notice file の最小要件を決める。
-  3. packager script に sidecar 同梱 / 別 asset 生成のモードを追加する。
-  4. release workflow に platform runtime ingest を追加する。
-  5. runtime diagnostics に manifest/provenance summary 表示を足す。
-- 依存:
-  - なし
-- acceptance criteria:
-  - GitHub Release に app asset と sidecar runtime asset が載る。
-  - sidecar asset には `ffmpeg` / `ffprobe` / `manifest.json` / license notice が入る。
-  - app は sidecar 配置後に `RuntimeOrigin::Sidecar` として認識する。
-- 必須 test / validation:
-  - media unit:
-    - `sidecar_runtime_manifest_exposes_provenance_fields`
-  - CI/local:
-    - packager で sidecar archive を作り、中身を list して検証する
+**設計**
 
-### `PKG-02` Windows / macOS / Linux の build / runtime / export 実検証を揃える
+- head effect は static style ではなく entrance 評価の副生成物として扱う。
+- renderer で timed entrance を評価したあと、`visible path front` と `progress` から head overlay を計算する。
+- `solid` は塗りつぶし円/楕円、`glow` は blur 付き halo、`comet_tail` は進行方向へ減衰する trail を描く。
+- `color_source` は `stroke_color`, `preset_accent`, `custom` の 3 系統で解決する。
+- `persistence` は reveal 完了後の残留時間として扱い、preview/export 双方で同じ式を使う。
 
-- 優先度:
-  - `P0`
-- 目的:
-  - 現在 Linux host 依存の検証を、3 OS 実証へ広げる。
-- 根拠:
-  - `docs/implementation_report_v1.0.0.md:1036-1037`
-  - `manual/user_guide.md:204`
-- 触る file:
-  - `docs/implementation_report_v1.0.0.md`
-  - `manual/user_guide.md`
-  - `manual/developer_guide.md`
-  - `README.md`
-  - 必要なら `.github/workflows/release.yml`
-- 設計方針:
-  - この task は主に verification task。必要なら最小の script 補助を足すが、先に docs を精密化する。
-  - OS ごとに最低限確認する項目を固定する。
-    - build
-    - launch
-    - import
-    - free ink
-    - save/load
-    - composite export
-    - transparent export
-    - sidecar discovery
-- 実装ステップ:
-  1. validation matrix を文書化する。
-  2. Windows 実機または runner で build と runtime discovery を確認する。
-  3. macOS 実機または runner で build と runtime discovery を確認する。
-  4. 各結果を implementation report に日時つきで記録する。
-- 依存:
-  - `PKG-01` 推奨
-- acceptance criteria:
-  - Windows / macOS / Linux の build 結果が report に揃う。
-  - 3 OS のうち少なくとも 2 OS で import/export 実検証があり、残りは blocker が具体的に記録されている。
-  - runtime discovery の配置案内が各 OS 実態と食い違っていない。
-- 必須 validation:
-  - 実機または runner での `cargo build --release -p pauseink-app`
-  - sidecar discovery 実行
-  - export 1 本ずつ
+**変更ファイル**
 
-### `PKG-03` `egui` deprecation cleanup と GUI smoke 導線を整える
+- Modify: `crates/renderer/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/presets_core/src/lib.rs`
+- Modify: `manual/user_guide.md`
 
-- 優先度:
-  - `P2`
-- 目的:
-  - 現状の build warning と headless GUI 未検証 gap を減らす。
-- 根拠:
-  - `docs/implementation_report_v1.0.0.md:1046`
-- 触る file:
-  - `crates/app/src/main.rs`
-  - `.github/workflows/ci.yml`
-  - `docs/implementation_report_v1.0.0.md`
-  - `progress.md`
-- 設計方針:
-  - `Panel::*` の deprecation は動作維持を優先しつつ新 API へ置き換える。
-  - Linux CI のみでも `xvfb-run` か headless harness を使い、最低限の起動 smoke を入れる。
-- 依存:
-  - なし
-- acceptance criteria:
-  - `cargo check -p pauseink-app --all-targets` の deprecation warning が実質ゼロか、大幅減になる。
-  - Linux CI で GUI 起動 smoke が 1 本追加される。
+**実装ステップ**
 
----
+1. renderer に `HeadRenderState` を追加し、entrance progress から head geometry を計算する。
+2. `solid / glow / comet_tail` の CPU-safe 描画 pass を追加する。
+3. inspector に kind / color source / size / blur / tail length / persistence / blend mode を追加する。
+4. active entrance と current object sync を head effect まで拡張する。
+5. entrance preset / combo preset へ head effect を載せる。
+6. export smoke で head effect が preview と矛盾しないことを確認する。
 
-## 6. future work task
+**必要テスト**
 
-### `FUT-01` partial clear
+- `renderer`: `PathTrace + glow head` が先頭に追従する
+- `renderer`: persistence が reveal 完了後も一定時間残る
+- `renderer`: `Instant` では head effect が出ない、または spec どおり no-op になる
+- `app`: head effect の設定が save/reopen と settings relaunch で戻る
 
-- 根拠:
-  - `AGENTS.md`
-  - `.docs/12_future_work.md:1`
-- 方針:
-  - v1.0 では着手しない。page carry-forward → group 単位 clear → arbitrary partial clear の順。
+**完了条件**
 
-### `FUT-02` real pressure support
+- inspector から head effect を編集できる
+- preview / export の見え方が一致する
+- preset と project save に head effect が含まれる
 
-- 根拠:
-  - `AGENTS.md:7`
-  - `.docs/12_future_work.md:2`
-- 方針:
-  - input abstraction と stroke sample schema の pressure hook を使う。
+### V1-03: post-action chain
 
-### `FUT-03` pseudo-pressure / auto taper
+**優先度:** P0
+**依存:** V1-01
 
-- 根拠:
-  - `.docs/06_stroke_processing_and_future_taper.md`
-  - `.docs/12_future_work.md:3`
-- 方針:
-  - speed / curvature / path progress を signal にする。
+**目的:** `during reveal / after stroke / after glyph object / after group / after run` に対する built-in post-action を renderer と UI へ接続する。
 
-### `FUT-04` proxy media
+**現状の問題**
 
-- 根拠:
-  - `.docs/12_future_work.md:4`
-- 方針:
-  - media provider を差し替えても project schema を変えない。
+- domain の `PostAction` 型が死蔵されている。
+- renderer は reveal 後の style change / pulse / blink を全く評価していない。
+- inspector と project save/reopen に post-action 編集 UI が無い。
 
-### `FUT-05` GPU export compositor
+**設計**
 
-- 根拠:
-  - `.docs/12_future_work.md:5`
-- 方針:
-  - CPU-safe baseline を壊さない optional path。
+- post-action は `effective style timeline` を返す evaluator として renderer 側に追加する。
+- evaluator の入力は `object`, `group`, `run`, `time`, `reveal_progress`。
+- v1.0 では action を次に限定する。
+  - `NoOp`
+  - `StyleChange`
+  - `InterpolatedStyleChange`
+  - `Pulse`
+  - `Blink`
+- `timing_scope` は `during reveal / after stroke / after glyph object / after group / after run` を実装する。`after group/run` は group/run の完了時刻導出が必要なので、その evaluator を renderer に追加する。
+- UI は複雑な graph editor にせず、`追加 / 削除 / 上下移動` の配列 editor とする。
 
-### `FUT-06` codec-pack helper tool
+**変更ファイル**
 
-- 根拠:
-  - `.docs/12_future_work.md:6`
-- 方針:
-  - runtime sidecar と別 manifest / notice / provenance を持つ optional 配布。
+- Modify: `crates/renderer/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/presets_core/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
 
-### `FUT-07` effect scripting
+**実装ステップ**
 
-- 根拠:
-  - `.docs/12_future_work.md:7`
-- 方針:
-  - hot path に直接スクリプトを入れない。安全な expression layer を別設計で検討。
+1. renderer に `evaluate_post_actions` を追加する。
+2. group/run 完了時刻の導出 helper を renderer 内へ追加する。
+3. pulse / blink / interpolated style change を base style へ重ねる式を固定する。
+4. inspector に配列 editor を追加する。
+5. entrance preset / combo preset に post-action を保存できるようにする。
+6. export / preview 回帰を追加する。
 
----
+**必要テスト**
 
-## 7. task 実行時の共通完了条件
+- `renderer`: `after glyph object` の style change が reveal 完了後に効く
+- `renderer`: `after group` が group 内最後の timed object 完了後にだけ発火する
+- `renderer`: `pulse` と `blink` が clear 境界を越えない
+- `app`: post-action chain の add/remove/reorder が save/reopen で保持される
 
-どの task でも、完了宣言の前に少なくとも次を満たすこと。
+**完了条件**
 
-1. task 専用の red/green test を追加して通す。
-2. `cargo test --workspace` を再通過させる。
-3. `cargo check -p pauseink-app --all-targets` を再通過させる。
-4. UI / 保存仕様 / export 挙動が変わる task では manual と report を同期する。
-5. `progress.md` に task 番号、概算率、残 blocker を書く。
+- post-action chain を UI から編集できる
+- preview / export / save/load が一貫する
+- group / run scope の timing が test で固定されている
 
----
+### V1-04: clear effect の実装完了と clear / combo preset UI
 
-## 8. 現時点の推奨着手点
+**優先度:** P0
+**依存:** V1-01
 
-最初に着手するなら次の順が安全です。
+**目的:** clear event を `Instant / Ordered / ReverseOrdered / WipeOut / DissolveOut` まで UI と renderer で完結させ、clear preset と combo preset へ接続する。
 
-1. `V1-01`
-   entrance 系の dead field を閉じる。後続 preset / combo 設計にも影響するため最優先。
-2. `V1-03`
-   clear preset を先に入れると `V1-04` の combo preset が組みやすい。
-3. `V1-05`
-   panel 編集系を進めるための基礎。
-4. `PKG-01`
-   v1.0 mainline packaging の gap を閉じる。
+**現状の問題**
+
+- app の `全消去` は `Instant` 挿入しかできない。
+- renderer の clear は `Ordered / ReverseOrdered / granularity` をほぼ使っていない。
+- page events tab は flat list だけで、select/edit/delete/duplicate が無い。
+- clear preset / combo preset の catalog と GUI が無い。
+
+**設計**
+
+- clear event の編集主体は下部 `ページイベント` タブに置く。
+- transport 近辺には `全消去` の quick action を残しつつ、その時点の `選択中 clear preset` を使って insert する。
+- renderer は clear evaluator を `scope-aware serial scheduler` にする。
+  - `granularity`: all parallel / group / glyph / stroke
+  - `ordering`: serial / reverse / parallel
+- combo preset は `style + entrance + clear` の束として挿入・適用できるようにする。
+- clear preset の resolved snapshot は project に保存し、preset file の変更で過去 project が崩れないようにする。
+
+**変更ファイル**
+
+- Modify: `crates/renderer/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/presets_core/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `README.md`
+
+**実装ステップ**
+
+1. renderer の clear evaluator を `granularity + ordering` 対応へ拡張する。
+2. page events tab に一覧選択、詳細編集、削除、duplicate を追加する。
+3. quick clear button を `current clear preset` ベースにする。
+4. clear preset / combo preset の built-in + user catalog と CRUD UI を追加する。
+5. project save に resolved clear snapshot と optional combo preset binding を追加する。
+6. export smoke で wipe/dissolve/ordered clear を確認する。
+
+**必要テスト**
+
+- `renderer`: ordered clear が capture/reveal order に従って段階的に消える
+- `renderer`: reverse clear が逆順に消える
+- `renderer`: granularity=`group` が group を unit として消す
+- `app`: clear event editor の変更が save/reopen で保持される
+- `presets_core`: combo preset が clear preset を正しく解決する
+
+**完了条件**
+
+- clear kind / duration / granularity / ordering を GUI から編集できる
+- quick clear と page events track が同じ preset を共有する
+- clear/combo preset を built-in / user ともに扱える
+
+### V1-05: selection / multi-select / group / ungroup / z-order foundation
+
+**優先度:** P0
+**依存:** なし
+
+**目的:** spec 9 の編集導線を成立させる。現在の単一 `selected_object_id` から multi-select と command 群へ拡張する。
+
+**現状の問題**
+
+- selection は単一 object しか持てない。
+- `InsertGroupCommand` はあるが、ungroup / membership 更新 / batch z-order command が足りない。
+- batch style edit の適用先モデルがない。
+
+**設計**
+
+- app session に `SelectionState` を追加する。
+  - selected glyph object IDs
+  - selected group IDs
+  - active focus ID
+- command 層へ次を追加する。
+  - `InsertGroupCommand` の app 接続
+  - `RemoveGroupCommand`
+  - `UpdateGroupMembershipCommand`
+  - `BatchSetGlyphObjectStyleCommand`
+  - `BatchSetGlyphObjectEntranceCommand`
+  - `NormalizeZOrderCommand`
+- renderer 側には selection の概念を持ち込まない。
+- UI 操作はまず outline panel 起点にし、canvas direct-manipulation は後回しにする。
+
+**変更ファイル**
+
+- Modify: `crates/domain/src/project_commands.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. `SelectionState` と command 群を追加する。
+2. outline panel から複数選択できる土台を入れる。
+3. `グループ化`, `グループ解除`, `前面へ`, `背面へ`, `一つ前`, `一つ後ろ` を app action として実装する。
+4. batch style / entrance edit が selection 全体へ効くようにする。
+5. undo/redo と grouped command で巻き戻せるようにする。
+
+**必要テスト**
+
+- `domain`: group/un-group が history で往復する
+- `domain`: z-order normalize が capture/reveal order を壊さない
+- `app`: multi-select へ style を適用すると全 object に反映される
+- `app`: group 化後の undo/redo で selection が壊れない
+
+**完了条件**
+
+- 複数選択、group/ungroup、z-order 操作が GUI から可能
+- undo/redo と project save/load で崩れない
+
+### V1-06: object outline / page events panel の強化
+
+**優先度:** P1
+**依存:** V1-04, V1-05
+
+**目的:** spec 10 の panel 要件へ近づける。flat list を tree / batch-edit 可能な panel に引き上げる。
+
+**現状の問題**
+
+- `オブジェクト一覧` は `object id / stroke count / page / z` の文字列羅列だけ。
+- `run / group / glyph / stroke` の tree が無い。
+- `visibility / lock / solo / auto-follow-current / alive highlight` が無い。
+- `ページイベント` も timeline track ではなく plain text list。
+
+**設計**
+
+- 下部 panel は引き続き単一 window 内に保ち、tree widget を自作せず `egui::CollapsingHeader` と small action row の組み合わせで構成する。
+- outline tree の top level は `run`、その下に `group`、その下に `glyph object`、leaf に `stroke` を置く。
+- run は `style/entrance/preset/page` が同じ連続 object から導出する view model とし、persistent data にはしない。
+- `alive` 判定は current preview time と clear/page interval から導く。
+- `lock / solo / visibility` は v1.0 では editor-only state とし、project へは保存しない。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. outline tree 用の view model を app 側に追加する。
+2. run/group/glyph/stroke の階層表示を実装する。
+3. multi-select / batch action / auto-follow-current を接続する。
+4. alive highlight と page filter を追加する。
+5. page events tab を timeline track 風の表示へ近づける。
+
+**必要テスト**
+
+- `app`: run 導出が group と混同しない
+- `app`: current time 更新で alive highlight が切り替わる
+- `app`: auto-follow が current object を view 内へ保つ
+- `app`: visibility / solo / lock が editor preview にだけ効き、export へ漏れない
+
+**完了条件**
+
+- outline panel が tree で使える
+- page events tab から clear を編集しやすい
+- batch edit と auto-follow が spec に沿う
+
+### V1-07: template advanced controls と slot fit
+
+**優先度:** P1
+**依存:** なし
+
+**目的:** spec 4.3 / 7 の template settings を UI へ露出し、slot fit を v1.0 範囲で入れる。
+
+**現状の問題**
+
+- `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` は内部 state にあるが UI に出ていない。
+- `slot fit` の `Off / Move only / Weak uniform scale` が未実装。
+
+**設計**
+
+- template editor は左ペインのまま維持し、advanced section を `詳細` collapsible にまとめる。
+- slot fit は object capture 後の幾何補正ではなく、slot commit 時の object transform として適用する。
+  - `Off`: 現状維持
+  - `MoveOnly`: slot center へ平行移動だけ
+  - `WeakUniformScale`: bounding box 比から `1.0..=1.15` 程度の弱い uniform scale を掛ける
+- stroke の最終表示はユーザー手書き主体を守るため、非一様スケールや強制歪みは入れない。
+
+**変更ファイル**
+
+- Modify: `crates/template_layout/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. 左ペイン template section に advanced controls を追加する。
+2. `UnderlayMode` の dropdown を追加する。
+3. slot fit mode を editor state と project/settings restore に追加する。
+4. slot commit 時に `MoveOnly / WeakUniformScale` を object transform へ適用する。
+5. preview と export が同じ transform を使うことを確認する。
+
+**必要テスト**
+
+- `template_layout`: script scale / line height / underlay mode の UI 値が slot 計算へ反映される
+- `app`: save/reopen で advanced template settings と fit mode が戻る
+- `renderer/app`: `WeakUniformScale` が上限を超えず、stroke 形状を過度に歪めない
+
+**完了条件**
+
+- template advanced settings が GUI から編集できる
+- slot fit が spec の 3 モードで動く
+- 手書き主体の見た目を壊さない
+
+### PKG-01: portable FFmpeg sidecar packaging / provenance / notices
+
+**優先度:** P0
+**依存:** なし
+
+**目的:** mainline runtime 方針を host `ffmpeg` 依存から脱し、portable sidecar runtime を release-ready にする。
+
+**現状の問題**
+
+- runtime discovery と manifest 読み込みはあるが、実際の sidecar を repository / release asset へ載せる手順が未整備。
+- provenance / notices / runtime source policy が release artifacts に反映されていない。
+
+**設計**
+
+- sidecar 自体は repository commit へ直接 vendor しない。取得済み runtime を CI/release packaging stage で assembly する。
+- manifest は最低限次を持つ。
+  - runtime version
+  - source URL / source label
+  - license summary
+  - build summary
+  - supported families
+- release asset には app binary と sidecar runtime、notice file、manifest を同梱する。
+- optional codec pack は mainline asset と分離し、この task では触らない。
+
+**変更ファイル**
+
+- Modify: `scripts/package_release_asset.py`
+- Modify: `.github/workflows/release.yml`
+- Create or Modify: `manual/runtime_packaging.md` または `manual/developer_guide.md` の packaging 章
+- Create: `docs/runtime_sidecar_manifest_schema.md` もしくは `.docs/` 下の補足資料
+
+**実装ステップ**
+
+1. release asset の directory layout を確定する。
+2. manifest schema と notices の最小必須項目を定義する。
+3. packager script に sidecar assembly を追加する。
+4. runtime 不在時の fail-fast と log を整える。
+5. packaging 手順を docs に残す。
+
+**必要テスト**
+
+- packager script: sidecar / manifest / notices が archive に入る
+- media: sidecar manifest 不備時に明確な error を返す
+- release workflow dry-run: asset 名が OS ごとに安定する
+
+**完了条件**
+
+- release asset が mainline sidecar 付きで組める
+- provenance / notices を人が確認できる
+- app が host runtime に暗黙依存しない
+
+### PKG-02: GitHub Release への sidecar 統合
+
+**優先度:** P0
+**依存:** PKG-01
+
+**目的:** tag が `main` に入った時に 3 OS の app + sidecar + notices を GitHub Release へ確実に上げる。
+
+**現状の問題**
+
+- 現 release workflow は app binary archive しか載せない。
+- Windows / macOS / Linux で sidecar 同梱方針が workflow に落ちていない。
+
+**設計**
+
+- workflow は各 OS job で app build -> sidecar assemble -> archive -> release upload の順に統一する。
+- asset 名は `pauseink-vX.Y.Z-<os>-<arch>.zip|tar.gz` を固定し、中身は共通 layout にする。
+- CI 側では unit tests と release packaging を分離し、release job では `cargo test --workspace` の再実行を避けず、artifact の一貫性を優先する。
+
+**変更ファイル**
+
+- Modify: `.github/workflows/release.yml`
+- Modify: `.github/workflows/ci.yml` （必要なら reusable workflow 化）
+- Modify: `scripts/package_release_asset.py`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. OS ごとの sidecar input path を workflow で決める。
+2. packager script を release workflow から呼ぶ。
+3. asset contents チェックを workflow step へ入れる。
+4. release body に runtime provenance / notices の説明を差し込む。
+
+**必要テスト**
+
+- workflow YAML parse
+- packager unit/dry-run
+- 手元で Linux archive 生成
+- `act` 等が使えるならローカル dry-run、無理なら exact blocker を docs に記録
+
+**完了条件**
+
+- release asset が 3 OS で同じ規約で作られる
+- Release ページから notices / manifest / runtime source が追える
+
+### QA-01: cross-platform validation / closeout
+
+**優先度:** P0
+**依存:** V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02
+
+**目的:** done criteria を最後に閉じる。Linux / Windows / macOS で build / import / save-load / composite export / transparent export を確認し、残制限を確定する。
+
+**現状の問題**
+
+- Linux では host runtime 検証があるが、Windows / macOS は runtime discovery unit test 中心で、実 export validation が不足している。
+- headless host のため GUI 目視起動が一部未確認。
+
+**設計**
+
+- 検証は OS ごとに同じチェックリストで回す。
+  - build
+  - launch
+  - import media
+  - free ink / guide / template
+  - save -> reopen
+  - composite export
+  - transparent export
+  - runtime diagnostics
+- 実施不能項目は「なぜ不可か」「次に必要な環境」を exact に記録する。
+
+**変更ファイル**
+
+- Modify: `docs/implementation_report_v1.0.0.md`
+- Modify: `progress.md`
+- Modify: `README.md`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. OS 別 validation matrix を report へ追加する。
+2. Linux 実検証を更新する。
+3. Windows 実 build/runtime/export を実施する。無理なら blocker を exact に書く。
+4. macOS 実 build/runtime/export を実施する。無理なら blocker を exact に書く。
+5. done criteria を再確認し、未達があれば該当 task へ差し戻す。
+
+**必要テスト / 実行コマンド**
+
+- `cargo fmt --all --check`
+- `cargo test --workspace`
+- `cargo check -p pauseink-app --all-targets`
+- OS ごとの release build
+- 実 export 1 件以上ずつ
+
+**完了条件**
+
+- `.docs/10_testing_and_done_criteria.md` の項目を正直にすべて判定できる
+- `progress.md` が最終状態になっている
+- `docs/implementation_report_v1.0.0.md` がコマンドと結果を含んで完結している
+
+## 5. 推奨実行順
+
+1. `V1-01` preset 境界正規化
+2. `V1-02` reveal-head effect
+3. `V1-03` post-action chain
+4. `V1-04` clear / clear preset / combo preset
+5. `V1-05` selection / group / z-order foundation
+6. `V1-06` outline / page events panel 強化
+7. `V1-07` template advanced controls / slot fit
+8. `PKG-01` portable sidecar packaging
+9. `PKG-02` release workflow sidecar 統合
+10. `QA-01` cross-platform validation / closeout
+
+## 6. task 指定時の返答ルール
+
+利用者から `V1-03` や `PKG-01` のように task ID が指定されたら、開始時に次を短く共有してから着手すること。
+
+1. 対象 task の依存が満たされているか
+2. 今回触るファイル
+3. 最初に追加する failing test
+4. 完了時に回す verification command
+
+## 7. 先に確認しておくべき地雷
+
+- `V1-01` を飛ばして `V1-04` へ行くと preset schema の後戻りが起きやすい。
+- `V1-05` を飛ばして `V1-06` を進めると outline tree の UI だけ出来て command が空洞になる。
+- `PKG-01` を飛ばして `PKG-02` を進めると release workflow が host runtime 前提に戻りやすい。
+- `QA-01` は単なる docs 更新ではなく、実 build / export / validation の証跡が必須。
+
+## 8. 受け入れの最終ライン
+
+この計画の task をすべて閉じた時点で、PauseInk v1.0 の残差は以下に限定されているべきです。
+
+- `.docs/12_future_work.md` に明示した future work
+- optional codec pack の別 tier 検討
+- deprecation warning のような非機能系の軽微な改善
+
+それ以外が残る場合は、対応する task を追加してこの文書を更新すること。
