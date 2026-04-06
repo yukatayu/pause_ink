@@ -33,6 +33,8 @@ v1.0 の前提:
   - タイトル
   - built-in / user style preset の適用と管理
   - 基本スタイル
+  - 効果
+  - 出現
   - ガイド
   - 書き出し
 - 下部タブ
@@ -63,6 +65,7 @@ v1.0 の前提:
 - `Ctrl+Z` で元に戻す、`Ctrl+Shift+Z` または `Ctrl+Y` でやり直せます
 - 直前の object へ stroke を継ぎ足す処理は app session 側にありますが、現 UI では個別の切替ボタンは未露出です
 - 色、太さ、不透明度、手ブレ補正は右ペイン `基本スタイル` で調整します
+- アウトライン、ドロップシャドウ、グロー、ブレンドモードも右ペインから調整できます
 - 色 picker は色相変更用で、透明度は `不透明度` スライダー 1 つに統一されています
 - 同じテンプレート slot や guide 参照文字へ stroke を継ぎ足す場合も、次に確定する stroke から最新の `基本スタイル` が反映されます
 - 右ペインでは built-in preset を選んで適用できます。現在の基本スタイルは `追加保存` / `上書き保存` / `削除` で user preset として管理できます
@@ -101,7 +104,7 @@ v1.0 の前提:
 
 - プロジェクト形式は `.pauseink`
 - load は lenient、save は normalized
-- project ごとに、現在の基本スタイル snapshot、選択 preset ID、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
+- project ごとに、現在の基本スタイル snapshot、現在の出現設定 snapshot、選択 preset ID、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
 - autosave は既定で 10 秒ごとです
 - 前回の autosave が残っていると起動直後に `復旧` ウィンドウが開きます
 - `復旧する` で最新 autosave を読み込み、`破棄する` で削除します
@@ -130,7 +133,8 @@ v1.0 の前提:
 - 実行中は `実行中:` 表示の下に stage 名と progress bar が出ます
 - 実行中ジョブと履歴は下部 `書き出しキュー` に出ます
 - PNG Sequence は注釈 overlay の RGBA 連番を書き出します
-- 出現速度や entrance の細かい調整 UI は、現時点では未実装です
+- 右ペイン `出現` では、方式、時間モード、時間、出現速度を調整できます
+- 固定時間では指定時間をベースに、長さ比例では stroke 長に応じた時間をベースにして出現します
 
 ## 7. 設定 / キャッシュ / 診断
 
@@ -182,7 +186,8 @@ project ごとに再現したい style / template / font / guide 状態は `.pau
 ## 10. 現時点の既知制約
 
 - template 字詰めは実 font shaping と kerning を使いますが、scale が切り替わる run 境界では font engine 上の自然な区切りに従います
-- style preset は現在、厚み / 色 / 不透明度 / 手ブレ補正の保存と適用が中心です
+- style preset は現在、厚み / 色 / 不透明度 / 手ブレ補正に加え、outline / drop shadow / glow / blend mode / 出現方式 / 出現速度まで保存と適用ができます
+- reveal-head effect、post-action chain、clear / combo preset の専用 UI はまだ入っていません
 - group / ungroup / multi-select / z-order UI はまだ最小です
 - Windows と macOS はこの Linux ホスト上で実行確認しておらず、runtime 探索ロジックは unit test で検証しています
 - GUI の `eframe` deprecation warning が残っていますが、現 build/test は通っています

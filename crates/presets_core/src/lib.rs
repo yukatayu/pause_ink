@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use pauseink_domain::{
+    BlendMode, DropShadowStyle, EntranceBehavior, EntranceDurationMode, EntranceKind, GlowStyle,
+    MediaDuration, OutlineStyle, RgbaColor,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -87,7 +91,12 @@ pub struct BaseStylePreset {
     pub thickness: Option<f32>,
     pub color_rgba: Option<[u8; 4]>,
     pub opacity: Option<f32>,
+    pub outline: Option<OutlineStyle>,
+    pub drop_shadow: Option<DropShadowStyle>,
+    pub glow: Option<GlowStyle>,
+    pub blend_mode: Option<BlendMode>,
     pub stabilization_strength: Option<f32>,
+    pub entrance: Option<EntranceBehavior>,
     pub source: StylePresetSource,
     pub file_path: Option<PathBuf>,
 }
@@ -528,6 +537,8 @@ struct BaseStylePresetFile {
     source: StylePresetSource,
     #[serde(default)]
     base_style: BaseStylePresetStyleFile,
+    #[serde(default)]
+    entrance: Option<BaseStylePresetEntranceFile>,
 }
 
 impl BaseStylePresetFile {
@@ -542,7 +553,15 @@ impl BaseStylePresetFile {
             thickness: self.base_style.thickness,
             color_rgba,
             opacity,
+            outline: self.base_style.outline.map(OutlineStyleFile::into_domain),
+            drop_shadow: self
+                .base_style
+                .drop_shadow
+                .map(DropShadowStyleFile::into_domain),
+            glow: self.base_style.glow.map(GlowStyleFile::into_domain),
+            blend_mode: self.base_style.blend_mode.map(BlendModeFile::into_domain),
             stabilization_strength: self.base_style.stabilization_strength,
+            entrance: self.entrance.map(BaseStylePresetEntranceFile::into_domain),
             source: match self.source {
                 StylePresetSource::BuiltIn => default_source,
                 StylePresetSource::User => StylePresetSource::User,
@@ -564,8 +583,19 @@ impl BaseStylePresetFile {
                     rgba
                 }),
                 opacity: preset.opacity,
+                outline: preset.outline.as_ref().map(OutlineStyleFile::from_domain),
+                drop_shadow: preset
+                    .drop_shadow
+                    .as_ref()
+                    .map(DropShadowStyleFile::from_domain),
+                glow: preset.glow.as_ref().map(GlowStyleFile::from_domain),
+                blend_mode: preset.blend_mode.map(BlendModeFile::from_domain),
                 stabilization_strength: preset.stabilization_strength,
             },
+            entrance: preset
+                .entrance
+                .as_ref()
+                .map(BaseStylePresetEntranceFile::from_domain),
         }
     }
 }
@@ -576,7 +606,293 @@ struct BaseStylePresetStyleFile {
     thickness: Option<f32>,
     color_rgba: Option<[f32; 4]>,
     opacity: Option<f32>,
+    outline: Option<OutlineStyleFile>,
+    drop_shadow: Option<DropShadowStyleFile>,
+    glow: Option<GlowStyleFile>,
+    blend_mode: Option<BlendModeFile>,
     stabilization_strength: Option<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct OutlineStyleFile {
+    enabled: bool,
+    width: f32,
+    color_rgba: Option<[f32; 4]>,
+}
+
+impl OutlineStyleFile {
+    fn into_domain(self) -> OutlineStyle {
+        OutlineStyle {
+            enabled: self.enabled,
+            width: self.width,
+            color: self
+                .color_rgba
+                .map(normalize_color_rgba)
+                .map(rgba_color_from_bytes)
+                .unwrap_or_else(|| OutlineStyle::default().color),
+        }
+    }
+
+    fn from_domain(style: &OutlineStyle) -> Self {
+        Self {
+            enabled: style.enabled,
+            width: style.width,
+            color_rgba: Some(float_color_rgba(rgba_color_to_bytes(style.color))),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct DropShadowStyleFile {
+    enabled: bool,
+    offset_x: f32,
+    offset_y: f32,
+    blur_radius: f32,
+    color_rgba: Option<[f32; 4]>,
+}
+
+impl DropShadowStyleFile {
+    fn into_domain(self) -> DropShadowStyle {
+        DropShadowStyle {
+            enabled: self.enabled,
+            offset_x: self.offset_x,
+            offset_y: self.offset_y,
+            blur_radius: self.blur_radius,
+            color: self
+                .color_rgba
+                .map(normalize_color_rgba)
+                .map(rgba_color_from_bytes)
+                .unwrap_or_else(|| DropShadowStyle::default().color),
+        }
+    }
+
+    fn from_domain(style: &DropShadowStyle) -> Self {
+        Self {
+            enabled: style.enabled,
+            offset_x: style.offset_x,
+            offset_y: style.offset_y,
+            blur_radius: style.blur_radius,
+            color_rgba: Some(float_color_rgba(rgba_color_to_bytes(style.color))),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct GlowStyleFile {
+    enabled: bool,
+    blur_radius: f32,
+    color_rgba: Option<[f32; 4]>,
+}
+
+impl GlowStyleFile {
+    fn into_domain(self) -> GlowStyle {
+        GlowStyle {
+            enabled: self.enabled,
+            blur_radius: self.blur_radius,
+            color: self
+                .color_rgba
+                .map(normalize_color_rgba)
+                .map(rgba_color_from_bytes)
+                .unwrap_or_else(|| GlowStyle::default().color),
+        }
+    }
+
+    fn from_domain(style: &GlowStyle) -> Self {
+        Self {
+            enabled: style.enabled,
+            blur_radius: style.blur_radius,
+            color_rgba: Some(float_color_rgba(rgba_color_to_bytes(style.color))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum BlendModeFile {
+    Normal,
+    Multiply,
+    Screen,
+    Additive,
+}
+
+impl BlendModeFile {
+    fn into_domain(self) -> BlendMode {
+        match self {
+            Self::Normal => BlendMode::Normal,
+            Self::Multiply => BlendMode::Multiply,
+            Self::Screen => BlendMode::Screen,
+            Self::Additive => BlendMode::Additive,
+        }
+    }
+
+    fn from_domain(mode: BlendMode) -> Self {
+        match mode {
+            BlendMode::Normal => Self::Normal,
+            BlendMode::Multiply => Self::Multiply,
+            BlendMode::Screen => Self::Screen,
+            BlendMode::Additive => Self::Additive,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct BaseStylePresetEntranceFile {
+    kind: Option<EntranceKindFile>,
+    #[serde(alias = "target")]
+    scope: Option<EffectScopeFile>,
+    order: Option<EffectOrderFile>,
+    duration_mode: Option<EntranceDurationModeFile>,
+    duration_ms: Option<i64>,
+    speed_scalar: Option<f32>,
+}
+
+impl BaseStylePresetEntranceFile {
+    fn into_domain(self) -> EntranceBehavior {
+        let mut entrance = EntranceBehavior::default();
+        if let Some(kind) = self.kind {
+            entrance.kind = kind.into_domain();
+        }
+        if let Some(scope) = self.scope {
+            entrance.scope = scope.into_domain();
+        }
+        if let Some(order) = self.order {
+            entrance.order = order.into_domain();
+        }
+        if let Some(duration_mode) = self.duration_mode {
+            entrance.duration_mode = duration_mode.into_domain();
+        }
+        if let Some(duration_ms) = self.duration_ms {
+            entrance.duration = MediaDuration::from_millis(duration_ms.max(0));
+        }
+        if let Some(speed_scalar) = self.speed_scalar {
+            entrance.speed_scalar = speed_scalar;
+        }
+        entrance
+    }
+
+    fn from_domain(entrance: &EntranceBehavior) -> Self {
+        Self {
+            kind: Some(EntranceKindFile::from_domain(entrance.kind)),
+            scope: Some(EffectScopeFile::from_domain(entrance.scope)),
+            order: Some(EffectOrderFile::from_domain(entrance.order)),
+            duration_mode: Some(EntranceDurationModeFile::from_domain(
+                entrance.duration_mode,
+            )),
+            duration_ms: Some(media_duration_millis(entrance.duration)),
+            speed_scalar: Some(entrance.speed_scalar),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EntranceKindFile {
+    PathTrace,
+    Instant,
+    Wipe,
+    Dissolve,
+}
+
+impl EntranceKindFile {
+    fn into_domain(self) -> EntranceKind {
+        match self {
+            Self::PathTrace => EntranceKind::PathTrace,
+            Self::Instant => EntranceKind::Instant,
+            Self::Wipe => EntranceKind::Wipe,
+            Self::Dissolve => EntranceKind::Dissolve,
+        }
+    }
+
+    fn from_domain(kind: EntranceKind) -> Self {
+        match kind {
+            EntranceKind::PathTrace => Self::PathTrace,
+            EntranceKind::Instant => Self::Instant,
+            EntranceKind::Wipe => Self::Wipe,
+            EntranceKind::Dissolve => Self::Dissolve,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EffectScopeFile {
+    Stroke,
+    Glyph,
+    Group,
+    Run,
+}
+
+impl EffectScopeFile {
+    fn into_domain(self) -> pauseink_domain::EffectScope {
+        match self {
+            Self::Stroke => pauseink_domain::EffectScope::Stroke,
+            Self::Glyph => pauseink_domain::EffectScope::GlyphObject,
+            Self::Group => pauseink_domain::EffectScope::Group,
+            Self::Run => pauseink_domain::EffectScope::Run,
+        }
+    }
+
+    fn from_domain(scope: pauseink_domain::EffectScope) -> Self {
+        match scope {
+            pauseink_domain::EffectScope::Stroke => Self::Stroke,
+            pauseink_domain::EffectScope::GlyphObject => Self::Glyph,
+            pauseink_domain::EffectScope::Group => Self::Group,
+            pauseink_domain::EffectScope::Run => Self::Run,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EffectOrderFile {
+    Serial,
+    Reverse,
+    Parallel,
+}
+
+impl EffectOrderFile {
+    fn into_domain(self) -> pauseink_domain::EffectOrder {
+        match self {
+            Self::Serial => pauseink_domain::EffectOrder::Serial,
+            Self::Reverse => pauseink_domain::EffectOrder::Reverse,
+            Self::Parallel => pauseink_domain::EffectOrder::Parallel,
+        }
+    }
+
+    fn from_domain(order: pauseink_domain::EffectOrder) -> Self {
+        match order {
+            pauseink_domain::EffectOrder::Serial => Self::Serial,
+            pauseink_domain::EffectOrder::Reverse => Self::Reverse,
+            pauseink_domain::EffectOrder::Parallel => Self::Parallel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EntranceDurationModeFile {
+    LengthProportional,
+    FixedTotalDuration,
+}
+
+impl EntranceDurationModeFile {
+    fn into_domain(self) -> EntranceDurationMode {
+        match self {
+            Self::LengthProportional => EntranceDurationMode::ProportionalToStrokeLength,
+            Self::FixedTotalDuration => EntranceDurationMode::FixedTotalDuration,
+        }
+    }
+
+    fn from_domain(mode: EntranceDurationMode) -> Self {
+        match mode {
+            EntranceDurationMode::ProportionalToStrokeLength => Self::LengthProportional,
+            EntranceDurationMode::FixedTotalDuration => Self::FixedTotalDuration,
+        }
+    }
 }
 
 impl DistributionProfileFile {
@@ -734,6 +1050,20 @@ fn normalize_style_preset_color_and_opacity(
 
 fn float_color_rgba(raw: [u8; 4]) -> [f32; 4] {
     raw.map(|component| component as f32 / 255.0)
+}
+
+fn rgba_color_from_bytes(raw: [u8; 4]) -> RgbaColor {
+    RgbaColor::new(raw[0], raw[1], raw[2], raw[3])
+}
+
+fn rgba_color_to_bytes(color: RgbaColor) -> [u8; 4] {
+    [color.r, color.g, color.b, color.a]
+}
+
+fn media_duration_millis(duration: MediaDuration) -> i64 {
+    ((duration.ticks as f64 * duration.time_base.numerator as f64 * 1000.0)
+        / duration.time_base.denominator as f64)
+        .round() as i64
 }
 
 #[cfg(test)]
@@ -1030,7 +1360,31 @@ mod tests {
                 thickness: 18.0,
                 color_rgba: [0.0, 0.5, 1.0, 0.60],
                 opacity: 0.60,
+                blend_mode: "additive",
+                outline: {
+                  enabled: true,
+                  width: 3.0,
+                  color_rgba: [0.0, 0.0, 0.0, 1.0],
+                },
+                drop_shadow: {
+                  enabled: true,
+                  offset_x: 4.0,
+                  offset_y: 6.0,
+                  blur_radius: 8.0,
+                  color_rgba: [0.1, 0.1, 0.1, 0.8],
+                },
+                glow: {
+                  enabled: true,
+                  blur_radius: 10.0,
+                  color_rgba: [0.8, 1.0, 1.0, 0.7],
+                },
                 stabilization_strength: 0.8,
+              },
+              entrance: {
+                kind: "path_trace",
+                duration_mode: "length_proportional",
+                duration_ms: 900,
+                speed_scalar: 1.8,
               },
             }
             "#,
@@ -1048,6 +1402,20 @@ mod tests {
         assert_eq!(marker.thickness, Some(18.0));
         assert_eq!(marker.opacity, Some(0.60));
         assert_eq!(marker.stabilization_strength, Some(0.8));
+        assert_eq!(marker.blend_mode, Some(BlendMode::Additive));
+        assert!(marker
+            .outline
+            .as_ref()
+            .is_some_and(|outline| outline.enabled));
+        assert!(marker
+            .drop_shadow
+            .as_ref()
+            .is_some_and(|shadow| shadow.enabled));
+        assert!(marker.glow.as_ref().is_some_and(|glow| glow.enabled));
+        assert_eq!(
+            marker.entrance.as_ref().map(|entrance| entrance.kind),
+            Some(EntranceKind::PathTrace)
+        );
 
         let custom_path = user_dir.join("custom_soft_marker.json5");
         let custom = BaseStylePreset {
@@ -1056,7 +1424,32 @@ mod tests {
             thickness: Some(9.5),
             color_rgba: Some([32, 200, 255, 255]),
             opacity: Some(0.35),
+            outline: Some(OutlineStyle {
+                enabled: true,
+                width: 2.5,
+                color: RgbaColor::new(16, 32, 48, 255),
+            }),
+            drop_shadow: Some(DropShadowStyle {
+                enabled: true,
+                offset_x: 2.0,
+                offset_y: 5.0,
+                blur_radius: 7.0,
+                color: RgbaColor::new(10, 10, 10, 180),
+            }),
+            glow: Some(GlowStyle {
+                enabled: true,
+                blur_radius: 9.0,
+                color: RgbaColor::new(200, 255, 255, 150),
+            }),
+            blend_mode: Some(BlendMode::Screen),
             stabilization_strength: Some(0.8),
+            entrance: Some(EntranceBehavior {
+                kind: EntranceKind::Dissolve,
+                duration_mode: EntranceDurationMode::FixedTotalDuration,
+                duration: MediaDuration::from_millis(1200),
+                speed_scalar: 1.5,
+                ..EntranceBehavior::default()
+            }),
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -1069,6 +1462,20 @@ mod tests {
         assert_eq!(loaded.thickness, Some(9.5));
         assert_eq!(loaded.opacity, Some(0.35));
         assert_eq!(loaded.stabilization_strength, Some(0.8));
+        assert_eq!(loaded.blend_mode, Some(BlendMode::Screen));
+        assert!(loaded
+            .outline
+            .as_ref()
+            .is_some_and(|outline| outline.enabled));
+        assert!(loaded
+            .drop_shadow
+            .as_ref()
+            .is_some_and(|shadow| shadow.enabled));
+        assert!(loaded.glow.as_ref().is_some_and(|glow| glow.enabled));
+        assert_eq!(
+            loaded.entrance.as_ref().map(|entrance| entrance.kind),
+            Some(EntranceKind::Dissolve)
+        );
         assert_eq!(loaded.source, StylePresetSource::User);
     }
 }

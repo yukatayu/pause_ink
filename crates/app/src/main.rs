@@ -40,6 +40,7 @@ const SYSTEM_DEFAULT_FONT_FAMILY_LABEL: &str = "システム既定";
 const DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH: f32 = 1400.0;
 const PROJECT_EDITOR_UI_SETTINGS_KEY: &str = "pauseink_editor_ui";
 const PROJECT_BASE_STYLE_PRESET_KEY: &str = "base_style";
+const PROJECT_ENTRANCE_PRESET_KEY: &str = "entrance";
 
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
@@ -334,6 +335,93 @@ impl SavedBaseStylePresetState {
             resolved_snapshot: app.session.active_style.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedEntrancePresetState {
+    preset_id: Option<String>,
+    resolved_snapshot: StoredEntranceBehavior,
+}
+
+impl SavedEntrancePresetState {
+    fn capture(app: &DesktopApp) -> Self {
+        Self {
+            preset_id: if app.selected_style_preset_id.is_empty() {
+                None
+            } else {
+                Some(app.selected_style_preset_id.clone())
+            },
+            resolved_snapshot: StoredEntranceBehavior::from_domain(&app.session.active_entrance),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredEntranceBehavior {
+    kind: StoredEntranceKind,
+    duration_mode: StoredEntranceDurationMode,
+    duration_ms: i64,
+    speed_scalar: f32,
+}
+
+impl StoredEntranceBehavior {
+    fn from_domain(entrance: &pauseink_domain::EntranceBehavior) -> Self {
+        Self {
+            kind: match entrance.kind {
+                pauseink_domain::EntranceKind::PathTrace => StoredEntranceKind::PathTrace,
+                pauseink_domain::EntranceKind::Instant => StoredEntranceKind::Instant,
+                pauseink_domain::EntranceKind::Wipe => StoredEntranceKind::Wipe,
+                pauseink_domain::EntranceKind::Dissolve => StoredEntranceKind::Dissolve,
+            },
+            duration_mode: match entrance.duration_mode {
+                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                    StoredEntranceDurationMode::LengthProportional
+                }
+                pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+                    StoredEntranceDurationMode::FixedTotalDuration
+                }
+            },
+            duration_ms: media_duration_to_millis(entrance.duration),
+            speed_scalar: entrance.speed_scalar,
+        }
+    }
+
+    fn into_domain(self) -> pauseink_domain::EntranceBehavior {
+        let mut entrance = pauseink_domain::EntranceBehavior::default();
+        entrance.kind = match self.kind {
+            StoredEntranceKind::PathTrace => pauseink_domain::EntranceKind::PathTrace,
+            StoredEntranceKind::Instant => pauseink_domain::EntranceKind::Instant,
+            StoredEntranceKind::Wipe => pauseink_domain::EntranceKind::Wipe,
+            StoredEntranceKind::Dissolve => pauseink_domain::EntranceKind::Dissolve,
+        };
+        entrance.duration_mode = match self.duration_mode {
+            StoredEntranceDurationMode::LengthProportional => {
+                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
+            }
+            StoredEntranceDurationMode::FixedTotalDuration => {
+                pauseink_domain::EntranceDurationMode::FixedTotalDuration
+            }
+        };
+        entrance.duration = pauseink_domain::MediaDuration::from_millis(self.duration_ms.max(0));
+        entrance.speed_scalar = self.speed_scalar;
+        entrance
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredEntranceKind {
+    PathTrace,
+    Instant,
+    Wipe,
+    Dissolve,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredEntranceDurationMode {
+    LengthProportional,
+    FixedTotalDuration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -731,7 +819,12 @@ impl DesktopApp {
                 255,
             ]),
             opacity: Some(self.session.active_style.opacity),
+            outline: Some(self.session.active_style.outline.clone()),
+            drop_shadow: Some(self.session.active_style.drop_shadow.clone()),
+            glow: Some(self.session.active_style.glow.clone()),
+            blend_mode: Some(self.session.active_style.blend_mode),
             stabilization_strength: Some(self.session.active_style.stabilization_strength),
+            entrance: Some(self.session.active_entrance.clone()),
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -813,11 +906,14 @@ impl DesktopApp {
             .expect("project editor ui state should serialize");
         let base_style_state = serde_json::to_value(SavedBaseStylePresetState::capture(self))
             .expect("base style preset state should serialize");
+        let entrance_state = serde_json::to_value(SavedEntrancePresetState::capture(self))
+            .expect("entrance preset state should serialize");
         let settings = ensure_object_value(&mut self.session.document.project.settings);
         settings.insert(PROJECT_EDITOR_UI_SETTINGS_KEY.to_owned(), editor_state);
 
         let presets = ensure_object_value(&mut self.session.document.project.presets);
         presets.insert(PROJECT_BASE_STYLE_PRESET_KEY.to_owned(), base_style_state);
+        presets.insert(PROJECT_ENTRANCE_PRESET_KEY.to_owned(), entrance_state);
     }
 
     fn restore_project_ui_state_from_document(&mut self) {
@@ -845,6 +941,21 @@ impl DesktopApp {
         {
             self.session.active_style = base_style_state.resolved_snapshot;
             if let Some(preset_id) = base_style_state.preset_id {
+                self.selected_style_preset_id = preset_id;
+            }
+        }
+
+        if let Some(entrance_state) = self
+            .session
+            .document
+            .project
+            .presets
+            .get(PROJECT_ENTRANCE_PRESET_KEY)
+            .cloned()
+            .and_then(|value| serde_json::from_value::<SavedEntrancePresetState>(value).ok())
+        {
+            self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
+            if let Some(preset_id) = entrance_state.preset_id {
                 self.selected_style_preset_id = preset_id;
             }
         }
@@ -1121,6 +1232,19 @@ impl DesktopApp {
         }
     }
 
+    fn sync_active_entrance_to_current_object(&mut self) {
+        let Some(object_id) = self.current_style_target_object_id() else {
+            return;
+        };
+
+        if self
+            .session
+            .overwrite_glyph_object_entrance(&object_id, self.session.active_entrance.clone())
+        {
+            self.overlay_key = None;
+        }
+    }
+
     fn handle_guide_modifier_tap(&mut self, ctx: &egui::Context) {
         let modifier_active = self.guide_modifier_active(ctx);
         if modifier_active && !self.guide_modifier_was_down {
@@ -1207,10 +1331,26 @@ impl DesktopApp {
         } else if let Some(color) = preset.color_rgba {
             self.session.active_style.opacity = color[3] as f32 / 255.0;
         }
+        if let Some(outline) = preset.outline {
+            self.session.active_style.outline = outline;
+        }
+        if let Some(drop_shadow) = preset.drop_shadow {
+            self.session.active_style.drop_shadow = drop_shadow;
+        }
+        if let Some(glow) = preset.glow {
+            self.session.active_style.glow = glow;
+        }
+        if let Some(blend_mode) = preset.blend_mode {
+            self.session.active_style.blend_mode = blend_mode;
+        }
         if let Some(stabilization_strength) = preset.stabilization_strength {
             self.session.active_style.stabilization_strength = stabilization_strength;
         }
+        if let Some(entrance) = preset.entrance {
+            self.session.active_entrance = entrance;
+        }
         self.sync_active_style_to_current_object();
+        self.sync_active_entrance_to_current_object();
         self.mark_project_ui_dirty();
         self.push_log(format!("style preset 適用: {}", preset.display_name));
     }
@@ -3061,9 +3201,241 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.sync_active_style_to_current_object();
                     self.mark_project_ui_dirty();
                 }
-                ui.small("出現速度や entrance の細かい調整 UI は現時点では未実装です。");
+                ui.horizontal(|ui| {
+                    ui.label("合成");
+                    let mut blend_mode = self.session.active_style.blend_mode;
+                    egui::ComboBox::from_id_salt("blend_mode")
+                        .selected_text(blend_mode_label(blend_mode))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::BlendMode::Normal,
+                                pauseink_domain::BlendMode::Multiply,
+                                pauseink_domain::BlendMode::Screen,
+                                pauseink_domain::BlendMode::Additive,
+                            ] {
+                                ui.selectable_value(
+                                    &mut blend_mode,
+                                    candidate,
+                                    blend_mode_label(candidate),
+                                );
+                            }
+                        });
+                    if blend_mode != self.session.active_style.blend_mode {
+                        self.session.active_style.blend_mode = blend_mode;
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                ui.collapsing("アウトライン", |ui| {
+                    if ui
+                        .checkbox(&mut self.session.active_style.outline.enabled, "有効")
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.session.active_style.outline.width,
+                                0.0..=24.0,
+                            )
+                            .text("幅"),
+                        )
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    let mut outline_color = rgba_to_color32(self.session.active_style.outline.color);
+                    if ui.color_edit_button_srgba(&mut outline_color).changed() {
+                        self.session.active_style.outline.color = color32_to_rgba(outline_color);
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                ui.collapsing("ドロップシャドウ", |ui| {
+                    if ui
+                        .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.session.active_style.drop_shadow.offset_x,
+                                -64.0..=64.0,
+                            )
+                            .text("横オフセット"),
+                        )
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.session.active_style.drop_shadow.offset_y,
+                                -64.0..=64.0,
+                            )
+                            .text("縦オフセット"),
+                        )
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.session.active_style.drop_shadow.blur_radius,
+                                0.0..=48.0,
+                            )
+                            .text("ぼかし"),
+                        )
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    let mut shadow_color =
+                        rgba_to_color32(self.session.active_style.drop_shadow.color);
+                    if ui.color_edit_button_srgba(&mut shadow_color).changed() {
+                        self.session.active_style.drop_shadow.color = color32_to_rgba(shadow_color);
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                ui.collapsing("グロー", |ui| {
+                    if ui
+                        .checkbox(&mut self.session.active_style.glow.enabled, "有効")
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    if ui
+                        .add(
+                            egui::Slider::new(
+                                &mut self.session.active_style.glow.blur_radius,
+                                0.0..=48.0,
+                            )
+                            .text("ぼかし"),
+                        )
+                        .changed()
+                    {
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                    let mut glow_color = rgba_to_color32(self.session.active_style.glow.color);
+                    if ui.color_edit_button_srgba(&mut glow_color).changed() {
+                        self.session.active_style.glow.color = color32_to_rgba(glow_color);
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                ui.separator();
+                ui.label("出現");
+                ui.horizontal(|ui| {
+                    ui.label("方式");
+                    let mut entrance_kind = self.session.active_entrance.kind;
+                    egui::ComboBox::from_id_salt("entrance_kind")
+                        .selected_text(entrance_kind_label(entrance_kind))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::EntranceKind::Instant,
+                                pauseink_domain::EntranceKind::PathTrace,
+                                pauseink_domain::EntranceKind::Wipe,
+                                pauseink_domain::EntranceKind::Dissolve,
+                            ] {
+                                ui.selectable_value(
+                                    &mut entrance_kind,
+                                    candidate,
+                                    entrance_kind_label(candidate),
+                                );
+                            }
+                        });
+                    if entrance_kind != self.session.active_entrance.kind {
+                        self.session.active_entrance.kind = entrance_kind;
+                        self.sync_active_entrance_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("時間モード");
+                    let mut duration_mode = self.session.active_entrance.duration_mode;
+                    egui::ComboBox::from_id_salt("entrance_duration_mode")
+                        .selected_text(entrance_duration_mode_label(duration_mode))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::EntranceDurationMode::FixedTotalDuration,
+                                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength,
+                            ] {
+                                ui.selectable_value(
+                                    &mut duration_mode,
+                                    candidate,
+                                    entrance_duration_mode_label(candidate),
+                                );
+                            }
+                        });
+                    if duration_mode != self.session.active_entrance.duration_mode {
+                        self.session.active_entrance.duration_mode = duration_mode;
+                        self.sync_active_entrance_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                let mut entrance_duration_ms =
+                    media_duration_to_millis(self.session.active_entrance.duration) as f32;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut entrance_duration_ms, 50.0..=5_000.0)
+                            .logarithmic(true)
+                            .text(match self.session.active_entrance.duration_mode {
+                                pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+                                    "出現時間 ms"
+                                }
+                                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                                    "基準時間 ms"
+                                }
+                            }),
+                    )
+                    .changed()
+                {
+                    self.session.active_entrance.duration =
+                        pauseink_domain::MediaDuration::from_millis(
+                            entrance_duration_ms.round() as i64,
+                        );
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(
+                            &mut self.session.active_entrance.speed_scalar,
+                            0.1..=8.0,
+                        )
+                        .logarithmic(true)
+                        .text("出現速度"),
+                    )
+                    .changed()
+                {
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                ui.small(match self.session.active_entrance.duration_mode {
+                    pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+                        "固定時間モードでは、値が短いほど速く出現します。出現速度はこの時間に追加で倍率を掛けます。"
+                    }
+                    pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                        "長さ比例モードでは、基準時間を 600px 相当の長さへ当てて、出現速度倍率で最終時間を調整します。"
+                    }
+                });
                 ui.separator();
                 ui.label("ガイド");
                 if ui
@@ -3465,6 +3837,45 @@ fn ensure_object_value(value: &mut Value) -> &mut Map<String, Value> {
         .expect("value was converted into an object above")
 }
 
+fn rgba_to_color32(color: pauseink_domain::RgbaColor) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
+}
+
+fn color32_to_rgba(color: Color32) -> pauseink_domain::RgbaColor {
+    pauseink_domain::RgbaColor::new(color.r(), color.g(), color.b(), color.a())
+}
+
+fn media_duration_to_millis(duration: pauseink_domain::MediaDuration) -> i64 {
+    ((duration.ticks as f64 * duration.time_base.numerator as f64 * 1000.0)
+        / duration.time_base.denominator as f64)
+        .round() as i64
+}
+
+fn blend_mode_label(mode: pauseink_domain::BlendMode) -> &'static str {
+    match mode {
+        pauseink_domain::BlendMode::Normal => "通常",
+        pauseink_domain::BlendMode::Multiply => "乗算",
+        pauseink_domain::BlendMode::Screen => "スクリーン",
+        pauseink_domain::BlendMode::Additive => "加算",
+    }
+}
+
+fn entrance_kind_label(kind: pauseink_domain::EntranceKind) -> &'static str {
+    match kind {
+        pauseink_domain::EntranceKind::Instant => "即時",
+        pauseink_domain::EntranceKind::PathTrace => "なぞり書き",
+        pauseink_domain::EntranceKind::Wipe => "ワイプ",
+        pauseink_domain::EntranceKind::Dissolve => "ディゾルブ",
+    }
+}
+
+fn entrance_duration_mode_label(mode: pauseink_domain::EntranceDurationMode) -> &'static str {
+    match mode {
+        pauseink_domain::EntranceDurationMode::FixedTotalDuration => "固定時間",
+        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => "長さ比例",
+    }
+}
+
 fn underlay_mode_key(mode: UnderlayMode) -> &'static str {
     match mode {
         UnderlayMode::Outline => "outline",
@@ -3669,7 +4080,15 @@ mod tests {
         app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
         app.session.active_style.thickness = 13.0;
         app.session.active_style.opacity = 0.42;
+        app.session.active_style.outline.enabled = true;
+        app.session.active_style.outline.width = 4.0;
+        app.session.active_style.blend_mode = pauseink_domain::BlendMode::Additive;
         app.session.active_style.stabilization_strength = 0.77;
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        app.session.active_entrance.duration_mode =
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
+        app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
+        app.session.active_entrance.speed_scalar = 2.2;
         app.template.text = "保存対象".to_owned();
         app.template.font_family = "BIZ UDPGothic".to_owned();
         app.template.settings.font_size = 128.0;
@@ -3687,10 +4106,28 @@ mod tests {
         assert_eq!(reopened.session.active_style.thickness, 13.0);
         assert!((reopened.session.active_style.opacity - 0.42).abs() < 0.001);
         assert!((reopened.session.active_style.stabilization_strength - 0.77).abs() < 0.001);
+        assert!(reopened.session.active_style.outline.enabled);
+        assert_eq!(
+            reopened.session.active_style.blend_mode,
+            pauseink_domain::BlendMode::Additive
+        );
         assert_eq!(
             reopened.session.active_style.color,
             pauseink_domain::RgbaColor::new(240, 32, 64, 255)
         );
+        assert_eq!(
+            reopened.session.active_entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert_eq!(
+            reopened.session.active_entrance.duration_mode,
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
+        );
+        assert_eq!(
+            media_duration_to_millis(reopened.session.active_entrance.duration),
+            900
+        );
+        assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
         assert_eq!(reopened.template.text, "保存対象");
         assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
@@ -3787,6 +4224,87 @@ mod tests {
             .style_presets
             .iter()
             .all(|preset| preset.id != "custom_soft_marker"));
+    }
+
+    #[test]
+    fn style_preset_application_updates_effect_fields_and_persists_entrance_state() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let project_path = temp_dir.path().join("effect-entrance.pauseink");
+        std::fs::write(
+            portable_paths
+                .user_style_presets_dir()
+                .join("effect_trace.json5"),
+            r#"
+            {
+              id: "effect_trace",
+              display_name: "Effect Trace",
+              base_style: {
+                thickness: 10.0,
+                color_rgba: [0.2, 0.9, 1.0, 0.5],
+                opacity: 0.5,
+                blend_mode: "additive",
+                outline: {
+                  enabled: true,
+                  width: 3.0,
+                  color_rgba: [0.0, 0.0, 0.0, 1.0],
+                },
+                drop_shadow: {
+                  enabled: true,
+                  offset_x: 4.0,
+                  offset_y: 6.0,
+                  blur_radius: 8.0,
+                  color_rgba: [0.1, 0.1, 0.1, 0.8],
+                },
+                glow: {
+                  enabled: true,
+                  blur_radius: 12.0,
+                  color_rgba: [0.9, 1.0, 1.0, 0.7],
+                },
+              },
+              entrance: {
+                kind: "path_trace",
+                duration_mode: "length_proportional",
+                speed_scalar: 2.5,
+              },
+            }
+            "#,
+        )
+        .expect("user preset file");
+
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.selected_style_preset_id = "effect_trace".to_owned();
+
+        app.apply_selected_style_preset();
+        app.save_project(project_path.clone());
+
+        assert!(app.session.active_style.outline.enabled);
+        assert!(app.session.active_style.drop_shadow.enabled);
+        assert!(app.session.active_style.glow.enabled);
+        assert_eq!(
+            app.session.active_style.blend_mode,
+            pauseink_domain::BlendMode::Additive
+        );
+        assert_eq!(
+            app.session.active_entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert_eq!(
+            app.session.active_entrance.duration_mode,
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
+        );
+        assert!((app.session.active_entrance.speed_scalar - 2.5).abs() < 0.001);
+
+        let serialized = std::fs::read_to_string(project_path).expect("saved project");
+        assert!(
+            serialized.contains("\"entrance\""),
+            "project へ active entrance resolved snapshot を保存したい"
+        );
+        assert!(
+            serialized.contains("\"path_trace\""),
+            "preset 適用後の entrance kind を保存したい"
+        );
     }
 
     #[test]

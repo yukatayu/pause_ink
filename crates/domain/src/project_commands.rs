@@ -1,6 +1,6 @@
 use crate::{
-    AnnotationProject, ClearEvent, ClearEventId, Command, CommandError, GlyphObject, GlyphObjectId,
-    Group, GroupId, Stroke, StrokeId, StyleSnapshot,
+    AnnotationProject, ClearEvent, ClearEventId, Command, CommandError, EntranceBehavior,
+    GlyphObject, GlyphObjectId, Group, GroupId, Stroke, StrokeId, StyleSnapshot,
 };
 
 pub struct InsertStrokeCommand {
@@ -216,6 +216,38 @@ impl Command<AnnotationProject> for SetGlyphObjectStyleCommand {
             )));
         }
         object.style = self.from.clone();
+        Ok(())
+    }
+}
+
+pub struct SetGlyphObjectEntranceCommand {
+    pub object_id: GlyphObjectId,
+    pub from: EntranceBehavior,
+    pub to: EntranceBehavior,
+}
+
+impl Command<AnnotationProject> for SetGlyphObjectEntranceCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.entrance != self.from {
+            return Err(CommandError::new(format!(
+                "unexpected current entrance for {} during apply",
+                self.object_id.0
+            )));
+        }
+        object.entrance = self.to.clone();
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.entrance != self.to {
+            return Err(CommandError::new(format!(
+                "unexpected current entrance for {} during undo",
+                self.object_id.0
+            )));
+        }
+        object.entrance = self.from.clone();
         Ok(())
     }
 }

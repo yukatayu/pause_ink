@@ -4,7 +4,7 @@
 プロジェクト拡張子: **`.pauseink`**
 
 この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
-現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、project ごとの style/template/guide 状態保存、user preset CRUD まで接続されています。
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、project ごとの style/entrance/template/guide 状態保存、user preset CRUD まで接続されています。
 
 ## PauseInk とは
 
@@ -39,15 +39,18 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - composite AVI smoke export
 - ProRes 4444 / PNG sequence 向け alpha export path
 - cache manager / runtime diagnostics / preferences UI
-- built-in + user base style preset の overlay 読み込み、追加保存、上書き保存、削除
-- `.pauseink` への resolved base style snapshot、選択 preset ID、template text/font/layout、guide 傾きの保存と復元
+- built-in + user style preset の overlay 読み込み、追加保存、上書き保存、削除
+- outline / drop shadow / glow / blend mode の inspector 編集
+- entrance kind / duration mode / duration / speed scalar の inspector 編集
+- `.pauseink` への resolved base style snapshot、resolved entrance snapshot、選択 preset ID、template text/font/layout、guide 傾きの保存と復元
 
 ## まだ mainline packaging に含めていないもの
 
 - FFmpeg sidecar runtime 自体の同梱
 - optional codec pack の正式導線
 - Windows 向け release packaging
-- style preset の entrance / clear / combo UI 適用
+- clear / combo preset の専用 UI 適用
+- reveal-head effect と post-action chain
 - partial clear
 - pen pressure
 
@@ -64,7 +67,7 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - `crates/portable_fs`
   portable root、settings、cache/autosave/runtime path
 - `crates/presets_core`
-  export profile catalog と base style preset loader
+  export profile catalog と style preset loader
 - `crates/fonts`
   local font discovery、Google Fonts CSS/cache helper
 - `crates/template_layout`
@@ -94,7 +97,7 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 2. アプリ上部の `メディア読込` で動画を開く
 3. 中央キャンバスへ直接描く
 4. `全消去` で page 境界を追加する
-5. 必要なら右ペインで style preset を適用し、必要なら user preset として保存する
+5. 必要なら右ペインで style preset を適用し、effect / 出現速度も調整してから user preset として保存する
 6. `保存` で `.pauseink` を保存する
 7. 上部直下の transport bar で再生 / 一時停止とシークを行う
 8. 右ペインの `書き出し` から family / profile を選び、transparent または composite export を実行する

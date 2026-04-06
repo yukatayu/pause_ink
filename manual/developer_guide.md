@@ -103,17 +103,25 @@ PauseInk は family と profile を分離しています。
 
 現実装では built-in preset を `presets/style_presets/*.json5` から、user preset を `pauseink_data/config/style_presets/*.json5` から読み込みます。  
 読み込み順は built-in -> user overlay で、同じ `id` がある場合は user preset が優先されます。built-in は読み取り専用、user preset は GUI から追加保存 / 上書き保存 / 削除できます。  
-project には mutable preset file そのものではなく、`project.presets.base_style` に resolved snapshot と任意の preset ID を保存します。template / guide の project-specific UI state は `project.settings.pauseink_editor_ui` に保存します。
+project には mutable preset file そのものではなく、`project.presets.base_style` に resolved base style snapshot、`project.presets.entrance` に resolved entrance snapshot と任意の preset ID を保存します。template / guide の project-specific UI state は `project.settings.pauseink_editor_ui` に保存します。
 
-現在 UI で適用しているのは次の項目です。
+現在 UI / preset apply で接続済みなのは次の項目です。
 
 - thickness
 - color_rgba
 - opacity
+- outline
+- drop_shadow
+- glow
+- blend_mode
 - stabilization_strength
+- entrance.kind
+- entrance.duration_mode
+- entrance.duration_ms
+- entrance.speed_scalar
 
-entrance / clear / combo preset の宣言フィールドは将来拡張余地として保持していますが、v1.0 実装ではまだ active UI binding を絞っています。
-renderer 側には outline / drop shadow / glow の描画処理があり、同一 object 内では outer effect を先に、stroke 本体を後に描く multi-pass compositor にしてあります。これにより、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくくしています。いっぽうで inspector UI と preset loader はまだ base style 中心で、effect パラメータを UI から細かく触る導線は未実装です。
+renderer 側には outline / drop shadow / glow の描画処理があり、同一 object 内では outer effect を先に、stroke 本体を後に描く multi-pass compositor にしてあります。これにより、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくくしています。出現時間は `fixed_total_duration` と `proportional_to_stroke_length` の 2 モードを持ち、後者は 600px を基準長として `speed_scalar` を掛けています。
+未接続の残項目は reveal-head effect、post-action chain、clear / combo preset の専用 UI です。
 
 ## 7. FFmpeg runtime
 

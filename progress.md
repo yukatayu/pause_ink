@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/template/guide 状態保存、portable user preset CRUD まで反映済み。
-- 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
-- 現在の即時マイルストーン: 今回の修正バッチは反映済み。次回の実機確認では project reopen 時の style/template/guide 復元、user preset の追加/上書き/削除、template 再配置、stroke 初動を重点確認する
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor まで反映済み。
+- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
+- 現在の即時マイルストーン: effect / entrance UI と preset/project save 接続は完了。残る v1.0 gap のうち、reveal-head effect / post-action chain / clear-combo preset 専用 UI をどう扱うかを report に整理しつつ、実機確認を進める。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -64,7 +64,12 @@
   - 下部タブは `内容幅` を持つ固定高さ scroll region に整理し、object list / logs が増えても panel 自体の縦サイズが揺れないようにした
   - export 実行中は `実行中:` の下と `書き出しキュー` の両方に stage 名付き progress bar を表示するようにした
   - 基本スタイルの色 picker は RGB のみに絞り、不透明度は単一の `不透明度` スライダーへ統一した
-  - 出現速度や entrance の細かい調整 UI は未実装であることを inspector と manual に明記した
+  - inspector に outline / drop shadow / glow / blend mode / 出現方式 / 時間モード / 時間 / 出現速度を追加し、preset / project save / renderer まで接続した
+  - `project.presets.entrance` に resolved entrance snapshot を保存し、reopen 後も出現設定を復元するようにした
+  - `presets/style_presets/*.json5` と `pauseink_data/config/style_presets/*.json5` は base style に加えて entrance を読み書きできるようにした
+  - `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture`、`cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture` を通過
+  - `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - `.docs/11_implementation_plan.md` を再確認し、Phase 14 の残 gap は reveal-head effect、post-action chain、clear/combo preset 専用 UI であることを棚卸しした
   - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
   - `cargo test -p pauseink-export`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - preset/save-state 追加後も `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture` を通過
@@ -86,7 +91,8 @@
   - GitHub Release workflow が生成する成果物は現時点では app binary archive で、FFmpeg sidecar 同梱はまだ含まれない
   - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
   - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
-  - style preset は base style 適用中心で、entrance / clear / combo の UI binding は今後拡張余地がある
+  - reveal-head effect と post-action chain は domain 型までで、renderer / inspector UI は未接続
+  - clear / combo preset の専用 UI は未接続
   - headless host では GUI 実表示 smoke を実行できない
 
 ## フェーズ進行表
@@ -107,14 +113,14 @@
 | Phase 11 | 完了 | 100% | free ink capture と stabilization | GUI 経由の free ink / grouping / undo-redo と smoke を実装 |
 | Phase 12 | 完了 | 100% | guide system | guide capture と editor-only guide 表示を v1.0 範囲で実装 |
 | Phase 13 | 完了 | 100% | outline / groups / page events | object/page event track を v1.0 最小線で実装 |
-| Phase 14 | 完了 | 100% | style / entrance / clear effects | renderer built-in effect と base style preset 適用の v1.0 最小線を実装 |
+| Phase 14 | 進行中 | 92% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save は接続済み。reveal-head effect と post-action chain が残る |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
-| Phase 17 | 完了 | 100% | README / manuals / tutorials / polish | template / guide / transport / shortcut UX 差分まで docs と同期 |
-| Phase 18 | 完了 | 100% | 最終 build / test / export / Windows build 試行 | 上記 polish 反映後の回帰と docs 同期を再完了 |
+| Phase 17 | 進行中 | 96% | README / manuals / tutorials / polish | 今回の effect / entrance UI 反映と、v1.0 gap 棚卸しを docs へ同期中 |
+| Phase 18 | 進行中 | 95% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。計画上の残 gap を反映した最終整理を継続 |
 
 ## 次の具体的な一手
 
-1. display server がある Linux または実機 Windows で、template 字詰め・font dropdown・transport bar・guide 進行・live stroke preview・前後 slot 移動を目視確認する。
-2. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行する。
-3. release 用 portable sidecar runtime の bundling / provenance / notices を詰める。
+1. display server がある Linux または実機 Windows で、effect editor、出現速度 editor、preset 保存/再読込、template 字詰め、guide 進行を目視確認する。
+2. reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを `.docs/11_implementation_plan.md` に照らして確定し、実装か明示 de-scope のどちらかを report へ固定する。
+3. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行し、release 用 portable sidecar runtime の bundling / provenance / notices を詰める。

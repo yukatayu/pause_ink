@@ -904,6 +904,25 @@
 - 2026-04-06T16:10:00+09:00
   - 実施内容: `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture`
   - 結果: すべて exit 0。project reopen での state 復元、portable user preset overlay、add / overwrite / delete の roundtrip を回帰テストで固定できた。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: effect / entrance UI の実装漏れを `.docs/11_implementation_plan.md` と突き合わせた。sub-agent は timeout で回収できなかったため、local audit でも同じ観点を再確認した。
+  - 判断: v1.0 の最小接続対象は base style の `outline / drop shadow / glow / blend mode` と、renderer が実際に消費する `entrance kind / duration_mode / duration / speed_scalar` とした。`reveal-head effect` と `post-action chain`、`clear / combo preset` の専用 UI は今回の範囲外だが、残 gap として明示管理する。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/presets_core/src/lib.rs` を拡張し、style preset が `outline / drop_shadow / glow / blend_mode / entrance` を読み書きできるようにした。built-in preset の `target: "glyph"`、`duration_mode: "length_proportional"` も loader 側で吸収するようにした。
+  - 変更ファイル: `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`, `crates/domain/src/annotations.rs`
+  - 結果: built-in preset と user preset の両方で effect / entrance を保持したまま overlay load と disk roundtrip が可能になった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/app/src/lib.rs` に `active_entrance` と glyph object entrance 同期を追加し、`crates/app/src/main.rs` の inspector に outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar の UI を追加した。project save には `project.presets.entrance` を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `crates/domain/src/project_commands.rs`
+  - 結果: 現在の style / entrance は preset 適用、user preset 保存、project reopen 復元、既存 object への継続編集まで一貫して反映されるようになった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `crates/renderer/src/lib.rs` の entrance 計算を修正し、`speed_scalar` と `duration_mode` を可視化へ反映した。`fixed_total_duration` は時間を倍率で短縮/延長し、`proportional_to_stroke_length` は 600px を基準長として stroke 長に比例させる安全解釈を採用した。duration 未指定時だけ 0.6s fallback を使う。
+  - 判断理由: spec は `duration mode` と `speed scalar` を要求しているが、比例モードの基準長は未規定だったため、UI と renderer を最小矛盾で接続できる 600px baseline を app-authored 定数として採用した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`
+  - 結果: preview / export の両方で出現速度 UI が実際の visible progress に効くようになった。
+- 2026-04-06T14:54:38+09:00
+  - 実施内容: `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture` を red -> green で通し、その後 `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。workspace 回帰、transparent/composite export smoke、save/reopen、preset roundtrip を維持した。`eframe/egui 0.34.1` の `Panel::*` 系 deprecation warning は継続。
 
 ## 9. Export / profile メモ
 
@@ -947,8 +966,8 @@
 - Windows / macOS の FFmpeg runtime 実行確認はこの Linux host では行えず、現時点の cross-platform 証跡は探索ロジックの unit test と Linux host 上の実 runtime 検証まで。
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
-- built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。
-- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。ただし preset loader と inspector UI はまだ thickness / color 中心で、effect パラメータを UI から細かく触る導線は未実装。
+- built-in / user style preset は base style に加えて `outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar` を読み書きできる。clear / combo preset の専用 UI はまだ無い。
+- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱えるが、reveal-head effect と post-action chain は未接続。
 - Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。

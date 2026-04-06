@@ -6,9 +6,10 @@ use anyhow::Result as AnyhowResult;
 use pauseink_domain::{
     AnnotationProject, AppendStrokeToGlyphObjectCommand, ClearEvent, ClearEventId, ClearKind,
     ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath,
-    GlyphObject, GlyphObjectId, InsertClearEventCommand, InsertGlyphObjectCommand,
-    InsertStrokeCommand, MediaTime, OrderingMetadata, Point2, SetGlyphObjectStyleCommand, Stroke,
-    StrokeId, StrokeSample, StyleSnapshot, DEFAULT_HISTORY_DEPTH,
+    EntranceBehavior, GlyphObject, GlyphObjectId, InsertClearEventCommand,
+    InsertGlyphObjectCommand, InsertStrokeCommand, MediaTime, OrderingMetadata, Point2,
+    SetGlyphObjectEntranceCommand, SetGlyphObjectStyleCommand, Stroke, StrokeId, StrokeSample,
+    StyleSnapshot, DEFAULT_HISTORY_DEPTH,
 };
 use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
@@ -79,6 +80,7 @@ pub struct AppSession {
     pub playback: Option<PlaybackState>,
     pub editor_mode: EditorMode,
     pub active_style: StyleSnapshot,
+    pub active_entrance: EntranceBehavior,
     pub guide: GuideState,
     pub template: TemplateState,
     pub selected_object_id: Option<GlyphObjectId>,
@@ -100,12 +102,15 @@ impl Default for AppSession {
 impl AppSession {
     pub fn with_history_limit(history_limit: usize) -> Self {
         let document = PauseInkDocument::default();
+        let mut active_entrance = EntranceBehavior::default();
+        active_entrance.duration = pauseink_domain::MediaDuration::from_millis(600);
         Self {
             project: AnnotationProject::default(),
             imported_media: None,
             playback: None,
             editor_mode: EditorMode::FreeInk,
             active_style: StyleSnapshot::default(),
+            active_entrance,
             guide: GuideState::default(),
             template: TemplateState::default(),
             selected_object_id: None,
@@ -125,6 +130,8 @@ impl AppSession {
         let project = annotation_project_from_document(&document);
         let next_id_counter = seed_next_id_counter(&project);
         let next_capture_order = seed_next_capture_order(&project);
+        let mut active_entrance = EntranceBehavior::default();
+        active_entrance.duration = pauseink_domain::MediaDuration::from_millis(600);
         Ok(Self {
             document,
             project,
@@ -132,6 +139,7 @@ impl AppSession {
             playback: None,
             editor_mode: EditorMode::FreeInk,
             active_style: StyleSnapshot::default(),
+            active_entrance,
             guide: GuideState::default(),
             template: TemplateState::default(),
             selected_object_id: None,
@@ -311,6 +319,29 @@ impl AppSession {
         true
     }
 
+    pub fn overwrite_glyph_object_entrance(
+        &mut self,
+        object_id: &GlyphObjectId,
+        entrance: EntranceBehavior,
+    ) -> bool {
+        let Some(object) = self
+            .project
+            .glyph_objects
+            .iter_mut()
+            .find(|object| object.id == *object_id)
+        else {
+            return false;
+        };
+
+        if object.entrance == entrance {
+            return false;
+        }
+
+        object.entrance = entrance;
+        self.dirty = true;
+        true
+    }
+
     pub fn commit_stroke(&mut self, shift_group: bool) -> AnyhowResult<Option<GlyphObjectId>> {
         let target_object_id = if shift_group {
             self.last_created_object_id.clone()
@@ -361,6 +392,13 @@ impl AppSession {
                 .find(|object| object.id == object_id)
                 .map(|object| object.style.clone())
                 .ok_or_else(|| anyhow::anyhow!("target glyph object not found: {}", object_id.0))?;
+            let previous_entrance = self
+                .project
+                .glyph_objects
+                .iter()
+                .find(|object| object.id == object_id)
+                .map(|object| object.entrance.clone())
+                .ok_or_else(|| anyhow::anyhow!("target glyph object not found: {}", object_id.0))?;
             self.history.apply(
                 &mut self.project,
                 Box::new(CommandBatch::new(vec![
@@ -377,6 +415,11 @@ impl AppSession {
                         from: previous_style,
                         to: self.active_style.clone(),
                     }),
+                    Box::new(SetGlyphObjectEntranceCommand {
+                        object_id: object_id.clone(),
+                        from: previous_entrance,
+                        to: self.active_entrance.clone(),
+                    }),
                 ])),
             )?;
             object_id
@@ -387,6 +430,7 @@ impl AppSession {
                 id: object_id.clone(),
                 stroke_ids: vec![stroke_id.clone()],
                 style: self.active_style.clone(),
+                entrance: self.active_entrance.clone(),
                 ordering: OrderingMetadata {
                     z_index: self.project.glyph_objects.len() as i32,
                     capture_order,

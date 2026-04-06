@@ -39,6 +39,9 @@ struct RenderScale {
     stroke: f32,
 }
 
+const DEFAULT_ENTRANCE_DURATION_SECONDS: f64 = 0.6;
+const PROPORTIONAL_REFERENCE_LENGTH_PX: f64 = 600.0;
+
 impl VisibilityState {
     const HIDDEN: Self = Self {
         alpha: 0.0,
@@ -236,7 +239,7 @@ fn evaluate_visibility(
         return VisibilityState::HIDDEN;
     }
 
-    let entrance = evaluate_entrance(object, time);
+    let entrance = evaluate_entrance(project, object, time);
     if !entrance.is_visible() {
         return entrance;
     }
@@ -248,7 +251,11 @@ fn evaluate_visibility(
     }
 }
 
-fn evaluate_entrance(object: Option<&GlyphObject>, time: MediaTime) -> VisibilityState {
+fn evaluate_entrance(
+    project: &AnnotationProject,
+    object: Option<&GlyphObject>,
+    time: MediaTime,
+) -> VisibilityState {
     let Some(object) = object else {
         return VisibilityState::FULLY_VISIBLE;
     };
@@ -257,10 +264,7 @@ fn evaluate_entrance(object: Option<&GlyphObject>, time: MediaTime) -> Visibilit
         return VisibilityState::HIDDEN;
     }
 
-    let duration_seconds = media_duration_seconds(
-        object.entrance.duration.ticks,
-        object.entrance.duration.time_base,
-    );
+    let duration_seconds = entrance_duration_seconds(project, object);
     let progress = normalized_progress(object.created_at, time, duration_seconds);
 
     match object.entrance.kind {
@@ -276,6 +280,51 @@ fn evaluate_entrance(object: Option<&GlyphObject>, time: MediaTime) -> Visibilit
             path_fraction: 1.0,
         },
     }
+}
+
+fn entrance_duration_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
+    let configured_duration_seconds = media_duration_seconds(
+        object.entrance.duration.ticks,
+        object.entrance.duration.time_base,
+    );
+    let base_duration_seconds = if configured_duration_seconds <= f64::EPSILON {
+        DEFAULT_ENTRANCE_DURATION_SECONDS
+    } else {
+        configured_duration_seconds
+    };
+    let speed_scalar = object.entrance.speed_scalar.max(0.05) as f64;
+
+    match object.entrance.duration_mode {
+        pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+            base_duration_seconds / speed_scalar
+        }
+        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+            let total_length = object_total_length(project, object) as f64;
+            let length_ratio = if total_length <= f64::EPSILON {
+                1.0
+            } else {
+                total_length / PROPORTIONAL_REFERENCE_LENGTH_PX
+            };
+            (base_duration_seconds * length_ratio.max(0.05)) / speed_scalar
+        }
+    }
+}
+
+fn object_total_length(project: &AnnotationProject, object: &GlyphObject) -> f32 {
+    object
+        .stroke_ids
+        .iter()
+        .filter_map(|stroke_id| {
+            project
+                .strokes
+                .iter()
+                .find(|stroke| &stroke.id == stroke_id)
+        })
+        .map(|stroke| {
+            let points = transformed_visible_points(stroke, &object.transform, 1.0);
+            polyline_length(&points)
+        })
+        .sum()
 }
 
 fn evaluate_clear(
@@ -757,6 +806,64 @@ mod tests {
 
         assert!(alpha_at(&image, 35, 20) > 0);
         assert_eq!(alpha_at(&image, 95, 20), 0);
+    }
+
+    #[test]
+    fn fixed_duration_speed_scalar_changes_reveal_progress() {
+        let mut fast_object = demo_object("stroke-1", 0);
+        fast_object.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            speed_scalar: 2.0,
+            ..EntranceBehavior::default()
+        };
+        let mut slow_object = demo_object("stroke-1", 0);
+        slow_object.id = GlyphObjectId::new("obj-slow");
+        slow_object.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            speed_scalar: 0.5,
+            ..EntranceBehavior::default()
+        };
+
+        let fast_image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![demo_stroke("stroke-1", 0)],
+                glyph_objects: vec![fast_object],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(500),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("fast render");
+        let slow_image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![demo_stroke("stroke-1", 0)],
+                glyph_objects: vec![slow_object],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(500),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("slow render");
+
+        assert!(
+            alpha_at(&fast_image, 95, 20) > 0,
+            "speed_scalar を大きくすると同じ時刻でより先まで見えるべき"
+        );
+        assert_eq!(
+            alpha_at(&slow_image, 95, 20),
+            0,
+            "speed_scalar を小さくすると同じ時刻ではまだ終端まで届かないべき"
+        );
     }
 
     #[test]
