@@ -255,6 +255,12 @@ impl AppSession {
         let draft = self.stroke_draft.get_or_insert_with(|| StrokeDraft {
             samples: Vec::new(),
         });
+        if draft.samples.last().is_some_and(|sample| {
+            (sample.position.x - point.x).abs() <= f32::EPSILON
+                && (sample.position.y - point.y).abs() <= f32::EPSILON
+        }) {
+            return;
+        }
         draft.samples.push(StrokeSample {
             position: point,
             at,

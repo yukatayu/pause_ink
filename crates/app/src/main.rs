@@ -1347,7 +1347,9 @@ impl DesktopApp {
         frame_height: u32,
         ctx: &egui::Context,
     ) {
-        let pointer_position = response.interact_pointer_pos();
+        let pointer_position = response
+            .interact_pointer_pos()
+            .or_else(|| ctx.input(|input| input.pointer.hover_pos()));
 
         if self.template.placement_armed {
             if response.clicked() {
@@ -1367,7 +1369,13 @@ impl DesktopApp {
             return;
         }
 
-        if response.drag_started() {
+        let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
+        let pointer_down = ctx.input(|input| input.pointer.primary_down());
+        let press_started_on_canvas = primary_pressed
+            && pointer_position.is_some_and(|position| response.rect.contains(position));
+        let mut started_stroke_this_frame = false;
+
+        if !self.canvas_drag_active && press_started_on_canvas {
             self.guide_capture_armed =
                 self.guide_modifier_active(ctx) && self.template.placed_slots.is_none();
             if self.guide_capture_armed {
@@ -1384,24 +1392,26 @@ impl DesktopApp {
                     self.session
                         .begin_stroke(frame_point, self.session.current_time());
                     self.canvas_drag_active = true;
+                    started_stroke_this_frame = true;
                 }
             }
         }
 
         if self.canvas_drag_active {
-            if let Some(pointer_position) = pointer_position {
-                if let Some(frame_point) = pointer_position_to_frame_point(
-                    pointer_position,
-                    frame_rect,
-                    frame_width,
-                    frame_height,
-                ) {
-                    self.session
-                        .append_stroke_point(frame_point, self.session.current_time());
+            if !started_stroke_this_frame {
+                if let Some(pointer_position) = pointer_position {
+                    if let Some(frame_point) = pointer_position_to_frame_point(
+                        pointer_position,
+                        frame_rect,
+                        frame_width,
+                        frame_height,
+                    ) {
+                        self.session
+                            .append_stroke_point(frame_point, self.session.current_time());
+                    }
                 }
             }
 
-            let pointer_down = ctx.input(|input| input.pointer.primary_down());
             if !pointer_down {
                 let template_target_object = self
                     .template
@@ -2988,7 +2998,7 @@ fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Pos2, RawInput};
+    use eframe::egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
     use pauseink_portable_fs::{PortablePaths, Settings};
     use tempfile::tempdir;
 
@@ -3002,6 +3012,30 @@ mod tests {
             |_ctx| {},
         );
         ctx
+    }
+
+    fn run_canvas_input_frame(
+        app: &mut DesktopApp,
+        ctx: &egui::Context,
+        events: Vec<Event>,
+    ) -> Rect {
+        let mut frame_rect = Rect::NOTHING;
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (response, _painter) =
+                        ui.allocate_painter(Vec2::new(640.0, 360.0), Sense::click_and_drag());
+                    frame_rect = response.rect;
+                    app.handle_canvas_input(&response, response.rect, 1280, 720, ctx);
+                });
+            },
+        );
+        frame_rect
     }
 
     #[test]
@@ -3167,6 +3201,157 @@ mod tests {
 
         assert!(after[0].height > before[0].height);
         assert!(after[1].origin.x > before[1].origin.x);
+    }
+
+    #[test]
+    fn stroke_starts_on_pointer_press_before_drag_threshold() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let press = Pos2::new(120.0, 120.0);
+
+        let _press_snapshot = run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+
+        assert!(
+            app.canvas_drag_active,
+            "pointer press frame で stroke draft を開始したい"
+        );
+        let preview = app
+            .session
+            .current_stroke_preview()
+            .expect("drag threshold 未満でも最初の点は見えている必要がある");
+        assert_eq!(
+            preview.points.len(),
+            1,
+            "press frame は同一点の二重 sample ではなく 1 点 preview にしたい"
+        );
+    }
+
+    #[test]
+    fn committed_stroke_keeps_press_origin_as_first_raw_sample() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let press = Pos2::new(120.0, 120.0);
+        let drag = Pos2::new(152.0, 132.0);
+        let release = Pos2::new(220.0, 160.0);
+
+        let press_snapshot = run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+        let expected_press_origin = pointer_position_to_frame_point(
+            press,
+            press_snapshot,
+            1280,
+            720,
+        )
+        .expect("press should be inside frame rect");
+        run_canvas_input_frame(&mut app, &ctx, vec![Event::PointerMoved(drag)]);
+        assert!(
+            app.session
+                .current_stroke_preview()
+                .is_some_and(|preview| preview.points.len() >= 2),
+            "drag frame では 2 点目以降の sample が draft に入る必要がある"
+        );
+        run_canvas_input_frame(&mut app, &ctx, vec![Event::PointerMoved(release)]);
+        run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(release),
+                Event::PointerButton {
+                    pos: release,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+
+        let stroke = app
+            .session
+            .project
+            .strokes
+            .first()
+            .expect("stroke should be committed");
+        let first = stroke.raw_samples.first().expect("first sample");
+
+        assert!(
+            (first.position.x - expected_press_origin.x).abs() < 0.01,
+            "最初の x sample は press origin を保つべき"
+        );
+        assert!(
+            (first.position.y - expected_press_origin.y).abs() < 0.01,
+            "最初の y sample は press origin を保つべき"
+        );
+    }
+
+    #[test]
+    fn same_frame_move_keeps_pointer_button_press_as_first_preview_point() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let press = Pos2::new(120.0, 120.0);
+        let moved = Pos2::new(152.0, 132.0);
+
+        let frame_rect = run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerMoved(moved),
+            ],
+        );
+
+        let preview = app
+            .session
+            .current_stroke_preview()
+            .expect("press frame の preview が必要");
+        let expected_press_origin = pointer_position_to_frame_point(press, frame_rect, 1280, 720)
+            .expect("press should map into frame");
+
+        assert!(
+            (preview.points[0].x - expected_press_origin.x).abs() < 0.01,
+            "同一 frame 内に move が来ても最初の x は PointerButton の press 座標を使うべき"
+        );
+        assert!(
+            (preview.points[0].y - expected_press_origin.y).abs() < 0.01,
+            "同一 frame 内に move が来ても最初の y は PointerButton の press 座標を使うべき"
+        );
     }
 
     fn central_height_with_scrollable_bottom_tab(item_count: usize) -> f32 {

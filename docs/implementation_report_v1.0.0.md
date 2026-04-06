@@ -839,6 +839,41 @@
   - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を今回の UI/UX 差分に合わせて更新した。
   - 結果: template 再配置、下部パネル固定化、export progress、opacity 一本化、出現速度 UI 未実装を docs と同期した。
 
+## 8.11 2026-04-06 stroke 初点欠落の再修正
+
+- 開始時点の即時マイルストーン:
+  - 「画の最初が書けない」報告を再現し、press origin が最初の sample として残ることを test で固定する
+- 根本原因の整理:
+  - canvas input 開始条件が `drag_started` 由来の遅延と `response` 依存の interaction 判定に引きずられ、press 直後の 1 点目が draft に入らないケースが残っていた
+  - press frame で同一点を二重に積むと、live preview が zero-length line になって見えにくくなる
+- 採用した実装方針:
+  - input 開始条件は `pointer.primary_down` と `press_origin` が canvas 上にあることを基準にし、press origin を最初の sample として使う
+  - `append_stroke_point` で直前 sample と同一点なら追加しない
+  - main.rs の regression test で「press frame で 1 点 preview」「commit 後の first raw sample が press origin」を固定する
+- sub-agent findings:
+  - explorer sub-agent も、`handle_canvas_input` と `AppSession` の境界で初点が落ちている可能性を優先候補として挙げた
+  - そのため UI 側開始条件と draft sample 追加条件の両方を見直した
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の canvas input 開始条件を `press_origin` 基準へ変更し、`crates/app/src/lib.rs` の `append_stroke_point` に duplicate sample 抑止を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `crates/app/src/lib.rs`
+  - 結果: drag threshold 到達前の press frame でも draft が開始し、最初の sample は押した位置を保持するようになった。press frame の 1 点目は dot preview として描かれる。
+  - 次の一手: app/workspace 回帰、manual / progress 同期、commit / push を行う。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `stroke_starts_on_pointer_press_before_drag_threshold` と `committed_stroke_keeps_press_origin_as_first_raw_sample` を red -> green で追加した。
+  - 結果: 旧実装では前者が `canvas_drag_active` 未開始で fail、後者が commit/first sample 条件で fail した。修正後は両方 pass した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。app lib 14 tests、bin 19 tests が通過し、今回追加した 2 本の regression test も pass した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体回帰、export smoke、runtime/path/guide/template 既存テストを維持した。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を維持。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T13:35:00+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を stroke 初点修正の内容に合わせて更新した。
+  - 結果: 「押した瞬間の位置から表示される」こと、press origin / duplicate sample 抑止の実装意図を docs と同期した。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。
