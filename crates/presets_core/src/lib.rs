@@ -3,11 +3,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use pauseink_domain::{
-    BlendMode, DropShadowStyle, EntranceBehavior, EntranceDurationMode, EntranceKind, GlowStyle,
-    MediaDuration, OutlineStyle, RgbaColor,
+    BlendMode, ClearKind, ClearOrdering, ClearTargetGranularity, DropShadowStyle, EntranceBehavior,
+    EntranceDurationMode, EntranceKind, GlowStyle, MediaDuration, OutlineStyle,
+    RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+#[cfg(test)]
+use pauseink_domain::{EffectOrder, EffectScope};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,9 +100,57 @@ pub struct BaseStylePreset {
     pub glow: Option<GlowStyle>,
     pub blend_mode: Option<BlendMode>,
     pub stabilization_strength: Option<f32>,
-    pub entrance: Option<EntranceBehavior>,
     pub source: StylePresetSource,
     pub file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntrancePreset {
+    pub id: String,
+    pub display_name: String,
+    pub entrance: EntranceBehavior,
+    pub source: StylePresetSource,
+    pub file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClearPreset {
+    pub id: String,
+    pub display_name: String,
+    pub kind: Option<ClearKind>,
+    pub duration_ms: Option<i64>,
+    pub granularity: Option<ClearTargetGranularity>,
+    pub ordering: Option<ClearOrdering>,
+    pub source: StylePresetSource,
+    pub file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ComboPresetRefs {
+    pub style_preset_id: Option<String>,
+    pub entrance_preset_id: Option<String>,
+    pub clear_preset_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComboPreset {
+    pub id: String,
+    pub display_name: String,
+    pub refs: ComboPresetRefs,
+    pub style_override: Option<BaseStylePreset>,
+    pub entrance_override: Option<EntrancePreset>,
+    pub clear_override: Option<ClearPreset>,
+    pub source: StylePresetSource,
+    pub file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PresetCatalogs {
+    pub style_presets: Vec<BaseStylePreset>,
+    pub entrance_presets: Vec<EntrancePreset>,
+    pub clear_presets: Vec<ClearPreset>,
+    pub combo_presets: Vec<ComboPreset>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,6 +465,75 @@ pub fn load_base_style_presets_from_dir(
     load_base_style_presets_overlay(preset_dir, None)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PresetDirectorySet<'a> {
+    pub style_dir: &'a Path,
+    pub entrance_dir: Option<&'a Path>,
+    pub clear_dir: Option<&'a Path>,
+    pub combo_dir: Option<&'a Path>,
+}
+
+pub fn load_preset_catalogs_overlay(
+    builtin_dirs: PresetDirectorySet<'_>,
+    user_dirs: Option<PresetDirectorySet<'_>>,
+) -> Result<PresetCatalogs, StylePresetLoadError> {
+    let style_presets = load_base_style_presets_overlay(
+        builtin_dirs.style_dir,
+        user_dirs.map(|dirs| dirs.style_dir),
+    )?;
+
+    let mut entrance_presets = BTreeMap::new();
+    load_entrance_presets_into_map(
+        &mut entrance_presets,
+        builtin_dirs.entrance_dir,
+        Some(builtin_dirs.style_dir),
+        StylePresetSource::BuiltIn,
+    )?;
+    if let Some(user_dirs) = user_dirs {
+        load_entrance_presets_into_map(
+            &mut entrance_presets,
+            user_dirs.entrance_dir,
+            Some(user_dirs.style_dir),
+            StylePresetSource::User,
+        )?;
+    }
+
+    let mut clear_presets = BTreeMap::new();
+    load_clear_presets_into_map(
+        &mut clear_presets,
+        builtin_dirs.clear_dir,
+        StylePresetSource::BuiltIn,
+    )?;
+    if let Some(user_dirs) = user_dirs {
+        load_clear_presets_into_map(
+            &mut clear_presets,
+            user_dirs.clear_dir,
+            StylePresetSource::User,
+        )?;
+    }
+
+    let mut combo_presets = BTreeMap::new();
+    load_combo_presets_into_map(
+        &mut combo_presets,
+        builtin_dirs.combo_dir,
+        StylePresetSource::BuiltIn,
+    )?;
+    if let Some(user_dirs) = user_dirs {
+        load_combo_presets_into_map(
+            &mut combo_presets,
+            user_dirs.combo_dir,
+            StylePresetSource::User,
+        )?;
+    }
+
+    Ok(PresetCatalogs {
+        style_presets,
+        entrance_presets: entrance_presets.into_values().collect(),
+        clear_presets: clear_presets.into_values().collect(),
+        combo_presets: combo_presets.into_values().collect(),
+    })
+}
+
 pub fn load_base_style_presets_overlay(
     builtin_dir: &Path,
     user_dir: Option<&Path>,
@@ -436,6 +557,66 @@ pub fn load_base_style_presets_overlay(
     Ok(presets.into_values().collect())
 }
 
+pub fn load_entrance_presets_from_dir(
+    preset_dir: &Path,
+) -> Result<Vec<EntrancePreset>, StylePresetLoadError> {
+    load_entrance_presets_overlay(Some(preset_dir), None, None, None)
+}
+
+pub fn load_entrance_presets_overlay(
+    builtin_dir: Option<&Path>,
+    user_dir: Option<&Path>,
+    legacy_builtin_style_dir: Option<&Path>,
+    legacy_user_style_dir: Option<&Path>,
+) -> Result<Vec<EntrancePreset>, StylePresetLoadError> {
+    let mut presets = BTreeMap::new();
+    load_entrance_presets_into_map(
+        &mut presets,
+        builtin_dir,
+        legacy_builtin_style_dir,
+        StylePresetSource::BuiltIn,
+    )?;
+    load_entrance_presets_into_map(
+        &mut presets,
+        user_dir,
+        legacy_user_style_dir,
+        StylePresetSource::User,
+    )?;
+    Ok(presets.into_values().collect())
+}
+
+pub fn load_clear_presets_from_dir(
+    preset_dir: &Path,
+) -> Result<Vec<ClearPreset>, StylePresetLoadError> {
+    load_clear_presets_overlay(Some(preset_dir), None)
+}
+
+pub fn load_clear_presets_overlay(
+    builtin_dir: Option<&Path>,
+    user_dir: Option<&Path>,
+) -> Result<Vec<ClearPreset>, StylePresetLoadError> {
+    let mut presets = BTreeMap::new();
+    load_clear_presets_into_map(&mut presets, builtin_dir, StylePresetSource::BuiltIn)?;
+    load_clear_presets_into_map(&mut presets, user_dir, StylePresetSource::User)?;
+    Ok(presets.into_values().collect())
+}
+
+pub fn load_combo_presets_from_dir(
+    preset_dir: &Path,
+) -> Result<Vec<ComboPreset>, StylePresetLoadError> {
+    load_combo_presets_overlay(Some(preset_dir), None)
+}
+
+pub fn load_combo_presets_overlay(
+    builtin_dir: Option<&Path>,
+    user_dir: Option<&Path>,
+) -> Result<Vec<ComboPreset>, StylePresetLoadError> {
+    let mut presets = BTreeMap::new();
+    load_combo_presets_into_map(&mut presets, builtin_dir, StylePresetSource::BuiltIn)?;
+    load_combo_presets_into_map(&mut presets, user_dir, StylePresetSource::User)?;
+    Ok(presets.into_values().collect())
+}
+
 fn load_base_style_presets_from_single_dir(
     preset_dir: &Path,
     default_source: StylePresetSource,
@@ -449,6 +630,146 @@ fn load_base_style_presets_from_single_dir(
     let mut presets = Vec::new();
     for path in paths {
         presets.push(load_base_style_preset_from_path_with_default_source(
+            &path,
+            default_source,
+        )?);
+    }
+    Ok(presets)
+}
+
+fn load_entrance_presets_into_map(
+    presets: &mut BTreeMap<String, EntrancePreset>,
+    preset_dir: Option<&Path>,
+    legacy_style_dir: Option<&Path>,
+    default_source: StylePresetSource,
+) -> Result<(), StylePresetLoadError> {
+    if let Some(preset_dir) = preset_dir {
+        if preset_dir.exists() {
+            for preset in load_entrance_presets_from_single_dir(preset_dir, default_source)? {
+                presets.insert(preset.id.clone(), preset);
+            }
+        }
+    }
+    if let Some(legacy_style_dir) = legacy_style_dir {
+        if legacy_style_dir.exists() {
+            for preset in
+                load_legacy_entrance_presets_from_style_dir(legacy_style_dir, default_source)?
+            {
+                presets.entry(preset.id.clone()).or_insert(preset);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn load_entrance_presets_from_single_dir(
+    preset_dir: &Path,
+    default_source: StylePresetSource,
+) -> Result<Vec<EntrancePreset>, StylePresetLoadError> {
+    let mut paths = fs::read_dir(preset_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut presets = Vec::new();
+    for path in paths {
+        presets.push(load_entrance_preset_from_path_with_default_source(
+            &path,
+            default_source,
+        )?);
+    }
+    Ok(presets)
+}
+
+fn load_legacy_entrance_presets_from_style_dir(
+    preset_dir: &Path,
+    default_source: StylePresetSource,
+) -> Result<Vec<EntrancePreset>, StylePresetLoadError> {
+    let mut paths = fs::read_dir(preset_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut presets = Vec::new();
+    for path in paths {
+        if let Some(preset) =
+            load_legacy_entrance_preset_from_style_path_with_default_source(&path, default_source)?
+        {
+            presets.push(preset);
+        }
+    }
+    Ok(presets)
+}
+
+fn load_clear_presets_into_map(
+    presets: &mut BTreeMap<String, ClearPreset>,
+    preset_dir: Option<&Path>,
+    default_source: StylePresetSource,
+) -> Result<(), StylePresetLoadError> {
+    let Some(preset_dir) = preset_dir else {
+        return Ok(());
+    };
+    if !preset_dir.exists() {
+        return Ok(());
+    }
+    for preset in load_clear_presets_from_single_dir(preset_dir, default_source)? {
+        presets.insert(preset.id.clone(), preset);
+    }
+    Ok(())
+}
+
+fn load_clear_presets_from_single_dir(
+    preset_dir: &Path,
+    default_source: StylePresetSource,
+) -> Result<Vec<ClearPreset>, StylePresetLoadError> {
+    let mut paths = fs::read_dir(preset_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut presets = Vec::new();
+    for path in paths {
+        presets.push(load_clear_preset_from_path_with_default_source(
+            &path,
+            default_source,
+        )?);
+    }
+    Ok(presets)
+}
+
+fn load_combo_presets_into_map(
+    presets: &mut BTreeMap<String, ComboPreset>,
+    preset_dir: Option<&Path>,
+    default_source: StylePresetSource,
+) -> Result<(), StylePresetLoadError> {
+    let Some(preset_dir) = preset_dir else {
+        return Ok(());
+    };
+    if !preset_dir.exists() {
+        return Ok(());
+    }
+    for preset in load_combo_presets_from_single_dir(preset_dir, default_source)? {
+        presets.insert(preset.id.clone(), preset);
+    }
+    Ok(())
+}
+
+fn load_combo_presets_from_single_dir(
+    preset_dir: &Path,
+    default_source: StylePresetSource,
+) -> Result<Vec<ComboPreset>, StylePresetLoadError> {
+    let mut paths = fs::read_dir(preset_dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut presets = Vec::new();
+    for path in paths {
+        presets.push(load_combo_preset_from_path_with_default_source(
             &path,
             default_source,
         )?);
@@ -475,6 +796,70 @@ fn load_base_style_preset_from_path_with_default_source(
     Ok(file.into_preset(path, default_source))
 }
 
+pub fn load_entrance_preset_from_path(path: &Path) -> Result<EntrancePreset, StylePresetLoadError> {
+    load_entrance_preset_from_path_with_default_source(path, StylePresetSource::BuiltIn)
+}
+
+fn load_entrance_preset_from_path_with_default_source(
+    path: &Path,
+    default_source: StylePresetSource,
+) -> Result<EntrancePreset, StylePresetLoadError> {
+    let raw = fs::read_to_string(path)?;
+    let file: EntrancePresetFile =
+        json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file.into_preset(path, default_source))
+}
+
+fn load_legacy_entrance_preset_from_style_path_with_default_source(
+    path: &Path,
+    default_source: StylePresetSource,
+) -> Result<Option<EntrancePreset>, StylePresetLoadError> {
+    let raw = fs::read_to_string(path)?;
+    let file: BaseStylePresetFile =
+        json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file.into_legacy_entrance_preset(path, default_source))
+}
+
+pub fn load_clear_preset_from_path(path: &Path) -> Result<ClearPreset, StylePresetLoadError> {
+    load_clear_preset_from_path_with_default_source(path, StylePresetSource::BuiltIn)
+}
+
+fn load_clear_preset_from_path_with_default_source(
+    path: &Path,
+    default_source: StylePresetSource,
+) -> Result<ClearPreset, StylePresetLoadError> {
+    let raw = fs::read_to_string(path)?;
+    let file: ClearPresetFile =
+        json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file.into_preset(path, default_source))
+}
+
+pub fn load_combo_preset_from_path(path: &Path) -> Result<ComboPreset, StylePresetLoadError> {
+    load_combo_preset_from_path_with_default_source(path, StylePresetSource::BuiltIn)
+}
+
+fn load_combo_preset_from_path_with_default_source(
+    path: &Path,
+    default_source: StylePresetSource,
+) -> Result<ComboPreset, StylePresetLoadError> {
+    let raw = fs::read_to_string(path)?;
+    let file: ComboPresetFile =
+        json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(file.into_preset(path, default_source))
+}
+
 pub fn save_base_style_preset_to_path(
     path: &Path,
     preset: &BaseStylePreset,
@@ -484,6 +869,45 @@ pub fn save_base_style_preset_to_path(
     }
     let serialized = serde_json::to_string_pretty(&BaseStylePresetFile::from_preset(preset))
         .expect("style preset should serialize");
+    fs::write(path, serialized)?;
+    Ok(())
+}
+
+pub fn save_entrance_preset_to_path(
+    path: &Path,
+    preset: &EntrancePreset,
+) -> Result<(), StylePresetLoadError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let serialized = serde_json::to_string_pretty(&EntrancePresetFile::from_preset(preset))
+        .expect("entrance preset should serialize");
+    fs::write(path, serialized)?;
+    Ok(())
+}
+
+pub fn save_clear_preset_to_path(
+    path: &Path,
+    preset: &ClearPreset,
+) -> Result<(), StylePresetLoadError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let serialized = serde_json::to_string_pretty(&ClearPresetFile::from_preset(preset))
+        .expect("clear preset should serialize");
+    fs::write(path, serialized)?;
+    Ok(())
+}
+
+pub fn save_combo_preset_to_path(
+    path: &Path,
+    preset: &ComboPreset,
+) -> Result<(), StylePresetLoadError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let serialized = serde_json::to_string_pretty(&ComboPresetFile::from_preset(preset))
+        .expect("combo preset should serialize");
     fs::write(path, serialized)?;
     Ok(())
 }
@@ -561,13 +985,30 @@ impl BaseStylePresetFile {
             glow: self.base_style.glow.map(GlowStyleFile::into_domain),
             blend_mode: self.base_style.blend_mode.map(BlendModeFile::into_domain),
             stabilization_strength: self.base_style.stabilization_strength,
-            entrance: self.entrance.map(BaseStylePresetEntranceFile::into_domain),
             source: match self.source {
                 StylePresetSource::BuiltIn => default_source,
                 StylePresetSource::User => StylePresetSource::User,
             },
             file_path: Some(path.to_path_buf()),
         }
+    }
+
+    fn into_legacy_entrance_preset(
+        self,
+        path: &Path,
+        default_source: StylePresetSource,
+    ) -> Option<EntrancePreset> {
+        let entrance = self.entrance?;
+        Some(EntrancePreset {
+            id: self.id,
+            display_name: format!("{} / 出現", self.display_name),
+            entrance: entrance.into_domain(),
+            source: match self.source {
+                StylePresetSource::BuiltIn => default_source,
+                StylePresetSource::User => StylePresetSource::User,
+            },
+            file_path: Some(path.to_path_buf()),
+        })
     }
 
     fn from_preset(preset: &BaseStylePreset) -> Self {
@@ -592,10 +1033,149 @@ impl BaseStylePresetFile {
                 blend_mode: preset.blend_mode.map(BlendModeFile::from_domain),
                 stabilization_strength: preset.stabilization_strength,
             },
-            entrance: preset
-                .entrance
+            entrance: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EntrancePresetFile {
+    id: String,
+    display_name: String,
+    #[serde(default)]
+    source: StylePresetSource,
+    #[serde(default)]
+    entrance: BaseStylePresetEntranceFile,
+}
+
+impl EntrancePresetFile {
+    fn into_preset(self, path: &Path, default_source: StylePresetSource) -> EntrancePreset {
+        EntrancePreset {
+            id: self.id,
+            display_name: self.display_name,
+            entrance: self.entrance.into_domain(),
+            source: match self.source {
+                StylePresetSource::BuiltIn => default_source,
+                StylePresetSource::User => StylePresetSource::User,
+            },
+            file_path: Some(path.to_path_buf()),
+        }
+    }
+
+    fn from_preset(preset: &EntrancePreset) -> Self {
+        Self {
+            id: preset.id.clone(),
+            display_name: preset.display_name.clone(),
+            source: preset.source,
+            entrance: BaseStylePresetEntranceFile::from_domain(&preset.entrance),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ClearPresetFile {
+    id: String,
+    display_name: String,
+    #[serde(default)]
+    source: StylePresetSource,
+    #[serde(default)]
+    clear: ClearPresetFieldsFile,
+}
+
+impl ClearPresetFile {
+    fn into_preset(self, path: &Path, default_source: StylePresetSource) -> ClearPreset {
+        ClearPreset {
+            id: self.id,
+            display_name: self.display_name,
+            kind: self.clear.kind.map(ClearKindFile::into_domain),
+            duration_ms: self.clear.duration_ms,
+            granularity: self
+                .clear
+                .granularity
+                .map(ClearTargetGranularityFile::into_domain),
+            ordering: self.clear.ordering.map(ClearOrderingFile::into_domain),
+            source: match self.source {
+                StylePresetSource::BuiltIn => default_source,
+                StylePresetSource::User => StylePresetSource::User,
+            },
+            file_path: Some(path.to_path_buf()),
+        }
+    }
+
+    fn from_preset(preset: &ClearPreset) -> Self {
+        Self {
+            id: preset.id.clone(),
+            display_name: preset.display_name.clone(),
+            source: preset.source,
+            clear: ClearPresetFieldsFile {
+                kind: preset.kind.map(ClearKindFile::from_domain),
+                duration_ms: preset.duration_ms,
+                granularity: preset
+                    .granularity
+                    .map(ClearTargetGranularityFile::from_domain),
+                ordering: preset.ordering.map(ClearOrderingFile::from_domain),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ComboPresetFile {
+    id: String,
+    display_name: String,
+    #[serde(default)]
+    source: StylePresetSource,
+    #[serde(default)]
+    refs: ComboPresetRefs,
+    #[serde(default)]
+    style_override: Option<BaseStylePresetFile>,
+    #[serde(default)]
+    entrance_override: Option<EntrancePresetFile>,
+    #[serde(default)]
+    clear_override: Option<ClearPresetFile>,
+}
+
+impl ComboPresetFile {
+    fn into_preset(self, path: &Path, default_source: StylePresetSource) -> ComboPreset {
+        ComboPreset {
+            id: self.id,
+            display_name: self.display_name,
+            refs: self.refs,
+            style_override: self
+                .style_override
+                .map(|override_file| override_file.into_preset(path, default_source)),
+            entrance_override: self
+                .entrance_override
+                .map(|override_file| override_file.into_preset(path, default_source)),
+            clear_override: self
+                .clear_override
+                .map(|override_file| override_file.into_preset(path, default_source)),
+            source: match self.source {
+                StylePresetSource::BuiltIn => default_source,
+                StylePresetSource::User => StylePresetSource::User,
+            },
+            file_path: Some(path.to_path_buf()),
+        }
+    }
+
+    fn from_preset(preset: &ComboPreset) -> Self {
+        Self {
+            id: preset.id.clone(),
+            display_name: preset.display_name.clone(),
+            source: preset.source,
+            refs: preset.refs.clone(),
+            style_override: preset
+                .style_override
                 .as_ref()
-                .map(BaseStylePresetEntranceFile::from_domain),
+                .map(BaseStylePresetFile::from_preset),
+            entrance_override: preset
+                .entrance_override
+                .as_ref()
+                .map(EntrancePresetFile::from_preset),
+            clear_override: preset
+                .clear_override
+                .as_ref()
+                .map(ClearPresetFile::from_preset),
         }
     }
 }
@@ -748,6 +1328,7 @@ struct BaseStylePresetEntranceFile {
     duration_mode: Option<EntranceDurationModeFile>,
     duration_ms: Option<i64>,
     speed_scalar: Option<f32>,
+    head_effect: Option<RevealHeadEffectFile>,
 }
 
 impl BaseStylePresetEntranceFile {
@@ -771,6 +1352,9 @@ impl BaseStylePresetEntranceFile {
         if let Some(speed_scalar) = self.speed_scalar {
             entrance.speed_scalar = speed_scalar;
         }
+        if let Some(head_effect) = self.head_effect {
+            entrance.head_effect = Some(head_effect.into_domain());
+        }
         entrance
     }
 
@@ -784,8 +1368,21 @@ impl BaseStylePresetEntranceFile {
             )),
             duration_ms: Some(media_duration_millis(entrance.duration)),
             speed_scalar: Some(entrance.speed_scalar),
+            head_effect: entrance
+                .head_effect
+                .as_ref()
+                .map(RevealHeadEffectFile::from_domain),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct ClearPresetFieldsFile {
+    kind: Option<ClearKindFile>,
+    duration_ms: Option<i64>,
+    granularity: Option<ClearTargetGranularityFile>,
+    ordering: Option<ClearOrderingFile>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -891,6 +1488,215 @@ impl EntranceDurationModeFile {
         match mode {
             EntranceDurationMode::ProportionalToStrokeLength => Self::LengthProportional,
             EntranceDurationMode::FixedTotalDuration => Self::FixedTotalDuration,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RevealHeadKindFile {
+    Solid,
+    Glow,
+    CometTail,
+}
+
+impl RevealHeadKindFile {
+    fn into_domain(self) -> RevealHeadKind {
+        match self {
+            Self::Solid => RevealHeadKind::SolidHead,
+            Self::Glow => RevealHeadKind::GlowHead,
+            Self::CometTail => RevealHeadKind::CometTail,
+        }
+    }
+
+    fn from_domain(kind: RevealHeadKind) -> Self {
+        match kind {
+            RevealHeadKind::SolidHead => Self::Solid,
+            RevealHeadKind::GlowHead => Self::Glow,
+            RevealHeadKind::CometTail => Self::CometTail,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum RevealHeadColorSourceFile {
+    Keyword(RevealHeadColorKeywordFile),
+    Custom([f32; 4]),
+}
+
+impl RevealHeadColorSourceFile {
+    fn into_domain(self) -> RevealHeadColorSource {
+        match self {
+            Self::Keyword(RevealHeadColorKeywordFile::PresetAccent) => {
+                RevealHeadColorSource::PresetAccent
+            }
+            Self::Keyword(RevealHeadColorKeywordFile::StrokeColor) => {
+                RevealHeadColorSource::StrokeColor
+            }
+            Self::Custom(color) => {
+                RevealHeadColorSource::Custom(rgba_color_from_bytes(normalize_color_rgba(color)))
+            }
+        }
+    }
+
+    fn from_domain(source: &RevealHeadColorSource) -> Self {
+        match source {
+            RevealHeadColorSource::PresetAccent => {
+                Self::Keyword(RevealHeadColorKeywordFile::PresetAccent)
+            }
+            RevealHeadColorSource::StrokeColor => {
+                Self::Keyword(RevealHeadColorKeywordFile::StrokeColor)
+            }
+            RevealHeadColorSource::Custom(color) => {
+                Self::Custom(float_color_rgba(rgba_color_to_bytes(*color)))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RevealHeadColorKeywordFile {
+    PresetAccent,
+    StrokeColor,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct RevealHeadEffectFile {
+    kind: Option<RevealHeadKindFile>,
+    color_source: Option<RevealHeadColorSourceFile>,
+    size_multiplier: Option<f32>,
+    blur_radius: Option<f32>,
+    tail_length: Option<f32>,
+    persistence: Option<f32>,
+    blend_mode: Option<BlendModeFile>,
+}
+
+impl RevealHeadEffectFile {
+    fn into_domain(self) -> RevealHeadEffect {
+        let mut head = RevealHeadEffect::default();
+        if let Some(kind) = self.kind {
+            head.kind = kind.into_domain();
+        }
+        if let Some(color_source) = self.color_source {
+            head.color_source = color_source.into_domain();
+        }
+        if let Some(size_multiplier) = self.size_multiplier {
+            head.size_multiplier = size_multiplier;
+        }
+        if let Some(blur_radius) = self.blur_radius {
+            head.blur_radius = blur_radius;
+        }
+        if let Some(tail_length) = self.tail_length {
+            head.tail_length = tail_length;
+        }
+        if let Some(persistence) = self.persistence {
+            head.persistence = persistence;
+        }
+        if let Some(blend_mode) = self.blend_mode {
+            head.blend_mode = blend_mode.into_domain();
+        }
+        head
+    }
+
+    fn from_domain(head: &RevealHeadEffect) -> Self {
+        Self {
+            kind: Some(RevealHeadKindFile::from_domain(head.kind)),
+            color_source: Some(RevealHeadColorSourceFile::from_domain(&head.color_source)),
+            size_multiplier: Some(head.size_multiplier),
+            blur_radius: Some(head.blur_radius),
+            tail_length: Some(head.tail_length),
+            persistence: Some(head.persistence),
+            blend_mode: Some(BlendModeFile::from_domain(head.blend_mode)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClearKindFile {
+    Instant,
+    Ordered,
+    ReverseOrdered,
+    WipeOut,
+    DissolveOut,
+}
+
+impl ClearKindFile {
+    fn into_domain(self) -> ClearKind {
+        match self {
+            Self::Instant => ClearKind::Instant,
+            Self::Ordered => ClearKind::Ordered,
+            Self::ReverseOrdered => ClearKind::ReverseOrdered,
+            Self::WipeOut => ClearKind::WipeOut,
+            Self::DissolveOut => ClearKind::DissolveOut,
+        }
+    }
+
+    fn from_domain(kind: ClearKind) -> Self {
+        match kind {
+            ClearKind::Instant => Self::Instant,
+            ClearKind::Ordered => Self::Ordered,
+            ClearKind::ReverseOrdered => Self::ReverseOrdered,
+            ClearKind::WipeOut => Self::WipeOut,
+            ClearKind::DissolveOut => Self::DissolveOut,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClearTargetGranularityFile {
+    Object,
+    Group,
+    Stroke,
+    AllParallel,
+}
+
+impl ClearTargetGranularityFile {
+    fn into_domain(self) -> ClearTargetGranularity {
+        match self {
+            Self::Object => ClearTargetGranularity::Object,
+            Self::Group => ClearTargetGranularity::Group,
+            Self::Stroke => ClearTargetGranularity::Stroke,
+            Self::AllParallel => ClearTargetGranularity::AllParallel,
+        }
+    }
+
+    fn from_domain(value: ClearTargetGranularity) -> Self {
+        match value {
+            ClearTargetGranularity::Object => Self::Object,
+            ClearTargetGranularity::Group => Self::Group,
+            ClearTargetGranularity::Stroke => Self::Stroke,
+            ClearTargetGranularity::AllParallel => Self::AllParallel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClearOrderingFile {
+    Serial,
+    Reverse,
+    Parallel,
+}
+
+impl ClearOrderingFile {
+    fn into_domain(self) -> ClearOrdering {
+        match self {
+            Self::Serial => ClearOrdering::Serial,
+            Self::Reverse => ClearOrdering::Reverse,
+            Self::Parallel => ClearOrdering::Parallel,
+        }
+    }
+
+    fn from_domain(value: ClearOrdering) -> Self {
+        match value {
+            ClearOrdering::Serial => Self::Serial,
+            ClearOrdering::Reverse => Self::Reverse,
+            ClearOrdering::Parallel => Self::Parallel,
         }
     }
 }
@@ -1319,6 +2125,35 @@ mod tests {
     }
 
     #[test]
+    fn repository_category_presets_load_from_split_directories() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets");
+        let catalogs = load_preset_catalogs_overlay(
+            PresetDirectorySet {
+                style_dir: &repo_root.join("style_presets"),
+                entrance_dir: Some(&repo_root.join("entrance_presets")),
+                clear_dir: Some(&repo_root.join("clear_presets")),
+                combo_dir: Some(&repo_root.join("combo_presets")),
+            },
+            None,
+        )
+        .expect("split preset catalogs should load");
+
+        assert!(catalogs
+            .entrance_presets
+            .iter()
+            .any(|preset| preset.id == "white_pen_fastwrite"
+                && preset.entrance.head_effect.is_some()));
+        assert!(catalogs
+            .clear_presets
+            .iter()
+            .any(|preset| preset.id == "instant_all_parallel"));
+        assert!(catalogs
+            .combo_presets
+            .iter()
+            .any(|preset| preset.id == "marker_highlight"));
+    }
+
+    #[test]
     fn style_preset_color_is_normalized_into_rgba_bytes() {
         let preset = load_base_style_preset_from_path(Path::new(
             "presets/style_presets/marker_highlight.json5",
@@ -1334,13 +2169,29 @@ mod tests {
     #[test]
     fn user_style_presets_overlay_builtins_and_roundtrip_disk_edits() {
         let temp_dir = tempdir().expect("temp dir");
-        let builtin_dir = temp_dir.path().join("builtin");
-        let user_dir = temp_dir.path().join("user");
-        fs::create_dir_all(&builtin_dir).expect("builtin dir");
-        fs::create_dir_all(&user_dir).expect("user dir");
+        let builtin_style_dir = temp_dir.path().join("builtin_style");
+        let builtin_entrance_dir = temp_dir.path().join("builtin_entrance");
+        let builtin_clear_dir = temp_dir.path().join("builtin_clear");
+        let builtin_combo_dir = temp_dir.path().join("builtin_combo");
+        let user_style_dir = temp_dir.path().join("user_style");
+        let user_entrance_dir = temp_dir.path().join("user_entrance");
+        let user_clear_dir = temp_dir.path().join("user_clear");
+        let user_combo_dir = temp_dir.path().join("user_combo");
+        for dir in [
+            &builtin_style_dir,
+            &builtin_entrance_dir,
+            &builtin_clear_dir,
+            &builtin_combo_dir,
+            &user_style_dir,
+            &user_entrance_dir,
+            &user_clear_dir,
+            &user_combo_dir,
+        ] {
+            fs::create_dir_all(dir).expect("preset dir");
+        }
 
         fs::write(
-            builtin_dir.join("marker.json5"),
+            builtin_style_dir.join("marker.json5"),
             r#"
             {
               id: "marker_highlight",
@@ -1351,7 +2202,7 @@ mod tests {
         )
         .expect("builtin preset");
         fs::write(
-            user_dir.join("marker.json5"),
+            user_style_dir.join("marker.json5"),
             r#"
             {
               id: "marker_highlight",
@@ -1380,20 +2231,94 @@ mod tests {
                 },
                 stabilization_strength: 0.8,
               },
+            }
+            "#,
+        )
+        .expect("user preset");
+        fs::write(
+            builtin_entrance_dir.join("marker.json5"),
+            r#"
+            {
+              id: "marker_highlight",
+              display_name: "Built-in Marker Entrance",
+              entrance: {
+                kind: "instant",
+                target: "group",
+              },
+            }
+            "#,
+        )
+        .expect("builtin entrance preset");
+        fs::write(
+            user_entrance_dir.join("marker.json5"),
+            r#"
+            {
+              id: "marker_highlight",
+              display_name: "User Marker Entrance",
               entrance: {
                 kind: "path_trace",
                 duration_mode: "length_proportional",
                 duration_ms: 900,
                 speed_scalar: 1.8,
+                head_effect: {
+                  kind: "glow",
+                  color_source: "stroke_color",
+                  size_multiplier: 1.3,
+                },
               },
             }
             "#,
         )
-        .expect("user preset");
+        .expect("user entrance preset");
+        fs::write(
+            builtin_clear_dir.join("instant.json5"),
+            r#"
+            {
+              id: "instant_screen_clear",
+              display_name: "Instant Clear",
+              clear: {
+                kind: "instant",
+                duration_ms: 0,
+                granularity: "all_parallel",
+                ordering: "parallel",
+              },
+            }
+            "#,
+        )
+        .expect("builtin clear preset");
+        fs::write(
+            builtin_combo_dir.join("marker_combo.json5"),
+            r#"
+            {
+              id: "marker_combo",
+              display_name: "Marker Combo",
+              refs: {
+                style_preset_id: "marker_highlight",
+                entrance_preset_id: "marker_highlight",
+                clear_preset_id: "instant_screen_clear",
+              },
+            }
+            "#,
+        )
+        .expect("builtin combo preset");
 
-        let presets = load_base_style_presets_overlay(&builtin_dir, Some(&user_dir))
-            .expect("overlay preset load should succeed");
-        let marker = presets
+        let catalogs = load_preset_catalogs_overlay(
+            PresetDirectorySet {
+                style_dir: &builtin_style_dir,
+                entrance_dir: Some(&builtin_entrance_dir),
+                clear_dir: Some(&builtin_clear_dir),
+                combo_dir: Some(&builtin_combo_dir),
+            },
+            Some(PresetDirectorySet {
+                style_dir: &user_style_dir,
+                entrance_dir: Some(&user_entrance_dir),
+                clear_dir: Some(&user_clear_dir),
+                combo_dir: Some(&user_combo_dir),
+            }),
+        )
+        .expect("overlay preset load should succeed");
+        let marker = catalogs
+            .style_presets
             .iter()
             .find(|preset| preset.id == "marker_highlight")
             .expect("merged marker preset");
@@ -1412,12 +2337,23 @@ mod tests {
             .as_ref()
             .is_some_and(|shadow| shadow.enabled));
         assert!(marker.glow.as_ref().is_some_and(|glow| glow.enabled));
-        assert_eq!(
-            marker.entrance.as_ref().map(|entrance| entrance.kind),
-            Some(EntranceKind::PathTrace)
-        );
+        let entrance = catalogs
+            .entrance_presets
+            .iter()
+            .find(|preset| preset.id == "marker_highlight")
+            .expect("merged entrance preset");
+        assert_eq!(entrance.entrance.kind, EntranceKind::PathTrace);
+        assert!(entrance.entrance.head_effect.is_some());
+        assert!(catalogs
+            .clear_presets
+            .iter()
+            .any(|preset| preset.id == "instant_screen_clear"));
+        assert!(catalogs
+            .combo_presets
+            .iter()
+            .any(|preset| preset.id == "marker_combo"));
 
-        let custom_path = user_dir.join("custom_soft_marker.json5");
+        let custom_path = user_style_dir.join("custom_soft_marker.json5");
         let custom = BaseStylePreset {
             id: "custom_soft_marker".to_owned(),
             display_name: "Custom Soft Marker".to_owned(),
@@ -1443,13 +2379,6 @@ mod tests {
             }),
             blend_mode: Some(BlendMode::Screen),
             stabilization_strength: Some(0.8),
-            entrance: Some(EntranceBehavior {
-                kind: EntranceKind::Dissolve,
-                duration_mode: EntranceDurationMode::FixedTotalDuration,
-                duration: MediaDuration::from_millis(1200),
-                speed_scalar: 1.5,
-                ..EntranceBehavior::default()
-            }),
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -1472,10 +2401,39 @@ mod tests {
             .as_ref()
             .is_some_and(|shadow| shadow.enabled));
         assert!(loaded.glow.as_ref().is_some_and(|glow| glow.enabled));
-        assert_eq!(
-            loaded.entrance.as_ref().map(|entrance| entrance.kind),
-            Some(EntranceKind::Dissolve)
-        );
         assert_eq!(loaded.source, StylePresetSource::User);
+
+        let entrance_path = user_entrance_dir.join("trace_head.json5");
+        let entrance_preset = EntrancePreset {
+            id: "trace_head".to_owned(),
+            display_name: "Trace Head".to_owned(),
+            entrance: EntranceBehavior {
+                kind: EntranceKind::Dissolve,
+                scope: EffectScope::GlyphObject,
+                order: EffectOrder::Serial,
+                duration_mode: EntranceDurationMode::FixedTotalDuration,
+                duration: MediaDuration::from_millis(1200),
+                speed_scalar: 1.5,
+                head_effect: Some(RevealHeadEffect {
+                    kind: RevealHeadKind::GlowHead,
+                    color_source: RevealHeadColorSource::StrokeColor,
+                    size_multiplier: 1.4,
+                    blur_radius: 5.0,
+                    tail_length: 0.0,
+                    persistence: 0.2,
+                    blend_mode: BlendMode::Screen,
+                }),
+            },
+            source: StylePresetSource::User,
+            file_path: None,
+        };
+        save_entrance_preset_to_path(&entrance_path, &entrance_preset)
+            .expect("entrance preset save should succeed");
+
+        let loaded_entrance =
+            load_entrance_preset_from_path(&entrance_path).expect("saved entrance preset");
+        assert_eq!(loaded_entrance.id, "trace_head");
+        assert_eq!(loaded_entrance.entrance.kind, EntranceKind::Dissolve);
+        assert!(loaded_entrance.entrance.head_effect.is_some());
     }
 }

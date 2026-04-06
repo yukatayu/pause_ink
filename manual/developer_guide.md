@@ -19,7 +19,7 @@ PauseInk は次の分離を守る前提で組んでいます。
 - `pauseink-portable-fs`
   portable root、settings、cache/autosave/runtime path、cache cleanup helper
 - `pauseink-presets-core`
-  export family/profile catalog、base style preset loader
+  export family/profile catalog、style / entrance / clear / combo preset loader
 - `pauseink-fonts`
   local font discovery、Google Fonts CSS/cache helper、選択 family の lazy load
 - `pauseink-template-layout`
@@ -59,6 +59,9 @@ PauseInk は次の分離を守る前提で組んでいます。
 pauseink_data/
   config/
     style_presets/
+    entrance_presets/
+    clear_presets/
+    combo_presets/
   cache/
     google_fonts/
     font_index/
@@ -101,11 +104,29 @@ PauseInk は family と profile を分離しています。
 - `cargo test -p pauseink-presets-core`
 - `cargo test -p pauseink-export`
 
-## 6. style preset
+## 6. preset catalog
 
-現実装では built-in preset を `presets/style_presets/*.json5` から、user preset を `pauseink_data/config/style_presets/*.json5` から読み込みます。  
-読み込み順は built-in -> user overlay で、同じ `id` がある場合は user preset が優先されます。built-in は読み取り専用、user preset は GUI から追加保存 / 上書き保存 / 削除できます。  
-project には mutable preset file そのものではなく、`project.presets.base_style` に resolved base style snapshot、`project.presets.entrance` に resolved entrance snapshot と任意の preset ID を保存します。template / guide の project-specific UI state は `project.settings.pauseink_editor_ui` に保存します。
+現実装では catalog を 4 系統に分けています。
+
+- style preset
+- entrance preset
+- clear preset
+- combo preset
+
+built-in と user の配置先:
+
+- built-in style: `presets/style_presets/*.json5`
+- built-in entrance: `presets/entrance_presets/*.json5` または legacy style file 内の `entrance`
+- built-in clear: `presets/clear_presets/*.json5`
+- built-in combo: `presets/combo_presets/*.json5`
+- user style: `pauseink_data/config/style_presets/*.json5`
+- user entrance: `pauseink_data/config/entrance_presets/*.json5`
+- user clear: `pauseink_data/config/clear_presets/*.json5`
+- user combo: `pauseink_data/config/combo_presets/*.json5`
+
+読み込み順は built-in -> user overlay で、同じ `id` がある場合は user preset が優先されます。style preset に legacy で `entrance` が同居していても、loader 側で entrance preset candidate として救済します。normalized save では style と entrance を別 file に書きます。built-in は読み取り専用、user preset は GUI から style / entrance の追加保存 / 上書き保存 / 削除ができます。
+
+project には mutable preset file そのものではなく、`project.presets.base_style` に resolved base style snapshot、`project.presets.entrance` に resolved entrance snapshot と任意の preset ID を保存します。field-level の継承 / 上書き state は `project.settings.pauseink_editor_ui` と `settings.json5` 側へ保存します。template / guide の project-specific UI state も同じ editor UI state 側です。
 
 現在 UI / preset apply で接続済みなのは次の項目です。
 
@@ -118,6 +139,8 @@ project には mutable preset file そのものではなく、`project.presets.b
 - blend_mode
 - stabilization_strength
 - entrance.kind
+- entrance.scope
+- entrance.order
 - entrance.duration_mode
 - entrance.duration_ms
 - entrance.speed_scalar

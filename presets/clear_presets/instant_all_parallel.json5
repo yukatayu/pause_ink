@@ -1,0 +1,10 @@
+{
+  id: "instant_all_parallel",
+  display_name: "全消去 / 即時",
+  clear: {
+    kind: "instant",
+    duration_ms: 0,
+    granularity: "all_parallel",
+    ordering: "parallel",
+  },
+}

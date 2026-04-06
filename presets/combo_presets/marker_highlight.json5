@@ -1,0 +1,8 @@
+{
+  id: "marker_highlight",
+  display_name: "マーカーハイライト / 標準",
+  refs: {
+    style_preset_id: "marker_highlight",
+    entrance_preset_id: "marker_highlight",
+  },
+}

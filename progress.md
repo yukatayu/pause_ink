@@ -8,11 +8,19 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: 残タスク計画を保守し、`PKG-02` の現状達成度、`V1-05` の前提固定、`V1-08` の追加を反映する。
+- 現在の即時マイルストーン: `V1-08` として左右ペインの縦スクロール化へ進み、増えた preset/binding UI でも低い画面で操作不能にならない状態を先に固める。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
   - `develop` ブランチで作業継続
+  - `V1-01` に着手し、現行 `style preset` へ entrance が混在している loader / save / restore / CRUD / UI を、後続の clear/combo 実装で手戻りしない形へ分離する作業を開始した
+  - `V1-01` では built-in/user preset の読み込み互換を保ちつつ、style / entrance / clear / combo の category と portable directory を分離する方針で進める
+  - `V1-01` の binding metadata は project/settings の editor UI state 側へ保持し、resolved snapshot は project `presets` 側へ残す方針で実装を始める
+  - `V1-01` を完了し、style / entrance / clear / combo の preset catalog を `presets_core` へ分離、portable root に `entrance_presets / clear_presets / combo_presets` を追加した
+  - built-in / user の legacy style preset file に埋まっていた `entrance` は lenient load で entrance preset candidate として救済し、style preset の normalized save は entrance を含めない形へ寄せた
+  - app 側では style preset と entrance preset を別 picker / 別 CRUD / 別 binding state に分離し、field-level の `preset 継承中 / 上書き中 / presetへ戻す` を最小 UI で接続した
+  - `settings.json5` と `project.settings.pauseink_editor_ui` へ style/entrance の binding state を保存し、`project.presets.base_style` と `project.presets.entrance` の resolved snapshot / preset ID と組み合わせて reopen / relaunch 復元できるようにした
+  - `cargo test -p pauseink-presets-core -p pauseink-portable-fs -p pauseink-app --lib --bins` を再通過し、style / entrance user preset CRUD、binding state 復元、legacy entrance rescue を回帰固定した
   - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls` へ絞り直し、slot fit を計画から外した
   - guide 字間は `cell_width` 比、負値許可、guide slope と同じ保存経路で固定した
   - template 詳細は左ペインへ詰め込まず別ポップアップ前提にし、変更がリアルタイムで preview / placed slot へ反映される設計へ更新した
@@ -158,7 +166,7 @@
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
 | Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
-| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。残るのは packaging / 実機検証 / spec 残項目の実装 |
+| Phase 18 | 進行中 | 97% | `V1-08 -> V1-07 -> V1-05` の順で残 task を閉じる | `V1-01` 完了。次は左右ペインの縦スクロールと overflow hardening |
 
 ## 次の具体的な一手
 

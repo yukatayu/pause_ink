@@ -29,8 +29,9 @@ use pauseink_portable_fs::{
     save_settings_to_file, PortablePaths, Settings,
 };
 use pauseink_presets_core::{
-    load_base_style_presets_overlay, save_base_style_preset_to_path, BaseStylePreset,
-    ExportCatalog, OutputKind, RuntimeTier, StylePresetSource,
+    load_base_style_presets_overlay, load_entrance_presets_overlay, save_base_style_preset_to_path,
+    save_entrance_preset_to_path, BaseStylePreset, EntrancePreset, ExportCatalog, OutputKind,
+    RuntimeTier, StylePresetSource,
 };
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
@@ -258,6 +259,8 @@ impl Default for TemplatePreviewState {
 struct ProjectEditorUiState {
     template: StoredTemplateUiState,
     guide_slope_degrees: f32,
+    style_binding: StylePresetBindingState,
+    entrance_binding: EntrancePresetBindingState,
 }
 
 impl ProjectEditorUiState {
@@ -265,6 +268,8 @@ impl ProjectEditorUiState {
         Self {
             template: StoredTemplateUiState::capture(&app.template),
             guide_slope_degrees: app.settings.guide_slope_degrees,
+            style_binding: app.style_binding.clone(),
+            entrance_binding: app.entrance_binding.clone(),
         }
     }
 }
@@ -316,6 +321,60 @@ impl StoredTemplateUiState {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct StylePresetBindingState {
+    inherit_color: bool,
+    inherit_thickness: bool,
+    inherit_opacity: bool,
+    inherit_outline: bool,
+    inherit_drop_shadow: bool,
+    inherit_glow: bool,
+    inherit_blend_mode: bool,
+    inherit_stabilization_strength: bool,
+}
+
+impl StylePresetBindingState {
+    fn inherit_all_from_preset(preset: &BaseStylePreset) -> Self {
+        Self {
+            inherit_color: preset.color_rgba.is_some(),
+            inherit_thickness: preset.thickness.is_some(),
+            inherit_opacity: preset.opacity.is_some() || preset.color_rgba.is_some(),
+            inherit_outline: preset.outline.is_some(),
+            inherit_drop_shadow: preset.drop_shadow.is_some(),
+            inherit_glow: preset.glow.is_some(),
+            inherit_blend_mode: preset.blend_mode.is_some(),
+            inherit_stabilization_strength: preset.stabilization_strength.is_some(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct EntrancePresetBindingState {
+    inherit_kind: bool,
+    inherit_scope: bool,
+    inherit_order: bool,
+    inherit_duration_mode: bool,
+    inherit_duration_ms: bool,
+    inherit_speed_scalar: bool,
+    inherit_head_effect: bool,
+}
+
+impl EntrancePresetBindingState {
+    fn inherit_all() -> Self {
+        Self {
+            inherit_kind: true,
+            inherit_scope: true,
+            inherit_order: true,
+            inherit_duration_mode: true,
+            inherit_duration_ms: true,
+            inherit_speed_scalar: true,
+            inherit_head_effect: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SavedBaseStylePresetState {
     preset_id: Option<String>,
@@ -329,13 +388,9 @@ impl SavedBaseStylePresetState {
         let selected = app
             .style_presets
             .iter()
-            .find(|preset| preset.id == app.selected_style_preset_id);
+            .find(|preset| Some(&preset.id) == app.bound_style_preset_id.as_ref());
         Self {
-            preset_id: if app.selected_style_preset_id.is_empty() {
-                None
-            } else {
-                Some(app.selected_style_preset_id.clone())
-            },
+            preset_id: app.bound_style_preset_id.clone(),
             source: selected.map(|preset| preset.source),
             display_name: selected.map(|preset| preset.display_name.clone()),
             resolved_snapshot: app.session.active_style.clone(),
@@ -352,11 +407,7 @@ struct SavedEntrancePresetState {
 impl SavedEntrancePresetState {
     fn capture(app: &DesktopApp) -> Self {
         Self {
-            preset_id: if app.selected_style_preset_id.is_empty() {
-                None
-            } else {
-                Some(app.selected_style_preset_id.clone())
-            },
+            preset_id: app.bound_entrance_preset_id.clone(),
             resolved_snapshot: StoredEntranceBehavior::from_domain(&app.session.active_entrance),
         }
     }
@@ -365,9 +416,12 @@ impl SavedEntrancePresetState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredEntranceBehavior {
     kind: StoredEntranceKind,
+    scope: StoredEffectScope,
+    order: StoredEffectOrder,
     duration_mode: StoredEntranceDurationMode,
     duration_ms: i64,
     speed_scalar: f32,
+    head_effect: Option<StoredRevealHeadEffect>,
 }
 
 impl StoredEntranceBehavior {
@@ -379,6 +433,17 @@ impl StoredEntranceBehavior {
                 pauseink_domain::EntranceKind::Wipe => StoredEntranceKind::Wipe,
                 pauseink_domain::EntranceKind::Dissolve => StoredEntranceKind::Dissolve,
             },
+            scope: match entrance.scope {
+                pauseink_domain::EffectScope::Stroke => StoredEffectScope::Stroke,
+                pauseink_domain::EffectScope::GlyphObject => StoredEffectScope::GlyphObject,
+                pauseink_domain::EffectScope::Group => StoredEffectScope::Group,
+                pauseink_domain::EffectScope::Run => StoredEffectScope::Run,
+            },
+            order: match entrance.order {
+                pauseink_domain::EffectOrder::Serial => StoredEffectOrder::Serial,
+                pauseink_domain::EffectOrder::Reverse => StoredEffectOrder::Reverse,
+                pauseink_domain::EffectOrder::Parallel => StoredEffectOrder::Parallel,
+            },
             duration_mode: match entrance.duration_mode {
                 pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
                     StoredEntranceDurationMode::LengthProportional
@@ -389,6 +454,10 @@ impl StoredEntranceBehavior {
             },
             duration_ms: media_duration_to_millis(entrance.duration),
             speed_scalar: entrance.speed_scalar,
+            head_effect: entrance
+                .head_effect
+                .as_ref()
+                .map(StoredRevealHeadEffect::from_domain),
         }
     }
 
@@ -400,6 +469,17 @@ impl StoredEntranceBehavior {
             StoredEntranceKind::Wipe => pauseink_domain::EntranceKind::Wipe,
             StoredEntranceKind::Dissolve => pauseink_domain::EntranceKind::Dissolve,
         };
+        entrance.scope = match self.scope {
+            StoredEffectScope::Stroke => pauseink_domain::EffectScope::Stroke,
+            StoredEffectScope::GlyphObject => pauseink_domain::EffectScope::GlyphObject,
+            StoredEffectScope::Group => pauseink_domain::EffectScope::Group,
+            StoredEffectScope::Run => pauseink_domain::EffectScope::Run,
+        };
+        entrance.order = match self.order {
+            StoredEffectOrder::Serial => pauseink_domain::EffectOrder::Serial,
+            StoredEffectOrder::Reverse => pauseink_domain::EffectOrder::Reverse,
+            StoredEffectOrder::Parallel => pauseink_domain::EffectOrder::Parallel,
+        };
         entrance.duration_mode = match self.duration_mode {
             StoredEntranceDurationMode::LengthProportional => {
                 pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
@@ -410,6 +490,7 @@ impl StoredEntranceBehavior {
         };
         entrance.duration = pauseink_domain::MediaDuration::from_millis(self.duration_ms.max(0));
         entrance.speed_scalar = self.speed_scalar;
+        entrance.head_effect = self.head_effect.map(StoredRevealHeadEffect::into_domain);
         entrance
     }
 }
@@ -425,9 +506,161 @@ enum StoredEntranceKind {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+enum StoredEffectScope {
+    Stroke,
+    GlyphObject,
+    Group,
+    Run,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredEffectOrder {
+    Serial,
+    Reverse,
+    Parallel,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum StoredEntranceDurationMode {
     LengthProportional,
     FixedTotalDuration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredRevealHeadEffect {
+    kind: StoredRevealHeadKind,
+    color_source: StoredRevealHeadColorSource,
+    size_multiplier: f32,
+    blur_radius: f32,
+    tail_length: f32,
+    persistence: f32,
+    blend_mode: StoredBlendMode,
+}
+
+impl StoredRevealHeadEffect {
+    fn from_domain(head: &pauseink_domain::RevealHeadEffect) -> Self {
+        Self {
+            kind: match head.kind {
+                pauseink_domain::RevealHeadKind::SolidHead => StoredRevealHeadKind::Solid,
+                pauseink_domain::RevealHeadKind::GlowHead => StoredRevealHeadKind::Glow,
+                pauseink_domain::RevealHeadKind::CometTail => StoredRevealHeadKind::CometTail,
+            },
+            color_source: match &head.color_source {
+                pauseink_domain::RevealHeadColorSource::PresetAccent => {
+                    StoredRevealHeadColorSource::PresetAccent
+                }
+                pauseink_domain::RevealHeadColorSource::StrokeColor => {
+                    StoredRevealHeadColorSource::StrokeColor
+                }
+                pauseink_domain::RevealHeadColorSource::Custom(color) => {
+                    StoredRevealHeadColorSource::Custom((*color).into())
+                }
+            },
+            size_multiplier: head.size_multiplier,
+            blur_radius: head.blur_radius,
+            tail_length: head.tail_length,
+            persistence: head.persistence,
+            blend_mode: StoredBlendMode::from_domain(head.blend_mode),
+        }
+    }
+
+    fn into_domain(self) -> pauseink_domain::RevealHeadEffect {
+        pauseink_domain::RevealHeadEffect {
+            kind: match self.kind {
+                StoredRevealHeadKind::Solid => pauseink_domain::RevealHeadKind::SolidHead,
+                StoredRevealHeadKind::Glow => pauseink_domain::RevealHeadKind::GlowHead,
+                StoredRevealHeadKind::CometTail => pauseink_domain::RevealHeadKind::CometTail,
+            },
+            color_source: match self.color_source {
+                StoredRevealHeadColorSource::PresetAccent => {
+                    pauseink_domain::RevealHeadColorSource::PresetAccent
+                }
+                StoredRevealHeadColorSource::StrokeColor => {
+                    pauseink_domain::RevealHeadColorSource::StrokeColor
+                }
+                StoredRevealHeadColorSource::Custom(color) => {
+                    pauseink_domain::RevealHeadColorSource::Custom(color.into())
+                }
+            },
+            size_multiplier: self.size_multiplier,
+            blur_radius: self.blur_radius,
+            tail_length: self.tail_length,
+            persistence: self.persistence,
+            blend_mode: self.blend_mode.into_domain(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredRevealHeadKind {
+    Solid,
+    Glow,
+    CometTail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredRevealHeadColorSource {
+    PresetAccent,
+    StrokeColor,
+    Custom(StoredRgbaColor),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct StoredRgbaColor {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl From<pauseink_domain::RgbaColor> for StoredRgbaColor {
+    fn from(value: pauseink_domain::RgbaColor) -> Self {
+        Self {
+            r: value.r,
+            g: value.g,
+            b: value.b,
+            a: value.a,
+        }
+    }
+}
+
+impl From<StoredRgbaColor> for pauseink_domain::RgbaColor {
+    fn from(value: StoredRgbaColor) -> Self {
+        Self::new(value.r, value.g, value.b, value.a)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StoredBlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Additive,
+}
+
+impl StoredBlendMode {
+    fn from_domain(mode: pauseink_domain::BlendMode) -> Self {
+        match mode {
+            pauseink_domain::BlendMode::Normal => Self::Normal,
+            pauseink_domain::BlendMode::Multiply => Self::Multiply,
+            pauseink_domain::BlendMode::Screen => Self::Screen,
+            pauseink_domain::BlendMode::Additive => Self::Additive,
+        }
+    }
+
+    fn into_domain(self) -> pauseink_domain::BlendMode {
+        match self {
+            Self::Normal => pauseink_domain::BlendMode::Normal,
+            Self::Multiply => pauseink_domain::BlendMode::Multiply,
+            Self::Screen => pauseink_domain::BlendMode::Screen,
+            Self::Additive => pauseink_domain::BlendMode::Additive,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -622,9 +855,17 @@ struct DesktopApp {
     bottom_panel_content_width: f32,
     local_font_families: Vec<String>,
     style_presets: Vec<BaseStylePreset>,
+    entrance_presets: Vec<EntrancePreset>,
     selected_style_preset_id: String,
+    bound_style_preset_id: Option<String>,
     preset_editor_id: String,
     preset_editor_name: String,
+    selected_entrance_preset_id: String,
+    bound_entrance_preset_id: Option<String>,
+    entrance_preset_editor_id: String,
+    entrance_preset_editor_name: String,
+    style_binding: StylePresetBindingState,
+    entrance_binding: EntrancePresetBindingState,
     template: TemplatePreviewState,
     export: ExportState,
     guide_state: Option<GuideOverlayState>,
@@ -699,6 +940,8 @@ impl DesktopApp {
         let export_catalog =
             ExportCatalog::load_builtin_from_dir(&builtin_export_profile_dir(&asset_root)).ok();
         let style_presets = load_style_presets(&portable_paths, &asset_root).unwrap_or_default();
+        let entrance_presets =
+            load_entrance_presets(&portable_paths, &asset_root).unwrap_or_default();
         let mut session = AppSession::with_history_limit(settings.history_depth);
         session.active_style.stabilization_strength =
             (settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
@@ -712,8 +955,14 @@ impl DesktopApp {
             .first()
             .map(|preset| preset.id.clone())
             .unwrap_or_default();
+        let selected_entrance_preset_id = entrance_presets
+            .first()
+            .map(|preset| preset.id.clone())
+            .unwrap_or_default();
         let (preset_editor_id, preset_editor_name) =
             preset_editor_fields_from_selection(&style_presets, &selected_style_preset_id);
+        let (entrance_preset_editor_id, entrance_preset_editor_name) =
+            entrance_preset_fields_from_selection(&entrance_presets, &selected_entrance_preset_id);
 
         let mut app = Self {
             session,
@@ -729,9 +978,17 @@ impl DesktopApp {
             bottom_panel_content_width: DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH,
             local_font_families,
             selected_style_preset_id,
+            bound_style_preset_id: None,
             preset_editor_id,
             preset_editor_name,
             style_presets,
+            entrance_presets,
+            selected_entrance_preset_id,
+            bound_entrance_preset_id: None,
+            entrance_preset_editor_id,
+            entrance_preset_editor_name,
+            style_binding: StylePresetBindingState::default(),
+            entrance_binding: EntrancePresetBindingState::default(),
             template: TemplatePreviewState::default(),
             export,
             guide_state: None,
@@ -843,14 +1100,20 @@ impl DesktopApp {
         }
     }
 
-    fn selected_style_preset(&self) -> Option<&BaseStylePreset> {
+    fn picked_style_preset(&self) -> Option<&BaseStylePreset> {
         self.style_presets
             .iter()
             .find(|preset| preset.id == self.selected_style_preset_id)
     }
 
+    fn bound_style_preset(&self) -> Option<&BaseStylePreset> {
+        self.style_presets
+            .iter()
+            .find(|preset| Some(&preset.id) == self.bound_style_preset_id.as_ref())
+    }
+
     fn selected_style_preset_label(&self) -> String {
-        self.selected_style_preset()
+        self.picked_style_preset()
             .map(|preset| preset.display_name.clone())
             .or_else(|| {
                 (!self.selected_style_preset_id.is_empty())
@@ -868,11 +1131,47 @@ impl DesktopApp {
         self.preset_editor_name = preset_name;
     }
 
-    fn reload_style_presets(&mut self) {
+    fn picked_entrance_preset(&self) -> Option<&EntrancePreset> {
+        self.entrance_presets
+            .iter()
+            .find(|preset| preset.id == self.selected_entrance_preset_id)
+    }
+
+    fn bound_entrance_preset(&self) -> Option<&EntrancePreset> {
+        self.entrance_presets
+            .iter()
+            .find(|preset| Some(&preset.id) == self.bound_entrance_preset_id.as_ref())
+    }
+
+    fn selected_entrance_preset_label(&self) -> String {
+        self.picked_entrance_preset()
+            .map(|preset| preset.display_name.clone())
+            .or_else(|| {
+                (!self.selected_entrance_preset_id.is_empty())
+                    .then(|| format!("保存済み: {}", self.selected_entrance_preset_id))
+            })
+            .unwrap_or_else(|| "未選択".to_owned())
+    }
+
+    fn sync_entrance_preset_editor_fields_from_selection(&mut self) {
+        let (preset_id, preset_name) = entrance_preset_fields_from_selection(
+            &self.entrance_presets,
+            &self.selected_entrance_preset_id,
+        );
+        self.entrance_preset_editor_id = preset_id;
+        self.entrance_preset_editor_name = preset_name;
+    }
+
+    fn reload_presets(&mut self) {
         let previous_selection = self.selected_style_preset_id.clone();
-        match load_style_presets(&self.portable_paths, &self.asset_root) {
-            Ok(style_presets) => {
+        let previous_entrance_selection = self.selected_entrance_preset_id.clone();
+        match (
+            load_style_presets(&self.portable_paths, &self.asset_root),
+            load_entrance_presets(&self.portable_paths, &self.asset_root),
+        ) {
+            (Ok(style_presets), Ok(entrance_presets)) => {
                 self.style_presets = style_presets;
+                self.entrance_presets = entrance_presets;
                 if self.selected_style_preset_id.is_empty() {
                     self.selected_style_preset_id = self
                         .style_presets
@@ -893,14 +1192,64 @@ impl DesktopApp {
                         .unwrap_or_default();
                 }
                 self.sync_preset_editor_fields_from_selection();
+                if self.selected_entrance_preset_id.is_empty() {
+                    self.selected_entrance_preset_id = self
+                        .entrance_presets
+                        .first()
+                        .map(|preset| preset.id.clone())
+                        .unwrap_or_default();
+                } else if !self
+                    .entrance_presets
+                    .iter()
+                    .any(|preset| preset.id == self.selected_entrance_preset_id)
+                {
+                    self.selected_entrance_preset_id = self
+                        .entrance_presets
+                        .iter()
+                        .find(|preset| preset.id == previous_entrance_selection)
+                        .or_else(|| self.entrance_presets.first())
+                        .map(|preset| preset.id.clone())
+                        .unwrap_or_default();
+                }
+                if self
+                    .bound_style_preset_id
+                    .as_ref()
+                    .is_some_and(|preset_id| {
+                        !self
+                            .style_presets
+                            .iter()
+                            .any(|preset| &preset.id == preset_id)
+                    })
+                {
+                    self.bound_style_preset_id = None;
+                    self.style_binding = StylePresetBindingState::default();
+                }
+                if self
+                    .bound_entrance_preset_id
+                    .as_ref()
+                    .is_some_and(|preset_id| {
+                        !self
+                            .entrance_presets
+                            .iter()
+                            .any(|preset| &preset.id == preset_id)
+                    })
+                {
+                    self.bound_entrance_preset_id = None;
+                    self.entrance_binding = EntrancePresetBindingState::default();
+                }
+                self.sync_entrance_preset_editor_fields_from_selection();
+                self.refresh_bound_style_fields();
+                self.refresh_bound_entrance_fields();
             }
-            Err(error) => self.push_log(format!("preset 再読込失敗: {error}")),
+            (Err(error), _) | (_, Err(error)) => {
+                self.push_log(format!("preset 再読込失敗: {error}"))
+            }
         }
     }
 
     fn save_user_style_preset(&mut self, overwrite_selected: bool) {
         let selected_user_preset = self
-            .selected_style_preset()
+            .picked_style_preset()
             .filter(|preset| preset.source == StylePresetSource::User)
             .cloned();
         let raw_id = if overwrite_selected {
@@ -948,7 +1297,6 @@ impl DesktopApp {
             glow: Some(self.session.active_style.glow.clone()),
             blend_mode: Some(self.session.active_style.blend_mode),
             stabilization_strength: Some(self.session.active_style.stabilization_strength),
-            entrance: Some(self.session.active_entrance.clone()),
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -977,8 +1325,10 @@ impl DesktopApp {
         match save_base_style_preset_to_path(&preset_path, &preset) {
             Ok(()) => {
                 self.selected_style_preset_id = preset_id;
+                self.bound_style_preset_id = Some(self.selected_style_preset_id.clone());
                 self.preset_editor_name = display_name.clone();
-                self.reload_style_presets();
+                self.style_binding = StylePresetBindingState::inherit_all_from_preset(&preset);
+                self.reload_presets();
                 self.mark_project_ui_dirty();
                 self.push_log(format!("user preset 保存: {display_name}"));
             }
@@ -987,7 +1337,7 @@ impl DesktopApp {
     }
 
     fn delete_selected_user_style_preset(&mut self) {
-        let Some(preset) = self.selected_style_preset().cloned() else {
+        let Some(preset) = self.picked_style_preset().cloned() else {
             self.push_log("preset 削除失敗: 選択中の preset がありません。");
             return;
         };
@@ -1003,7 +1353,11 @@ impl DesktopApp {
         });
         match fs::remove_file(&path) {
             Ok(()) => {
-                self.reload_style_presets();
+                if self.bound_style_preset_id.as_deref() == Some(preset.id.as_str()) {
+                    self.bound_style_preset_id = None;
+                    self.style_binding = StylePresetBindingState::default();
+                }
+                self.reload_presets();
                 if self
                     .style_presets
                     .iter()
@@ -1023,6 +1377,252 @@ impl DesktopApp {
             }
             Err(error) => self.push_log(format!("user preset 削除失敗: {error}")),
         }
+    }
+
+    fn save_user_entrance_preset(&mut self, overwrite_selected: bool) {
+        let selected_user_preset = self
+            .picked_entrance_preset()
+            .filter(|preset| preset.source == StylePresetSource::User)
+            .cloned();
+        let raw_id = if overwrite_selected {
+            selected_user_preset
+                .as_ref()
+                .map(|preset| preset.id.clone())
+                .unwrap_or_else(|| self.entrance_preset_editor_id.clone())
+        } else {
+            self.entrance_preset_editor_id.clone()
+        };
+        let preset_id = sanitize_style_preset_id(&raw_id);
+        if preset_id.is_empty() {
+            self.push_log("出現 preset 保存失敗: preset ID が空です。");
+            return;
+        }
+
+        let display_name = if overwrite_selected {
+            if self.entrance_preset_editor_name.trim().is_empty() {
+                selected_user_preset
+                    .as_ref()
+                    .map(|preset| preset.display_name.clone())
+                    .unwrap_or_else(|| preset_id.clone())
+            } else {
+                self.entrance_preset_editor_name.trim().to_owned()
+            }
+        } else if self.entrance_preset_editor_name.trim().is_empty() {
+            preset_id.clone()
+        } else {
+            self.entrance_preset_editor_name.trim().to_owned()
+        };
+
+        let preset = EntrancePreset {
+            id: preset_id.clone(),
+            display_name: display_name.clone(),
+            entrance: self.session.active_entrance.clone(),
+            source: StylePresetSource::User,
+            file_path: None,
+        };
+        let preset_path = if overwrite_selected {
+            selected_user_preset
+                .as_ref()
+                .and_then(|preset| preset.file_path.clone())
+                .unwrap_or_else(|| {
+                    self.portable_paths
+                        .user_entrance_presets_dir()
+                        .join(format!("{preset_id}.json5"))
+                })
+        } else {
+            self.portable_paths
+                .user_entrance_presets_dir()
+                .join(format!("{preset_id}.json5"))
+        };
+
+        if !overwrite_selected && preset_path.exists() {
+            self.push_log(format!(
+                "出現 preset 保存失敗: `{preset_id}` は既に存在します。上書き保存を使ってください。"
+            ));
+            return;
+        }
+
+        match save_entrance_preset_to_path(&preset_path, &preset) {
+            Ok(()) => {
+                self.selected_entrance_preset_id = preset_id.clone();
+                self.bound_entrance_preset_id = Some(preset_id);
+                self.entrance_preset_editor_name = display_name.clone();
+                self.entrance_binding = EntrancePresetBindingState::inherit_all();
+                self.reload_presets();
+                self.mark_project_ui_dirty();
+                self.push_log(format!("出現 preset 保存: {display_name}"));
+            }
+            Err(error) => self.push_log(format!("出現 preset 保存失敗: {error}")),
+        }
+    }
+
+    fn delete_selected_user_entrance_preset(&mut self) {
+        let Some(preset) = self.picked_entrance_preset().cloned() else {
+            self.push_log("出現 preset 削除失敗: 選択中の preset がありません。");
+            return;
+        };
+        if preset.source != StylePresetSource::User {
+            self.push_log("出現 preset 削除失敗: built-in preset は削除できません。");
+            return;
+        }
+
+        let path = preset.file_path.clone().unwrap_or_else(|| {
+            self.portable_paths
+                .user_entrance_presets_dir()
+                .join(format!("{}.json5", sanitize_style_preset_id(&preset.id)))
+        });
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                if self.bound_entrance_preset_id.as_deref() == Some(preset.id.as_str()) {
+                    self.bound_entrance_preset_id = None;
+                    self.entrance_binding = EntrancePresetBindingState::default();
+                }
+                self.reload_presets();
+                if self
+                    .entrance_presets
+                    .iter()
+                    .any(|candidate| candidate.id == preset.id)
+                {
+                    self.selected_entrance_preset_id = preset.id.clone();
+                } else {
+                    self.selected_entrance_preset_id = self
+                        .entrance_presets
+                        .first()
+                        .map(|candidate| candidate.id.clone())
+                        .unwrap_or_default();
+                }
+                self.sync_entrance_preset_editor_fields_from_selection();
+                self.mark_project_ui_dirty();
+                self.push_log(format!("出現 preset 削除: {}", preset.display_name));
+            }
+            Err(error) => self.push_log(format!("出現 preset 削除失敗: {error}")),
+        }
+    }
+
+    fn refresh_bound_style_fields(&mut self) {
+        let Some(preset) = self.bound_style_preset().cloned() else {
+            return;
+        };
+
+        if self.style_binding.inherit_thickness {
+            if let Some(thickness) = preset.thickness {
+                self.session.active_style.thickness = thickness;
+            }
+        }
+        if self.style_binding.inherit_color {
+            if let Some(color) = preset.color_rgba {
+                self.session.active_style.color = rgba_color_from_bytes(color);
+            }
+        }
+        if self.style_binding.inherit_opacity {
+            if let Some(opacity) = preset.opacity {
+                self.session.active_style.opacity = opacity;
+            } else if let Some(color) = preset.color_rgba {
+                self.session.active_style.opacity = rgba_alpha_to_opacity(color[3]);
+            }
+        }
+        if self.style_binding.inherit_outline {
+            if let Some(outline) = preset.outline {
+                self.session.active_style.outline = outline;
+            }
+        }
+        if self.style_binding.inherit_drop_shadow {
+            if let Some(drop_shadow) = preset.drop_shadow {
+                self.session.active_style.drop_shadow = drop_shadow;
+            }
+        }
+        if self.style_binding.inherit_glow {
+            if let Some(glow) = preset.glow {
+                self.session.active_style.glow = glow;
+            }
+        }
+        if self.style_binding.inherit_blend_mode {
+            if let Some(blend_mode) = preset.blend_mode {
+                self.session.active_style.blend_mode = blend_mode;
+            }
+        }
+        if self.style_binding.inherit_stabilization_strength {
+            if let Some(stabilization_strength) = preset.stabilization_strength {
+                self.session.active_style.stabilization_strength = stabilization_strength;
+            }
+        }
+    }
+
+    fn refresh_bound_entrance_fields(&mut self) {
+        let Some(preset) = self.bound_entrance_preset().cloned() else {
+            return;
+        };
+
+        if self.entrance_binding.inherit_kind {
+            self.session.active_entrance.kind = preset.entrance.kind;
+        }
+        if self.entrance_binding.inherit_scope {
+            self.session.active_entrance.scope = preset.entrance.scope;
+        }
+        if self.entrance_binding.inherit_order {
+            self.session.active_entrance.order = preset.entrance.order;
+        }
+        if self.entrance_binding.inherit_duration_mode {
+            self.session.active_entrance.duration_mode = preset.entrance.duration_mode;
+        }
+        if self.entrance_binding.inherit_duration_ms {
+            self.session.active_entrance.duration = preset.entrance.duration;
+        }
+        if self.entrance_binding.inherit_speed_scalar {
+            self.session.active_entrance.speed_scalar = preset.entrance.speed_scalar;
+        }
+        if self.entrance_binding.inherit_head_effect {
+            self.session.active_entrance.head_effect = preset.entrance.head_effect.clone();
+        }
+    }
+
+    fn apply_selected_style_preset(&mut self) {
+        let Some(preset) = self.picked_style_preset().cloned() else {
+            self.push_log("style preset 適用失敗: 選択中の preset がありません。");
+            return;
+        };
+
+        self.bound_style_preset_id = Some(preset.id.clone());
+        self.style_binding = StylePresetBindingState::inherit_all_from_preset(&preset);
+        self.refresh_bound_style_fields();
+        let should_apply_matching_entrance = self
+            .picked_entrance_preset()
+            .is_some_and(|candidate| candidate.id == preset.id)
+            && (self.bound_entrance_preset_id.is_none()
+                || self.bound_entrance_preset_id.as_deref() == Some(preset.id.as_str()));
+        if should_apply_matching_entrance {
+            self.selected_entrance_preset_id = preset.id.clone();
+            self.apply_selected_entrance_preset();
+        }
+        self.sync_active_style_to_current_object();
+        self.mark_project_ui_dirty();
+        self.push_log(format!("style preset 適用: {}", preset.display_name));
+    }
+
+    fn clear_style_preset_binding(&mut self) {
+        self.bound_style_preset_id = None;
+        self.style_binding = StylePresetBindingState::default();
+        self.mark_project_ui_dirty();
+    }
+
+    fn apply_selected_entrance_preset(&mut self) {
+        let Some(preset) = self.picked_entrance_preset().cloned() else {
+            self.push_log("出現 preset 適用失敗: 選択中の preset がありません。");
+            return;
+        };
+
+        self.bound_entrance_preset_id = Some(preset.id.clone());
+        self.entrance_binding = EntrancePresetBindingState::inherit_all();
+        self.refresh_bound_entrance_fields();
+        self.sync_active_entrance_to_current_object();
+        self.mark_project_ui_dirty();
+        self.push_log(format!("出現 preset 適用: {}", preset.display_name));
+    }
+
+    fn clear_entrance_preset_binding(&mut self) {
+        self.bound_entrance_preset_id = None;
+        self.entrance_binding = EntrancePresetBindingState::default();
+        self.mark_project_ui_dirty();
     }
 
     fn persist_project_ui_state_into_document(&mut self) {
@@ -1067,6 +1667,8 @@ impl DesktopApp {
         {
             editor_state.template.apply_to(&mut self.template);
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+            self.style_binding = editor_state.style_binding;
+            self.entrance_binding = editor_state.entrance_binding;
         }
 
         if let Some(base_style_state) = self
@@ -1080,6 +1682,7 @@ impl DesktopApp {
         {
             self.session.active_style = base_style_state.resolved_snapshot;
             if let Some(preset_id) = base_style_state.preset_id {
+                self.bound_style_preset_id = Some(preset_id.clone());
                 self.selected_style_preset_id = preset_id;
             }
         }
@@ -1095,14 +1698,18 @@ impl DesktopApp {
         {
             self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
             if let Some(preset_id) = entrance_state.preset_id {
-                self.selected_style_preset_id = preset_id;
+                self.bound_entrance_preset_id = Some(preset_id.clone());
+                self.selected_entrance_preset_id = preset_id;
             }
         }
 
         self.font_config_dirty = true;
         self.reset_template_slots();
+        self.refresh_bound_style_fields();
+        self.refresh_bound_entrance_fields();
         self.refresh_guide_geometry();
         self.sync_preset_editor_fields_from_selection();
+        self.sync_entrance_preset_editor_fields_from_selection();
     }
 
     fn restore_app_ui_state_from_settings(&mut self) {
@@ -1114,6 +1721,8 @@ impl DesktopApp {
         {
             editor_state.template.apply_to(&mut self.template);
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+            self.style_binding = editor_state.style_binding;
+            self.entrance_binding = editor_state.entrance_binding;
         }
 
         if let Some(base_style_state) = self
@@ -1124,6 +1733,7 @@ impl DesktopApp {
         {
             self.session.active_style = base_style_state.resolved_snapshot;
             if let Some(preset_id) = base_style_state.preset_id {
+                self.bound_style_preset_id = Some(preset_id.clone());
                 self.selected_style_preset_id = preset_id;
             }
         }
@@ -1136,14 +1746,18 @@ impl DesktopApp {
         {
             self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
             if let Some(preset_id) = entrance_state.preset_id {
-                self.selected_style_preset_id = preset_id;
+                self.bound_entrance_preset_id = Some(preset_id.clone());
+                self.selected_entrance_preset_id = preset_id;
             }
         }
 
         self.font_config_dirty = true;
         self.reset_template_slots();
+        self.refresh_bound_style_fields();
+        self.refresh_bound_entrance_fields();
         self.refresh_guide_geometry();
         self.sync_preset_editor_fields_from_selection();
+        self.sync_entrance_preset_editor_fields_from_selection();
     }
 
     fn rebuild_local_font_families(&mut self) {
@@ -1513,52 +2127,6 @@ impl DesktopApp {
             self.guide_modifier_used_for_stroke = true;
             self.perform_redo();
         }
-    }
-
-    fn apply_selected_style_preset(&mut self) {
-        let Some(preset) = self
-            .style_presets
-            .iter()
-            .find(|preset| preset.id == self.selected_style_preset_id)
-            .cloned()
-        else {
-            return;
-        };
-
-        if let Some(thickness) = preset.thickness {
-            self.session.active_style.thickness = thickness;
-        }
-        if let Some(color) = preset.color_rgba {
-            self.session.active_style.color =
-                pauseink_domain::RgbaColor::new(color[0], color[1], color[2], 255);
-        }
-        if let Some(opacity) = preset.opacity {
-            self.session.active_style.opacity = opacity;
-        } else if let Some(color) = preset.color_rgba {
-            self.session.active_style.opacity = color[3] as f32 / 255.0;
-        }
-        if let Some(outline) = preset.outline {
-            self.session.active_style.outline = outline;
-        }
-        if let Some(drop_shadow) = preset.drop_shadow {
-            self.session.active_style.drop_shadow = drop_shadow;
-        }
-        if let Some(glow) = preset.glow {
-            self.session.active_style.glow = glow;
-        }
-        if let Some(blend_mode) = preset.blend_mode {
-            self.session.active_style.blend_mode = blend_mode;
-        }
-        if let Some(stabilization_strength) = preset.stabilization_strength {
-            self.session.active_style.stabilization_strength = stabilization_strength;
-        }
-        if let Some(entrance) = preset.entrance {
-            self.session.active_entrance = entrance;
-        }
-        self.sync_active_style_to_current_object();
-        self.sync_active_entrance_to_current_object();
-        self.mark_project_ui_dirty();
-        self.push_log(format!("style preset 適用: {}", preset.display_name));
     }
 
     fn refresh_runtime_capabilities(&mut self) {
@@ -3388,10 +3956,21 @@ impl eframe::App for DesktopApp {
                         });
                     if self.selected_style_preset_id != previous_style_preset_id {
                         self.sync_preset_editor_fields_from_selection();
-                        self.mark_project_ui_dirty();
+                    }
+                    if let Some(bound_id) = &self.bound_style_preset_id {
+                        if let Some(bound) =
+                            self.style_presets.iter().find(|preset| &preset.id == bound_id)
+                        {
+                            ui.small(format!("現在の継承元: {}", bound.display_name));
+                        }
+                    } else {
+                        ui.small("現在の継承元: なし");
                     }
                     if ui.button("preset を適用").clicked() {
                         self.apply_selected_style_preset();
+                    }
+                    if ui.button("preset 解除").clicked() {
+                        self.clear_style_preset_binding();
                     }
                     ui.horizontal(|ui| {
                         ui.label("user preset ID");
@@ -3409,13 +3988,76 @@ impl eframe::App for DesktopApp {
                             self.save_user_style_preset(true);
                         }
                         let selected_is_user = self
-                            .selected_style_preset()
+                            .picked_style_preset()
                             .is_some_and(|preset| preset.source == StylePresetSource::User);
                         if ui
                             .add_enabled(selected_is_user, egui::Button::new("削除"))
                             .clicked()
                         {
                             self.delete_selected_user_style_preset();
+                        }
+                    });
+                    ui.separator();
+                }
+                if !self.entrance_presets.is_empty() {
+                    ui.label("出現 preset");
+                    let previous_entrance_preset_id = self.selected_entrance_preset_id.clone();
+                    egui::ComboBox::from_label("出現 preset")
+                        .selected_text(self.selected_entrance_preset_label())
+                        .show_ui(ui, |ui| {
+                            for preset in &self.entrance_presets {
+                                ui.selectable_value(
+                                    &mut self.selected_entrance_preset_id,
+                                    preset.id.clone(),
+                                    &preset.display_name,
+                                );
+                            }
+                        });
+                    if self.selected_entrance_preset_id != previous_entrance_preset_id {
+                        self.sync_entrance_preset_editor_fields_from_selection();
+                    }
+                    if let Some(bound_id) = &self.bound_entrance_preset_id {
+                        if let Some(bound) = self
+                            .entrance_presets
+                            .iter()
+                            .find(|preset| &preset.id == bound_id)
+                        {
+                            ui.small(format!("現在の継承元: {}", bound.display_name));
+                        }
+                    } else {
+                        ui.small("現在の継承元: なし");
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("出現 preset を適用").clicked() {
+                            self.apply_selected_entrance_preset();
+                        }
+                        if ui.button("出現 preset 解除").clicked() {
+                            self.clear_entrance_preset_binding();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("出現 preset ID");
+                        ui.text_edit_singleline(&mut self.entrance_preset_editor_id);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("出現 preset 名");
+                        ui.text_edit_singleline(&mut self.entrance_preset_editor_name);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("追加保存").clicked() {
+                            self.save_user_entrance_preset(false);
+                        }
+                        if ui.button("上書き保存").clicked() {
+                            self.save_user_entrance_preset(true);
+                        }
+                        let selected_is_user = self
+                            .picked_entrance_preset()
+                            .is_some_and(|preset| preset.source == StylePresetSource::User);
+                        if ui
+                            .add_enabled(selected_is_user, egui::Button::new("削除"))
+                            .clicked()
+                        {
+                            self.delete_selected_user_entrance_preset();
                         }
                     });
                     ui.separator();
@@ -3434,8 +4076,34 @@ impl eframe::App for DesktopApp {
                         color[2],
                         self.session.active_style.color.a,
                     );
+                    self.style_binding.inherit_color = false;
                     self.sync_active_style_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.color_rgba)
+                    .is_some()
+                {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.style_binding.inherit_color {
+                            "色: preset 継承中"
+                        } else {
+                            "色: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.style_binding.inherit_color,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.style_binding.inherit_color = true;
+                            self.refresh_bound_style_fields();
+                            self.sync_active_style_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 if ui
                     .add(
@@ -3444,8 +4112,30 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.style_binding.inherit_thickness = false;
                     self.sync_active_style_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self.bound_style_preset().and_then(|preset| preset.thickness).is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.style_binding.inherit_thickness {
+                            "太さ: preset 継承中"
+                        } else {
+                            "太さ: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.style_binding.inherit_thickness,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.style_binding.inherit_thickness = true;
+                            self.refresh_bound_style_fields();
+                            self.sync_active_style_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 if ui
                     .add(
@@ -3454,8 +4144,33 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.style_binding.inherit_opacity = false;
                     self.sync_active_style_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .is_some_and(|preset| preset.opacity.is_some() || preset.color_rgba.is_some())
+                {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.style_binding.inherit_opacity {
+                            "不透明度: preset 継承中"
+                        } else {
+                            "不透明度: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.style_binding.inherit_opacity,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.style_binding.inherit_opacity = true;
+                            self.refresh_bound_style_fields();
+                            self.sync_active_style_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 if ui
                     .add(
@@ -3467,8 +4182,34 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.style_binding.inherit_stabilization_strength = false;
                     self.sync_active_style_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.stabilization_strength)
+                    .is_some()
+                {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.style_binding.inherit_stabilization_strength {
+                            "手ブレ補正: preset 継承中"
+                        } else {
+                            "手ブレ補正: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.style_binding.inherit_stabilization_strength,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.style_binding.inherit_stabilization_strength = true;
+                            self.refresh_bound_style_fields();
+                            self.sync_active_style_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 ui.horizontal(|ui| {
                     ui.label("合成");
@@ -3491,15 +4232,42 @@ impl eframe::App for DesktopApp {
                         });
                     if blend_mode != self.session.active_style.blend_mode {
                         self.session.active_style.blend_mode = blend_mode;
+                        self.style_binding.inherit_blend_mode = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
                 });
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.blend_mode)
+                    .is_some()
+                {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.style_binding.inherit_blend_mode {
+                            "合成: preset 継承中"
+                        } else {
+                            "合成: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.style_binding.inherit_blend_mode,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.style_binding.inherit_blend_mode = true;
+                            self.refresh_bound_style_fields();
+                            self.sync_active_style_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
+                }
                 ui.collapsing("アウトライン", |ui| {
                     if ui
                         .checkbox(&mut self.session.active_style.outline.enabled, "有効")
                         .changed()
                     {
+                        self.style_binding.inherit_outline = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3513,14 +4281,41 @@ impl eframe::App for DesktopApp {
                         )
                         .changed()
                     {
+                        self.style_binding.inherit_outline = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
                     let mut outline_color = rgba_to_color32(self.session.active_style.outline.color);
                     if ui.color_edit_button_srgba(&mut outline_color).changed() {
                         self.session.active_style.outline.color = color32_to_rgba(outline_color);
+                        self.style_binding.inherit_outline = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
+                    }
+                    if self
+                        .bound_style_preset()
+                        .and_then(|preset| preset.outline.clone())
+                        .is_some()
+                    {
+                        ui.horizontal(|ui| {
+                            ui.small(if self.style_binding.inherit_outline {
+                                "アウトライン: preset 継承中"
+                            } else {
+                                "アウトライン: 上書き中"
+                            });
+                            if ui
+                                .add_enabled(
+                                    !self.style_binding.inherit_outline,
+                                    egui::Button::new("presetへ戻す"),
+                                )
+                                .clicked()
+                            {
+                                self.style_binding.inherit_outline = true;
+                                self.refresh_bound_style_fields();
+                                self.sync_active_style_to_current_object();
+                                self.mark_project_ui_dirty();
+                            }
+                        });
                     }
                 });
                 ui.collapsing("ドロップシャドウ", |ui| {
@@ -3528,6 +4323,7 @@ impl eframe::App for DesktopApp {
                         .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
                         .changed()
                     {
+                        self.style_binding.inherit_drop_shadow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3541,6 +4337,7 @@ impl eframe::App for DesktopApp {
                         )
                         .changed()
                     {
+                        self.style_binding.inherit_drop_shadow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3554,6 +4351,7 @@ impl eframe::App for DesktopApp {
                         )
                         .changed()
                     {
+                        self.style_binding.inherit_drop_shadow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3567,6 +4365,7 @@ impl eframe::App for DesktopApp {
                         )
                         .changed()
                     {
+                        self.style_binding.inherit_drop_shadow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3574,8 +4373,34 @@ impl eframe::App for DesktopApp {
                         rgba_to_color32(self.session.active_style.drop_shadow.color);
                     if ui.color_edit_button_srgba(&mut shadow_color).changed() {
                         self.session.active_style.drop_shadow.color = color32_to_rgba(shadow_color);
+                        self.style_binding.inherit_drop_shadow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
+                    }
+                    if self
+                        .bound_style_preset()
+                        .and_then(|preset| preset.drop_shadow.clone())
+                        .is_some()
+                    {
+                        ui.horizontal(|ui| {
+                            ui.small(if self.style_binding.inherit_drop_shadow {
+                                "ドロップシャドウ: preset 継承中"
+                            } else {
+                                "ドロップシャドウ: 上書き中"
+                            });
+                            if ui
+                                .add_enabled(
+                                    !self.style_binding.inherit_drop_shadow,
+                                    egui::Button::new("presetへ戻す"),
+                                )
+                                .clicked()
+                            {
+                                self.style_binding.inherit_drop_shadow = true;
+                                self.refresh_bound_style_fields();
+                                self.sync_active_style_to_current_object();
+                                self.mark_project_ui_dirty();
+                            }
+                        });
                     }
                 });
                 ui.collapsing("グロー", |ui| {
@@ -3583,6 +4408,7 @@ impl eframe::App for DesktopApp {
                         .checkbox(&mut self.session.active_style.glow.enabled, "有効")
                         .changed()
                     {
+                        self.style_binding.inherit_glow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
@@ -3596,14 +4422,41 @@ impl eframe::App for DesktopApp {
                         )
                         .changed()
                     {
+                        self.style_binding.inherit_glow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
                     }
                     let mut glow_color = rgba_to_color32(self.session.active_style.glow.color);
                     if ui.color_edit_button_srgba(&mut glow_color).changed() {
                         self.session.active_style.glow.color = color32_to_rgba(glow_color);
+                        self.style_binding.inherit_glow = false;
                         self.sync_active_style_to_current_object();
                         self.mark_project_ui_dirty();
+                    }
+                    if self
+                        .bound_style_preset()
+                        .and_then(|preset| preset.glow.clone())
+                        .is_some()
+                    {
+                        ui.horizontal(|ui| {
+                            ui.small(if self.style_binding.inherit_glow {
+                                "グロー: preset 継承中"
+                            } else {
+                                "グロー: 上書き中"
+                            });
+                            if ui
+                                .add_enabled(
+                                    !self.style_binding.inherit_glow,
+                                    egui::Button::new("presetへ戻す"),
+                                )
+                                .clicked()
+                            {
+                                self.style_binding.inherit_glow = true;
+                                self.refresh_bound_style_fields();
+                                self.sync_active_style_to_current_object();
+                                self.mark_project_ui_dirty();
+                            }
+                        });
                     }
                 });
                 ui.separator();
@@ -3629,10 +4482,125 @@ impl eframe::App for DesktopApp {
                         });
                     if entrance_kind != self.session.active_entrance.kind {
                         self.session.active_entrance.kind = entrance_kind;
+                        self.entrance_binding.inherit_kind = false;
                         self.sync_active_entrance_to_current_object();
                         self.mark_project_ui_dirty();
                     }
                 });
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_kind {
+                            "方式: preset 継承中"
+                        } else {
+                            "方式: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_kind,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_kind = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("対象");
+                    let mut scope = self.session.active_entrance.scope;
+                    egui::ComboBox::from_id_salt("entrance_scope")
+                        .selected_text(entrance_scope_label(scope))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::EffectScope::Stroke,
+                                pauseink_domain::EffectScope::GlyphObject,
+                                pauseink_domain::EffectScope::Group,
+                                pauseink_domain::EffectScope::Run,
+                            ] {
+                                ui.selectable_value(
+                                    &mut scope,
+                                    candidate,
+                                    entrance_scope_label(candidate),
+                                );
+                            }
+                        });
+                    if scope != self.session.active_entrance.scope {
+                        self.session.active_entrance.scope = scope;
+                        self.entrance_binding.inherit_scope = false;
+                        self.sync_active_entrance_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_scope {
+                            "対象: preset 継承中"
+                        } else {
+                            "対象: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_scope,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_scope = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("順序");
+                    let mut order = self.session.active_entrance.order;
+                    egui::ComboBox::from_id_salt("entrance_order")
+                        .selected_text(entrance_order_label(order))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::EffectOrder::Serial,
+                                pauseink_domain::EffectOrder::Reverse,
+                                pauseink_domain::EffectOrder::Parallel,
+                            ] {
+                                ui.selectable_value(
+                                    &mut order,
+                                    candidate,
+                                    entrance_order_label(candidate),
+                                );
+                            }
+                        });
+                    if order != self.session.active_entrance.order {
+                        self.session.active_entrance.order = order;
+                        self.entrance_binding.inherit_order = false;
+                        self.sync_active_entrance_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_order {
+                            "順序: preset 継承中"
+                        } else {
+                            "順序: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_order,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_order = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.label("時間モード");
                     let mut duration_mode = self.session.active_entrance.duration_mode;
@@ -3652,10 +4620,32 @@ impl eframe::App for DesktopApp {
                         });
                     if duration_mode != self.session.active_entrance.duration_mode {
                         self.session.active_entrance.duration_mode = duration_mode;
+                        self.entrance_binding.inherit_duration_mode = false;
                         self.sync_active_entrance_to_current_object();
                         self.mark_project_ui_dirty();
                     }
                 });
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_duration_mode {
+                            "時間モード: preset 継承中"
+                        } else {
+                            "時間モード: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_duration_mode,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_duration_mode = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
+                }
                 let mut entrance_duration_ms =
                     media_duration_to_millis(self.session.active_entrance.duration) as f32;
                 if ui
@@ -3677,8 +4667,30 @@ impl eframe::App for DesktopApp {
                         pauseink_domain::MediaDuration::from_millis(
                             entrance_duration_ms.round() as i64,
                         );
+                    self.entrance_binding.inherit_duration_ms = false;
                     self.sync_active_entrance_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_duration_ms {
+                            "出現時間: preset 継承中"
+                        } else {
+                            "出現時間: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_duration_ms,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_duration_ms = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 if ui
                     .add(
@@ -3691,8 +4703,30 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.entrance_binding.inherit_speed_scalar = false;
                     self.sync_active_entrance_to_current_object();
                     self.mark_project_ui_dirty();
+                }
+                if self.bound_entrance_preset().is_some() {
+                    ui.horizontal(|ui| {
+                        ui.small(if self.entrance_binding.inherit_speed_scalar {
+                            "出現速度: preset 継承中"
+                        } else {
+                            "出現速度: 上書き中"
+                        });
+                        if ui
+                            .add_enabled(
+                                !self.entrance_binding.inherit_speed_scalar,
+                                egui::Button::new("presetへ戻す"),
+                            )
+                            .clicked()
+                        {
+                            self.entrance_binding.inherit_speed_scalar = true;
+                            self.refresh_bound_entrance_fields();
+                            self.sync_active_entrance_to_current_object();
+                            self.mark_project_ui_dirty();
+                        }
+                    });
                 }
                 ui.small(match self.session.active_entrance.duration_mode {
                     pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
@@ -4041,6 +5075,10 @@ fn packaged_style_preset_dir(asset_root: &Path) -> PathBuf {
     asset_root.join("presets/style_presets")
 }
 
+fn packaged_entrance_preset_dir(asset_root: &Path) -> PathBuf {
+    asset_root.join("presets/entrance_presets")
+}
+
 fn packaged_export_profile_dir(asset_root: &Path) -> PathBuf {
     asset_root.join("presets/export_profiles")
 }
@@ -4063,12 +5101,35 @@ fn builtin_export_profile_dir(asset_root: &Path) -> PathBuf {
     }
 }
 
+fn builtin_entrance_preset_dir(asset_root: &Path) -> Option<PathBuf> {
+    let packaged_dir = packaged_entrance_preset_dir(asset_root);
+    if packaged_dir.is_dir() {
+        Some(packaged_dir)
+    } else {
+        let repository_dir = repository_asset_root().join("presets/entrance_presets");
+        repository_dir.is_dir().then_some(repository_dir)
+    }
+}
+
 fn load_style_presets(
     portable_paths: &PortablePaths,
     asset_root: &Path,
 ) -> std::result::Result<Vec<BaseStylePreset>, String> {
     load_base_style_presets_overlay(
         &builtin_style_preset_dir(asset_root),
+        Some(&portable_paths.user_style_presets_dir()),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn load_entrance_presets(
+    portable_paths: &PortablePaths,
+    asset_root: &Path,
+) -> std::result::Result<Vec<EntrancePreset>, String> {
+    load_entrance_presets_overlay(
+        builtin_entrance_preset_dir(asset_root).as_deref(),
+        Some(&portable_paths.user_entrance_presets_dir()),
+        Some(&builtin_style_preset_dir(asset_root)),
         Some(&portable_paths.user_style_presets_dir()),
     )
     .map_err(|error| error.to_string())
@@ -4089,6 +5150,26 @@ fn preset_editor_fields_from_selection(
                     String::new()
                 } else {
                     selected_style_preset_id.to_owned()
+                },
+            )
+        })
+}
+
+fn entrance_preset_fields_from_selection(
+    entrance_presets: &[EntrancePreset],
+    selected_entrance_preset_id: &str,
+) -> (String, String) {
+    entrance_presets
+        .iter()
+        .find(|preset| preset.id == selected_entrance_preset_id)
+        .map(|preset| (preset.id.clone(), preset.display_name.clone()))
+        .unwrap_or_else(|| {
+            (
+                selected_entrance_preset_id.to_owned(),
+                if selected_entrance_preset_id.is_empty() {
+                    String::new()
+                } else {
+                    selected_entrance_preset_id.to_owned()
                 },
             )
         })
@@ -4146,6 +5227,14 @@ fn color32_to_rgba(color: Color32) -> pauseink_domain::RgbaColor {
     pauseink_domain::RgbaColor::new(color.r(), color.g(), color.b(), color.a())
 }
 
+fn rgba_color_from_bytes(raw: [u8; 4]) -> pauseink_domain::RgbaColor {
+    pauseink_domain::RgbaColor::new(raw[0], raw[1], raw[2], raw[3])
+}
+
+fn rgba_alpha_to_opacity(alpha: u8) -> f32 {
+    (alpha as f32 / 255.0).clamp(0.0, 1.0)
+}
+
 fn media_duration_to_millis(duration: pauseink_domain::MediaDuration) -> i64 {
     ((duration.ticks as f64 * duration.time_base.numerator as f64 * 1000.0)
         / duration.time_base.denominator as f64)
@@ -4174,6 +5263,23 @@ fn entrance_duration_mode_label(mode: pauseink_domain::EntranceDurationMode) -> 
     match mode {
         pauseink_domain::EntranceDurationMode::FixedTotalDuration => "固定時間",
         pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => "長さ比例",
+    }
+}
+
+fn entrance_scope_label(scope: pauseink_domain::EffectScope) -> &'static str {
+    match scope {
+        pauseink_domain::EffectScope::Stroke => "画ごと",
+        pauseink_domain::EffectScope::GlyphObject => "文字ごと",
+        pauseink_domain::EffectScope::Group => "グループごと",
+        pauseink_domain::EffectScope::Run => "run ごと",
+    }
+}
+
+fn entrance_order_label(order: pauseink_domain::EffectOrder) -> &'static str {
+    match order {
+        pauseink_domain::EffectOrder::Serial => "直列",
+        pauseink_domain::EffectOrder::Reverse => "逆順",
+        pauseink_domain::EffectOrder::Parallel => "並列",
     }
 }
 
@@ -4829,6 +5935,96 @@ mod tests {
     }
 
     #[test]
+    fn user_entrance_preset_save_overwrite_and_delete_roundtrip_updates_catalog() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        let preset_path = portable_paths
+            .user_entrance_presets_dir()
+            .join("custom_trace.json5");
+
+        app.entrance_preset_editor_id = "custom_trace".to_owned();
+        app.entrance_preset_editor_name = "Custom Trace".to_owned();
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        app.session.active_entrance.speed_scalar = 1.7;
+        app.save_user_entrance_preset(false);
+
+        assert!(preset_path.exists());
+        let saved = app
+            .entrance_presets
+            .iter()
+            .find(|preset| preset.id == "custom_trace")
+            .expect("saved entrance preset should appear in catalog");
+        assert_eq!(saved.source, StylePresetSource::User);
+        assert_eq!(
+            saved.entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert!((saved.entrance.speed_scalar - 1.7).abs() < 0.001);
+
+        app.selected_entrance_preset_id = "custom_trace".to_owned();
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::Dissolve;
+        app.session.active_entrance.speed_scalar = 2.2;
+        app.save_user_entrance_preset(true);
+
+        let overwritten = app
+            .entrance_presets
+            .iter()
+            .find(|preset| preset.id == "custom_trace")
+            .expect("overwritten entrance preset");
+        assert_eq!(
+            overwritten.entrance.kind,
+            pauseink_domain::EntranceKind::Dissolve
+        );
+        assert!((overwritten.entrance.speed_scalar - 2.2).abs() < 0.001);
+
+        app.delete_selected_user_entrance_preset();
+        assert!(!preset_path.exists());
+        assert!(app
+            .entrance_presets
+            .iter()
+            .all(|preset| preset.id != "custom_trace"));
+    }
+
+    #[test]
+    fn save_settings_and_restart_restore_style_and_entrance_binding_state() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.apply_selected_style_preset();
+        app.session.active_style.thickness = 21.0;
+        app.style_binding.inherit_thickness = false;
+        app.selected_entrance_preset_id = "white_pen_fastwrite".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_entrance.speed_scalar = 2.4;
+        app.entrance_binding.inherit_speed_scalar = false;
+
+        app.save_settings();
+
+        let loaded = load_settings_from_file(&portable_paths).expect("settings should load");
+        let reopened = DesktopApp::new(portable_paths, loaded, None, None);
+
+        assert_eq!(
+            reopened.bound_style_preset_id.as_deref(),
+            Some("marker_highlight")
+        );
+        assert!(reopened.style_binding.inherit_color);
+        assert!(!reopened.style_binding.inherit_thickness);
+        assert_eq!(reopened.session.active_style.thickness, 21.0);
+        assert_eq!(
+            reopened.bound_entrance_preset_id.as_deref(),
+            Some("white_pen_fastwrite")
+        );
+        assert!(reopened.entrance_binding.inherit_kind);
+        assert!(!reopened.entrance_binding.inherit_speed_scalar);
+        assert!((reopened.session.active_entrance.speed_scalar - 2.4).abs() < 0.001);
+    }
+
+    #[test]
     fn style_preset_application_updates_effect_fields_and_persists_entrance_state() {
         let temp_dir = tempdir().expect("temp dir");
         let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
@@ -4957,6 +6153,97 @@ mod tests {
                 .any(|preset| preset.id == "custom_marker"
                     && preset.source == StylePresetSource::User)
         );
+    }
+
+    #[test]
+    fn desktop_app_can_add_overwrite_and_delete_user_entrance_presets() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let preset_path = portable_paths
+            .user_entrance_presets_dir()
+            .join("custom_trace.json5");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.entrance_preset_editor_id = "custom_trace".to_owned();
+        app.entrance_preset_editor_name = "Custom Trace".to_owned();
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        app.session.active_entrance.scope = pauseink_domain::EffectScope::Group;
+        app.session.active_entrance.order = pauseink_domain::EffectOrder::Serial;
+        app.session.active_entrance.speed_scalar = 2.2;
+        app.save_user_entrance_preset(false);
+
+        assert!(
+            preset_path.exists(),
+            "追加保存で user entrance preset file が必要"
+        );
+        let saved = app
+            .entrance_presets
+            .iter()
+            .find(|preset| preset.id == "custom_trace")
+            .expect("saved entrance preset");
+        assert_eq!(saved.source, StylePresetSource::User);
+        assert_eq!(
+            saved.entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert_eq!(saved.entrance.scope, pauseink_domain::EffectScope::Group);
+        assert_eq!(saved.entrance.order, pauseink_domain::EffectOrder::Serial);
+
+        app.selected_entrance_preset_id = "custom_trace".to_owned();
+        app.session.active_entrance.speed_scalar = 3.0;
+        app.save_user_entrance_preset(true);
+
+        let overwritten = app
+            .entrance_presets
+            .iter()
+            .find(|preset| preset.id == "custom_trace")
+            .expect("overwritten entrance preset");
+        assert!((overwritten.entrance.speed_scalar - 3.0).abs() < 0.001);
+
+        app.delete_selected_user_entrance_preset();
+        assert!(!preset_path.exists(), "削除で file も消したい");
+        assert!(!app
+            .entrance_presets
+            .iter()
+            .any(|preset| preset.id == "custom_trace" && preset.source == StylePresetSource::User));
+    }
+
+    #[test]
+    fn save_settings_and_restart_restore_separate_style_and_entrance_bindings() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.apply_selected_style_preset();
+        app.selected_entrance_preset_id = "white_pen_fastwrite".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_style.thickness = 21.0;
+        app.style_binding.inherit_thickness = false;
+        app.session.active_entrance.speed_scalar = 1.7;
+        app.entrance_binding.inherit_speed_scalar = false;
+
+        app.save_settings();
+
+        let loaded = load_settings_from_file(&portable_paths).expect("settings load");
+        let reopened = DesktopApp::new(portable_paths, loaded, None, None);
+
+        assert_eq!(
+            reopened.bound_style_preset_id.as_deref(),
+            Some("marker_highlight")
+        );
+        assert_eq!(
+            reopened.bound_entrance_preset_id.as_deref(),
+            Some("white_pen_fastwrite")
+        );
+        assert!(!reopened.style_binding.inherit_thickness);
+        assert!(reopened.style_binding.inherit_color);
+        assert!(!reopened.entrance_binding.inherit_speed_scalar);
+        assert!(reopened.entrance_binding.inherit_kind);
+        assert!((reopened.session.active_style.thickness - 21.0).abs() < 0.001);
+        assert!((reopened.session.active_entrance.speed_scalar - 1.7).abs() < 0.001);
     }
 
     #[test]

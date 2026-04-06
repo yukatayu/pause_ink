@@ -1232,3 +1232,33 @@
 - [x] Windows build attempted and documented
 - [x] Manuals updated
 - [x] `progress.md` updated
+
+## 14. 2026-04-07 残 task 実装バッチ
+
+- 2026-04-07T02:05:00+09:00
+  - 直近マイルストーン: `develop` で `V1-01 -> V1-08 -> V1-07 -> V1-05` を順番に実装し、各 task ごとに commit/push まで進める。
+  - 方針:
+    - 先頭の `V1-01` は、現行の `style preset` に entrance が混在している状態を分離し、後続 task の基礎になる preset catalog / portable directory / project/settings restore 境界を先に固定する。
+    - `V1-01` では built-in / user の既存 preset file 互換を壊さないことを優先し、legacy style preset から entrance を救済できる loader を残す。
+    - binding metadata は renderer/domain へ漏らさず editor UI state 側へ保存し、project の canonical save は resolved snapshot を維持する。
+  - 着手前確認:
+    - `crates/presets_core/src/lib.rs`, `crates/app/src/main.rs`, `crates/portable_fs/src/lib.rs` の現状 loader/save/restore/test を読み直した。
+    - `.docs/16_remaining_tasks_plan.md` の `V1-01`, `V1-08`, `V1-07`, `V1-05` を再確認した。
+- 2026-04-07T03:35:00+09:00
+  - Task: `V1-01 preset 境界の正規化`
+  - 実施内容:
+    - `crates/presets_core/src/lib.rs` に `EntrancePreset` / `ClearPreset` / `ComboPreset` / `PresetCatalogs` を追加し、style/entrance/clear/combo の loader/save helper を分離した。
+    - legacy style preset file の `entrance` は style 本体から切り離し、entrance preset candidate として救済する lenient load を追加した。normalized save では style preset は entrance を含めない。
+    - `crates/portable_fs/src/lib.rs` に `user_entrance_presets_dir()` / `user_clear_presets_dir()` / `user_combo_presets_dir()` を追加し、portable root 配下へ category ごとの preset 置き場を固定した。
+    - `crates/app/src/main.rs` では style preset と entrance preset を別 picker / 別 bound preset ID / 別 user preset CRUD に分離した。
+    - app の editor state に field-level binding metadata を追加し、style/entrance の各項目で `preset 継承中 / 上書き中 / presetへ戻す` を出せるようにした。
+    - `settings.json5` と `project.settings.pauseink_editor_ui` に binding state を保存し、`project.presets.base_style` / `project.presets.entrance` の resolved snapshot と組み合わせて reopen / relaunch 復元できるようにした。
+  - 判断:
+    - legacy style preset の entrance は「読み込みだけ救済」に固定した。既存 built-in / user file を壊さず、normalized save だけ新境界へ寄せる方が手戻りが少ない。
+    - binding state は renderer/domain へ漏らさず app/editor state 側に閉じた。project canonical save は resolved snapshot を維持する。
+  - テスト:
+    - `cargo check -p pauseink-app --all-targets`
+    - `cargo test -p pauseink-presets-core -p pauseink-portable-fs -p pauseink-app --lib --bins`
+  - 結果:
+    - exit 0。`pauseink-app` 46 tests、`pauseink-portable-fs` 8 tests、`pauseink-presets-core` 9 tests が通過。
+    - app 側では user entrance preset CRUD と、style/entrance binding state の再起動復元 test を追加した。

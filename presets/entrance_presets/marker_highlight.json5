@@ -1,0 +1,12 @@
+{
+  id: "marker_highlight",
+  display_name: "マーカーハイライト / 出現",
+  entrance: {
+    kind: "instant",
+    target: "group",
+    order: "parallel",
+    duration_mode: "fixed_total_duration",
+    duration_ms: 0,
+    speed_scalar: 1.0,
+  },
+}

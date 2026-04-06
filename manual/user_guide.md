@@ -32,6 +32,7 @@ v1.0 の前提:
 - 右ペイン
   - タイトル
   - built-in / user style preset の適用と管理
+  - built-in / user entrance preset の適用と管理
   - 基本スタイル
   - 効果
   - 出現
@@ -71,7 +72,10 @@ v1.0 の前提:
 - アウトライン、ドロップシャドウ、グロー、ブレンドモードも右ペインから調整できます
 - 色 picker は色相変更用で、透明度は `不透明度` スライダー 1 つに統一されています
 - 同じテンプレート slot や guide 参照文字へ stroke を継ぎ足す場合も、次に確定する stroke から最新の `基本スタイル` が反映されます
-- 右ペインでは built-in preset を選んで適用できます。現在の基本スタイルは `追加保存` / `上書き保存` / `削除` で user preset として管理できます
+- 右ペインでは style preset と entrance preset を別々に選んで適用できます
+- style preset は基本スタイルだけを、entrance preset は出現設定だけを扱います
+- 現在の基本スタイルと出現設定は、それぞれ `追加保存` / `上書き保存` / `削除` で user preset として管理できます
+- style / entrance の各項目には `preset 継承中` と `上書き中` の表示があり、`presetへ戻す` でその項目だけ継承へ戻せます
 - フォント、テンプレート、ガイド傾き、基本スタイル、outline / drop shadow / glow、entrance 設定は `settings.json5` に保存され、次回起動時に復元されます
 
 ### 3.3 ガイド capture
@@ -111,7 +115,7 @@ v1.0 の前提:
 
 - プロジェクト形式は `.pauseink`
 - load は lenient、save は normalized
-- project ごとに、現在の基本スタイル snapshot、現在の出現設定 snapshot、選択 preset ID、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
+- project ごとに、現在の基本スタイル snapshot、現在の出現設定 snapshot、選択 preset ID、style/entrance の継承状態、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
 - 保存済み project を `開く` と、記録されている media source path が自動で再読込されます。relative path の場合は `.pauseink` 自体があるフォルダ基準で解決します
 - autosave は既定で 10 秒ごとです
 - 前回の autosave が残っていると起動直後に `復旧` ウィンドウが開きます
@@ -188,19 +192,22 @@ PauseInk は既定で executable 直下に `pauseink_data/` を作ります。
 
 - `config/settings.json5`
 - `config/style_presets/`
+- `config/entrance_presets/`
+- `config/clear_presets/`
+- `config/combo_presets/`
 - `cache/google_fonts/`
 - `autosave/`
 - `runtime/`
 - `temp/`
 
 `config/settings.json5` はアプリ全体の設定です。  
-project ごとに再現したい style / template / font / guide 状態は `.pauseink` 側へ保存されます。  
-右ペインから保存した user preset は `config/style_presets/` に置かれます。
+project ごとに再現したい style / entrance / template / font / guide 状態は `.pauseink` 側へ保存されます。
+右ペインから保存した user preset は、style が `config/style_presets/`、entrance が `config/entrance_presets/` に置かれます。
 
 ## 10. 現時点の既知制約
 
 - template 字詰めは実 font shaping と kerning を使いますが、scale が切り替わる run 境界では font engine 上の自然な区切りに従います
-- style preset は現在、厚み / 色 / 不透明度 / 手ブレ補正に加え、outline / drop shadow / glow / blend mode / 出現方式 / 出現速度まで保存と適用ができます
+- style preset は基本スタイル用、entrance preset は出現用として分離されています。legacy な style preset file に entrance が入っていても読み込み時に救済されます
 - reveal-head effect、post-action chain、clear / combo preset の専用 UI はまだ入っていません
 - group / ungroup / multi-select / z-order UI はまだ最小です
 - Windows と macOS はこの Linux ホスト上で実行確認しておらず、runtime 探索ロジックは unit test で検証しています

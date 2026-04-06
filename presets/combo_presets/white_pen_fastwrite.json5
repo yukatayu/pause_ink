@@ -1,0 +1,9 @@
+{
+  id: "white_pen_fastwrite",
+  display_name: "白ペン速書き / 標準",
+  refs: {
+    style_preset_id: "white_pen_fastwrite",
+    entrance_preset_id: "white_pen_fastwrite",
+    clear_preset_id: "instant_all_parallel",
+  },
+}
