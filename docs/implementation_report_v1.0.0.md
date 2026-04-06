@@ -847,11 +847,12 @@
   - canvas input 開始条件が `drag_started` 由来の遅延と `response` 依存の interaction 判定に引きずられ、press 直後の 1 点目が draft に入らないケースが残っていた
   - press frame で同一点を二重に積むと、live preview が zero-length line になって見えにくくなる
 - 採用した実装方針:
-  - input 開始条件は `pointer.primary_down` と `press_origin` が canvas 上にあることを基準にし、press origin を最初の sample として使う
+  - input 開始条件は `drag_started` ではなく current frame の `PointerButton { pressed: true }` event を基準にし、その `pos` を最初の sample として使う
   - `append_stroke_point` で直前 sample と同一点なら追加しない
-  - main.rs の regression test で「press frame で 1 点 preview」「commit 後の first raw sample が press origin」を固定する
+  - main.rs の regression test で「press frame で 1 点 preview」「commit 後の first raw sample が press 座標」「同一 frame の press→move でも press 座標を優先」を固定する
 - sub-agent findings:
   - explorer sub-agent も、`handle_canvas_input` と `AppSession` の境界で初点が落ちている可能性を優先候補として挙げた
+  - 別の explorer sub-agent は、`drag_started` 依存と press frame の duplicate sample が主因候補で、`PointerButton.pos` ベースの開始点確保と duplicate 抑止が最小差分と指摘した
   - そのため UI 側開始条件と draft sample 追加条件の両方を見直した
 - 2026-04-06T13:35:00+09:00
   - 実施内容: `crates/app/src/main.rs` の canvas input 開始条件を `press_origin` 基準へ変更し、`crates/app/src/lib.rs` の `append_stroke_point` に duplicate sample 抑止を追加した。
@@ -873,6 +874,13 @@
 - 2026-04-06T13:35:00+09:00
   - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を stroke 初点修正の内容に合わせて更新した。
   - 結果: 「押した瞬間の位置から表示される」こと、press origin / duplicate sample 抑止の実装意図を docs と同期した。
+- 2026-04-06T14:10:00+09:00
+  - 実施内容: `crates/app/src/main.rs` の開始点取得を `ctx.input().pointer.hover_pos()` 依存から current frame の `PointerButton { pressed: true }` event の `pos` 優先へ補強し、`same_frame_move_keeps_pointer_button_press_as_first_preview_point` を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: press と move が同一 frame に入っても、最初の preview/raw sample は move 後座標ではなく button press 座標を保持するようになった。
+- 2026-04-06T14:10:00+09:00
+  - 実施内容: `cargo test -p pauseink-app same_frame_move_keeps_pointer_button_press_as_first_preview_point -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`
+  - 結果: すべて exit 0。新規 same-frame regression を含めて回帰が通った。`Panel::*` 系 deprecation warning は継続。
 
 ## 9. Export / profile メモ
 

@@ -54,7 +54,7 @@
   - Windows の `WinGet Links` / `WinGet Packages` / `WindowsApps` / Scoop、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を system runtime 探索対象に追加した
   - 配置済み template は `placed_origin` を保持し、文字列 / フォント / フォントサイズ / 字間 / 傾きの変更時に slot box を再計算するようにした
   - template underlay は committed stroke と live stroke の下へ回し、input を preview 描画より先に処理して描き始めのラグを減らした
-  - canvas input は `drag_started` 依存を避け、press origin を最初の sample として取り込むようにした
+  - canvas input は `drag_started` 依存を避け、current frame の `PointerButton` press 座標を最初の sample として優先的に取り込むようにした
   - press frame の duplicate sample を抑止し、1 点目が zero-length line になって消えるケースを防いだ
   - 下部タブは `内容幅` を持つ固定高さ scroll region に整理し、object list / logs が増えても panel 自体の縦サイズが揺れないようにした
   - export 実行中は `実行中:` の下と `書き出しキュー` の両方に stage 名付き progress bar を表示するようにした
@@ -62,7 +62,7 @@
   - 出現速度や entrance の細かい調整 UI は未実装であることを inspector と manual に明記した
   - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
   - `cargo test -p pauseink-export`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
-  - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample` を追加した
+  - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample`、`same_frame_move_keeps_pointer_button_press_as_first_preview_point` を追加した
   - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過

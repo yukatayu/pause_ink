@@ -1350,6 +1350,7 @@ impl DesktopApp {
         let pointer_position = response
             .interact_pointer_pos()
             .or_else(|| ctx.input(|input| input.pointer.hover_pos()));
+        let primary_press_position = current_frame_primary_press_position(ctx);
 
         if self.template.placement_armed {
             if response.clicked() {
@@ -1369,10 +1370,9 @@ impl DesktopApp {
             return;
         }
 
-        let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
         let pointer_down = ctx.input(|input| input.pointer.primary_down());
-        let press_started_on_canvas = primary_pressed
-            && pointer_position.is_some_and(|position| response.rect.contains(position));
+        let press_started_on_canvas = primary_press_position
+            .is_some_and(|position| response.rect.contains(position));
         let mut started_stroke_this_frame = false;
 
         if !self.canvas_drag_active && press_started_on_canvas {
@@ -1382,7 +1382,7 @@ impl DesktopApp {
                 self.guide_capture_state.start();
                 self.guide_modifier_used_for_stroke = true;
             }
-            if let Some(pointer_position) = pointer_position {
+            if let Some(pointer_position) = primary_press_position.or(pointer_position) {
                 if let Some(frame_point) = pointer_position_to_frame_point(
                     pointer_position,
                     frame_rect,
@@ -2974,6 +2974,20 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
 
 fn clamp_bottom_panel_content_width(width: f32) -> f32 {
     width.clamp(320.0, 8_192.0)
+}
+
+fn current_frame_primary_press_position(ctx: &egui::Context) -> Option<Pos2> {
+    ctx.input(|input| {
+        input.events.iter().rev().find_map(|event| match event {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                ..
+            } => Some(*pos),
+            _ => None,
+        })
+    })
 }
 
 fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
