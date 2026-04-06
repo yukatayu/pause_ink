@@ -43,6 +43,8 @@ PauseInk は次の分離を守る前提で組んでいます。
 - save は canonical JSON に正規化
 - project metadata / media / settings / presets は generic JSON を残しつつ、strokes / objects / groups / clear_events は typed wrapper 化
 - unknown field は可能な範囲で entity 単位に保持
+- `project.media.source_path` は raw string をそのまま保持し、project open 時だけ runtime 用に再解決する。relative path は `.pauseink` の親ディレクトリ基準、absolute path はそのまま使う
+- open 時の media restore は `dirty` を立てず、保存済み `source_path` 文字列も上書きしない
 
 主要テスト:
 

@@ -1074,6 +1074,29 @@
   - 結果:
     - Windows 配布 build で app 本体は GUI subsystem、child `ffmpeg` / `ffprobe` は hidden process として動く設計になった。
     - 起動時の runtime discovery と再生中の preview extraction が同じ修正範囲に入ったため、報告されていた 2 種類の console 点滅症状を同時に抑止できる見込み。
+- 2026-04-06T22:42:00+09:00
+  - 事象: user から「保存済み `.pauseink` を開いても動画 media が読み込まれない。保存自体はされていそう」と報告が来た。
+  - root cause:
+    - `AppSession::load_project_from_str` / `load_project_from_path` は project document だけを復元し、`imported_media` / `playback` は常に `None` で初期化していた。
+    - `DesktopApp::open_project` も session を差し替えるだけで、保存済み `project.media.source_path` を使った media 再 import を行っていなかった。
+    - あわせて、raw `source_path` は `PathBuf::from` されるだけで、relative path を `.pauseink` の親ディレクトリ基準に解決していなかった。
+  - 実施内容:
+    - `crates/app/src/lib.rs` に `resolved_media_source_hint()`、`restore_media_from_hint(provider)`、`resolve_media_source_path()` を追加した。
+    - restore は runtime 用の `imported_media` / `playback` だけを再構築し、保存済み `project.media.source_path` 文字列は上書きせず、`dirty` も立てない。
+    - relative path は `document_path.parent()` 基準で解決し、absolute path はそのまま使う。
+    - `crates/app/src/main.rs` の `open_project` で session 読込直後に `session.restore_media_from_hint(provider)` を呼ぶようにし、成功時は再読込ログ、失敗時は warning log を出すようにした。runtime 未検出時は「保存済み media はあるが再読込できない」と分かるログを出す。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red: `cargo test -p pauseink-app restore_media_from_hint_resolves_relative_path_from_project_file -- --nocapture`
+    - red: `cargo test -p pauseink-app open_project_attempts_to_restore_saved_media_hint -- --nocapture`
+    - green: `cargo test -p pauseink-app restore_media_from_hint_resolves_relative_path_from_project_file -- --nocapture`
+    - green: `cargo test -p pauseink-app open_project_attempts_to_restore_saved_media_hint -- --nocapture`
+    - 回帰: `cargo test --workspace`
+    - 回帰: `cargo check -p pauseink-app --all-targets`
+  - 結果:
+    - 保存済み `.pauseink` を開いた時に、記録済み media source path から playback/preview 用 state を自動復元できるようになった。
+    - relative path の project-relative 解決も同時に入ったため、`.pauseink` と media を同じ tree で持つケースでも reopen が安定する。
+    - この Linux host では GUI 実機確認まではできないため、最終確認は実際に `保存 -> 閉じる -> 開く` を試す必要がある。
 
 ## 9. Export / profile メモ
 

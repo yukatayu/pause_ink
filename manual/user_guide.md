@@ -111,6 +111,7 @@ v1.0 の前提:
 - プロジェクト形式は `.pauseink`
 - load は lenient、save は normalized
 - project ごとに、現在の基本スタイル snapshot、現在の出現設定 snapshot、選択 preset ID、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
+- 保存済み project を `開く` と、記録されている media source path が自動で再読込されます。relative path の場合は `.pauseink` 自体があるフォルダ基準で解決します
 - autosave は既定で 10 秒ごとです
 - 前回の autosave が残っていると起動直後に `復旧` ウィンドウが開きます
 - `復旧する` で最新 autosave を読み込み、`破棄する` で削除します

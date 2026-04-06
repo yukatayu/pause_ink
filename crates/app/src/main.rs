@@ -1861,6 +1861,31 @@ impl DesktopApp {
                 self.preview_key = None;
                 self.overlay_key = None;
                 self.push_log(format!("プロジェクトを読込: {}", path.display()));
+                if let Some(provider) = self.provider.as_ref() {
+                    match self.session.restore_media_from_hint(provider) {
+                        Ok(true) => {
+                            if let Some(path) = self
+                                .session
+                                .imported_media
+                                .as_ref()
+                                .map(|media| &media.source_path)
+                            {
+                                self.push_log(format!(
+                                    "保存済みメディアを再読込: {}",
+                                    path.display()
+                                ));
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            self.push_log(format!("保存済みメディアの再読込失敗: {error}"))
+                        }
+                    }
+                } else if self.session.media_source_hint().is_some() {
+                    self.push_log(
+                        "保存済みメディアがありますが、FFmpeg runtime が見つからないため再読込できません。"
+                    );
+                }
             }
             Err(error) => self.push_log(format!("プロジェクト読込失敗: {error:#}")),
         }
@@ -5629,6 +5654,16 @@ mod tests {
                 && source.contains("target_os = \"windows\"")
                 && source.contains("not(debug_assertions)"),
             "Windows release build では GUI subsystem を宣言し、二重にコンソールが開かないようにしたい"
+        );
+    }
+
+    #[test]
+    fn open_project_attempts_to_restore_saved_media_hint() {
+        let source = include_str!("main.rs");
+
+        assert!(
+            source.contains("session.restore_media_from_hint(provider)"),
+            "project open 時に保存済み media source_path を再読込して preview/export を復元したい"
         );
     }
 }

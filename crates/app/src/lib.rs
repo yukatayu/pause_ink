@@ -225,6 +225,24 @@ impl AppSession {
             .map(PathBuf::from)
     }
 
+    pub fn resolved_media_source_hint(&self) -> Option<PathBuf> {
+        self.media_source_hint()
+            .map(|path| self.resolve_media_source_path(&path))
+    }
+
+    pub fn restore_media_from_hint(
+        &mut self,
+        provider: &dyn MediaProvider,
+    ) -> Result<bool, MediaError> {
+        let Some(source_path) = self.resolved_media_source_hint() else {
+            return Ok(false);
+        };
+        let imported = import_media(provider, &source_path)?;
+        self.playback = Some(PlaybackState::new(imported.clone()));
+        self.imported_media = Some(imported);
+        Ok(true)
+    }
+
     pub fn project_title(&self) -> String {
         self.document
             .project
@@ -657,6 +675,18 @@ impl AppSession {
         self.document.project.media = Value::Object(media);
     }
 
+    fn resolve_media_source_path(&self, source_path: &Path) -> PathBuf {
+        if source_path.is_absolute() {
+            source_path.to_path_buf()
+        } else {
+            self.document_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(|parent| parent.join(source_path))
+                .unwrap_or_else(|| source_path.to_path_buf())
+        }
+    }
+
     fn synchronize_document_from_project(&mut self) {
         self.document.project.strokes =
             sync_stroke_wrappers(&self.project.strokes, &self.document.project.strokes);
@@ -886,6 +916,7 @@ fn corner_guard(previous: Point2, current: Point2, next: Point2) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
 
     use pauseink_domain::RgbaColor;
@@ -900,8 +931,42 @@ mod tests {
         probe: MediaProbe,
     }
 
+    struct RecordingMediaProvider {
+        probe: MediaProbe,
+        calls: RefCell<Vec<PathBuf>>,
+    }
+
     impl MediaProvider for MockMediaProvider {
         fn probe(&self, _source_path: &Path) -> Result<MediaProbe, MediaError> {
+            Ok(self.probe.clone())
+        }
+
+        fn capabilities(&self) -> Result<RuntimeCapabilities, MediaError> {
+            Ok(RuntimeCapabilities::default())
+        }
+
+        fn preview_frame(
+            &self,
+            _source_path: &Path,
+            _time: MediaTime,
+            _max_width: u32,
+            _max_height: u32,
+        ) -> Result<PreviewFrame, MediaError> {
+            Ok(PreviewFrame {
+                width: 1,
+                height: 1,
+                rgba_pixels: vec![0, 0, 0, 0],
+            })
+        }
+
+        fn diagnostics(&self) -> MediaRuntime {
+            MediaRuntime::from_system_path()
+        }
+    }
+
+    impl MediaProvider for RecordingMediaProvider {
+        fn probe(&self, source_path: &Path) -> Result<MediaProbe, MediaError> {
+            self.calls.borrow_mut().push(source_path.to_path_buf());
             Ok(self.probe.clone())
         }
 
@@ -967,6 +1032,67 @@ mod tests {
                 .as_ref()
                 .map(|playback| playback.current_time),
             Some(MediaTime::from_millis(0))
+        );
+    }
+
+    #[test]
+    fn restore_media_from_hint_resolves_relative_path_from_project_file() {
+        let temp_dir = tempdir().expect("temp dir");
+        let project_dir = temp_dir.path().join("project");
+        std::fs::create_dir_all(project_dir.join("media")).expect("media dir");
+
+        let mut session = AppSession::default();
+        session.document.project.media = serde_json::json!({
+            "source_path": "media/demo.mp4",
+            "width": 1280,
+        });
+        session.document_path = Some(project_dir.join("demo.pauseink"));
+        let provider = RecordingMediaProvider {
+            probe: MediaProbe {
+                format_name: Some("mp4".into()),
+                duration_seconds: Some(8.0),
+                duration_raw: Some("8.000000".into()),
+                width: Some(1280),
+                height: Some(720),
+                frame_rate: Some(30.0),
+                avg_frame_rate_raw: Some("30/1".into()),
+                r_frame_rate_raw: Some("30/1".into()),
+                pix_fmt: Some("yuv420p".into()),
+                has_alpha: false,
+                has_audio: true,
+                video_codec: Some("h264".into()),
+                audio_codec: Some("aac".into()),
+                support: MediaSupport::Supported,
+            },
+            calls: RefCell::new(Vec::new()),
+        };
+
+        let restored = session
+            .restore_media_from_hint(&provider)
+            .expect("restore should succeed");
+
+        assert!(restored);
+        assert_eq!(
+            provider.calls.borrow().as_slice(),
+            &[project_dir.join("media/demo.mp4")]
+        );
+        assert_eq!(
+            session
+                .imported_media
+                .as_ref()
+                .map(|media| media.source_path.clone()),
+            Some(project_dir.join("media/demo.mp4"))
+        );
+        assert!(session.playback.is_some());
+        assert!(!session.dirty);
+        assert_eq!(
+            session
+                .document
+                .project
+                .media
+                .get("source_path")
+                .and_then(Value::as_str),
+            Some("media/demo.mp4")
         );
     }
 
