@@ -881,6 +881,13 @@
 - 2026-04-06T14:10:00+09:00
   - 実施内容: `cargo test -p pauseink-app same_frame_move_keeps_pointer_button_press_as_first_preview_point -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`
   - 結果: すべて exit 0。新規 same-frame regression を含めて回帰が通った。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T14:30:00+09:00
+  - 実施内容: guide 横線の表示幅を current frame の左右端まで拡張する helper を `crates/app/src/main.rs` に追加し、`draw_guide_overlay` の horizontal line 描画へ適用した。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: 傾きは保ったまま、横ガイドは表示領域いっぱいへ伸びるようになった。縦ガイドの長さと位置決めは従来どおり。
+- 2026-04-06T14:30:00+09:00
+  - 実施内容: `horizontal_guide_line_extends_to_frame_edges` を red -> green で追加し、`cargo test -p pauseink-app horizontal_guide_line_extends_to_frame_edges -- --nocapture` を実行した。
+  - 結果: 旧実装では横線 start/end が cell 幅の範囲に留まり fail。修正後は frame 左右端へ延長され pass。
 
 ## 9. Export / profile メモ
 

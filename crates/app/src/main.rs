@@ -1576,11 +1576,42 @@ impl DesktopApp {
             return;
         };
 
-        for line in guide
-            .horizontal_lines
-            .iter()
-            .chain(guide.vertical_lines.iter())
-        {
+        for line in &guide.horizontal_lines {
+            let (line_start, line_end) = extend_horizontal_guide_line_to_frame_width(line, frame_width);
+            let stroke = match line.kind {
+                GuideLineKind::Main => {
+                    EguiStroke::new(1.5, Color32::from_rgba_unmultiplied(120, 200, 255, 180))
+                }
+                GuideLineKind::Helper => {
+                    EguiStroke::new(1.0, Color32::from_rgba_unmultiplied(120, 200, 255, 80))
+                }
+            };
+            let Some(start) = frame_point_to_screen_position(
+                pauseink_domain::Point2 {
+                    x: line_start.x,
+                    y: line_start.y,
+                },
+                frame_rect,
+                frame_width,
+                frame_height,
+            ) else {
+                continue;
+            };
+            let Some(end) = frame_point_to_screen_position(
+                pauseink_domain::Point2 {
+                    x: line_end.x,
+                    y: line_end.y,
+                },
+                frame_rect,
+                frame_width,
+                frame_height,
+            ) else {
+                continue;
+            };
+            painter.line_segment([start, end], stroke);
+        }
+
+        for line in &guide.vertical_lines {
             let stroke = match line.kind {
                 GuideLineKind::Main => {
                     EguiStroke::new(1.5, Color32::from_rgba_unmultiplied(120, 200, 255, 180))
@@ -1627,7 +1658,13 @@ impl DesktopApp {
         };
 
         let color = draft_preview_color(&preview.style);
-        let stroke = EguiStroke::new(preview.style.thickness.max(1.0), color);
+        let stroke_width = live_preview_stroke_width(
+            preview.style.thickness,
+            frame_rect,
+            frame_width,
+            frame_height,
+        );
+        let stroke = EguiStroke::new(stroke_width, color);
         let points = preview
             .points
             .into_iter()
@@ -1641,7 +1678,7 @@ impl DesktopApp {
                 painter.line_segment([window[0], window[1]], stroke);
             }
         } else if let Some(point) = points.first() {
-            painter.circle_filled(*point, (preview.style.thickness * 0.5).max(2.0), color);
+            painter.circle_filled(*point, live_preview_dot_radius(stroke_width), color);
         }
     }
 
@@ -2990,6 +3027,43 @@ fn current_frame_primary_press_position(ctx: &egui::Context) -> Option<Pos2> {
     })
 }
 
+fn extend_horizontal_guide_line_to_frame_width(
+    line: &pauseink_template_layout::GuideLine,
+    frame_width: u32,
+) -> (pauseink_template_layout::Point, pauseink_template_layout::Point) {
+    let frame_right = frame_width as f32;
+    let dx = line.end.x - line.start.x;
+    if dx.abs() <= f32::EPSILON {
+        return (line.start, line.end);
+    }
+
+    let slope = (line.end.y - line.start.y) / dx;
+    let start = pauseink_template_layout::Point::new(
+        0.0,
+        line.start.y + (0.0 - line.start.x) * slope,
+    );
+    let end = pauseink_template_layout::Point::new(
+        frame_right,
+        line.start.y + (frame_right - line.start.x) * slope,
+    );
+    (start, end)
+}
+
+fn live_preview_stroke_width(
+    thickness: f32,
+    frame_rect: Rect,
+    frame_width: u32,
+    frame_height: u32,
+) -> f32 {
+    let scale_x = frame_rect.width() / frame_width.max(1) as f32;
+    let scale_y = frame_rect.height() / frame_height.max(1) as f32;
+    (thickness * scale_x.min(scale_y)).max(1.0)
+}
+
+fn live_preview_dot_radius(stroke_width: f32) -> f32 {
+    (stroke_width * 0.5).max(1.0)
+}
+
 fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
     let alpha = ((style.color.a as f32) * style.opacity.clamp(0.0, 1.0)).round() as u8;
     Color32::from_rgba_unmultiplied(style.color.r, style.color.g, style.color.b, alpha)
@@ -3366,6 +3440,30 @@ mod tests {
             (preview.points[0].y - expected_press_origin.y).abs() < 0.01,
             "同一 frame 内に move が来ても最初の y は PointerButton の press 座標を使うべき"
         );
+    }
+
+    #[test]
+    fn horizontal_guide_line_extends_to_frame_edges() {
+        let line = pauseink_template_layout::GuideLine {
+            start: pauseink_template_layout::Point::new(120.0, 200.0),
+            end: pauseink_template_layout::Point::new(360.0, 176.0),
+            kind: GuideLineKind::Main,
+        };
+
+        let (start, end) = extend_horizontal_guide_line_to_frame_width(&line, 1280);
+
+        assert!((start.x - 0.0).abs() < 0.01);
+        assert!((end.x - 1280.0).abs() < 0.01);
+        assert!(start.y > end.y, "傾きは保ったまま frame 両端へ伸ばしたい");
+    }
+
+    #[test]
+    fn live_preview_width_matches_downscaled_overlay_scale() {
+        let frame_rect = Rect::from_min_size(Pos2::new(8.0, 8.0), Vec2::new(640.0, 360.0));
+        let width = live_preview_stroke_width(8.0, frame_rect, 1280, 720);
+
+        assert!((width - 4.0).abs() < 0.01);
+        assert!((live_preview_dot_radius(width) - 2.0).abs() < 0.01);
     }
 
     fn central_height_with_scrollable_bottom_tab(item_count: usize) -> f32 {
