@@ -994,6 +994,57 @@
   - 実施内容: reviewer sub-agent `Herschel` の結果を統合し、preview の current paused batch だけを強制可視化する `preview_force_visible_batch` 経路、`created_at` ごとの paused batch lane 直列化、`drop_shadow -> glow -> outline -> base` の layer-first compositor が今回の最小安全修正であることを report へ反映した。あわせて user / developer guide に「preview 専用 override は再生 / 保存 / 書き出しで通常 timeline へ戻る」旨を追記し、`progress.md` の即時マイルストーンを完了済みへ更新した。
   - 変更ファイル: `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: bugfix バッチの仕様意図、採用理由、検証結果、残タスク整理が docs 上でも一致した。
+- 2026-04-06T18:01:50+09:00
+  - 実施内容: `.docs/11_implementation_plan.md`、`.docs/12_future_work.md`、`README.md`、`progress.md`、既知制約、current code entrypoints を突き合わせ、未実装の v1.0 残項目と future work を task 番号つきで実行計画へ落とした。新しい計画書は `.docs/16_remaining_tasks_plan.md` とし、`V1-*`、`PKG-*`、`FUT-*` の 3 系統で管理する方針にした。
+  - 判断理由: 以後 user が task 番号指定で implementation を依頼できるようにしつつ、v1.0 residual work と post-v1 future work を混同しないため。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: reveal-head effect、post-action chain、clear/combo preset、selection/multi-select、group/ungroup/z-order、sidecar packaging、cross-platform validation、future work が明示的な task 台帳に整理された。
+- 2026-04-06T19:45:47+09:00
+  - 実施内容: `.docs/16_remaining_tasks_plan.md` を最終見直しし、各 task へ「利用者や開発者が具体的にどの操作で困るか」の例と、「後から変えると手戻りが出やすい先決事項」を追記した。あわせて、task 着手前に読むべき `.docs` と既存 test の共通チェックリストを追加し、`origin/develop` 前提の運用へ揃えた。
+  - 判断理由: user が上から順に task を依頼する前提では、単なる未実装一覧だけでなく、何が痛点で何を先に固定しないと危険かが見えている必要があるため。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: 大域計画が「困り方」「先決事項」「既存 docs/test の確認ポイント」まで含む実行可能な最終版になった。
+- 2026-04-06T20:07:03+09:00
+  - 事象: user から「Windows で `cargo run` は普通だが、CI 生成の release binary を起動すると同時にコマンドプロンプトが立ち上がる」と報告が来た。
+  - root cause:
+    - `scripts/package_release_asset.py` は binary をそのまま archive へコピーするだけで wrapper を作っておらず、packaging 側が原因ではなかった。
+    - `crates/app/src/main.rs` に `#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]` が無く、Windows release build が console subsystem のまま出力されていた。
+  - 実施内容:
+    - `crates/app/src/main.rs` の crate 先頭へ release 専用の `windows_subsystem = "windows"` 宣言を追加した。
+    - 回帰として `windows_release_build_declares_gui_subsystem` を追加し、source 上から attribute の存在を固定した。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red: `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - green: `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - 回帰: `cargo test -p pauseink-app --lib --bins`
+    - 回帰: `cargo check -p pauseink-app --all-targets`
+    - 補助確認: `python3 scripts/package_release_asset.py --help`
+  - 結果: release build だけ GUI subsystem を宣言する構成になり、debug 時の `cargo run` を壊さずに Windows の余計なコンソール表示を抑止する方向へ修正できた。`gh` はこのホストに入っていないため、GitHub Actions 上の再実行確認は push 後の CI に委ねる。`eframe/egui` の deprecation warning は継続。
+- 2026-04-06T21:12:00+09:00
+  - 事象: user から「`cargo run` では正常だが、CI の release artifact では `style preset` 欄と `書き出し` 欄が表示されない」と報告が来た。
+  - root cause:
+    - `crates/app/src/main.rs` は built-in export profile / style preset を `env!("CARGO_MANIFEST_DIR")` 起点の repo path から読んでおり、repo 外へ展開した release artifact では解決できなかった。
+    - `scripts/package_release_asset.py` も `README.md` と binary しか archive に含めておらず、配布物側に `presets/` が存在しなかった。
+  - 実施内容:
+    - `DesktopApp::new_with_asset_root(...)` を追加し、release 実行時は `current_exe()` の親ディレクトリを asset root として渡すよう変更した。
+    - built-in style preset / export profile の探索先を `<asset root>/presets/...` 優先、存在しない場合のみ repo fallback する helper に整理した。
+    - `scripts/package_release_asset.py` は `presets/` ツリーを payload へ copy するよう更新した。
+    - Python 回帰 test `scripts/package_release_asset_test.py` を追加し、staging payload と zip archive の両方に `presets/style_presets` と `presets/export_profiles` が入ることを固定した。
+    - app 側にも `desktop_app_prefers_packaged_builtin_assets_when_present` と `desktop_app_falls_back_to_repository_builtin_assets_when_packaged_dirs_are_missing` を追加し、配布時と開発時の両経路を固定した。
+  - 変更ファイル: `crates/app/src/main.rs`, `scripts/package_release_asset.py`, `scripts/package_release_asset_test.py`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - `cargo test -p pauseink-app desktop_app_prefers_packaged_builtin_assets_when_present -- --nocapture`
+    - `cargo test -p pauseink-app desktop_app_falls_back_to_repository_builtin_assets_when_packaged_dirs_are_missing -- --nocapture`
+    - `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - `python3 -m unittest scripts/package_release_asset_test.py`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+    - `python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`
+    - `tar -tzf <artifact>` で `README.md` と `presets/style_presets` / `presets/export_profiles` を確認
+  - 結果:
+    - 配布 binary は repo が無い場所でも built-in style/export asset を読めるようになった。
+    - release archive は app binary に加えて `README.md` と `presets/` を含むようになり、CI 生成物でも inspector の `style preset` と `書き出し` 欄が欠けない前提になった。
+    - この Linux host では Windows 実機起動確認まではできないため、最終確認は CI artifact を Windows 上で起動して行う必要がある。
 
 ## 9. Export / profile メモ
 
@@ -1032,7 +1083,7 @@
 ## 12. 既知の問題 / 制約
 
 - portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
-- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive と `README.md` までで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
+- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive に `README.md` と `presets/` を含むところまでで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
 - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
 - Windows / macOS の FFmpeg runtime 実行確認はこの Linux host では行えず、現時点の cross-platform 証跡は探索ロジックの unit test と Linux host 上の実 runtime 検証まで。
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。

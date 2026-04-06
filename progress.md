@@ -4,15 +4,15 @@
 
 ## 現在地
 
-- 作業ブランチ: `prototype`
+- 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: paused batch preview / cross-object effect order / workspace 復元まわりの修正は完了。次は reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを v1.0 残項目として整理する。
+- 現在の即時マイルストーン: Windows 配布 build で余計なコンソールが開く問題と、配布 archive で `style preset` / `書き出し` 欄が消える問題を、配布 asset 同梱と built-in asset 解決経路の修正で塞ぐ。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
-  - `prototype` ブランチで作業継続
+  - `develop` ブランチで作業継続
   - `.pauseink` lenient load / canonical save / unknown field 保持を実装
   - bounded undo/redo と history depth 設定を実装
   - portable settings、cache/autosave/runtime path、cache cleanup helper を実装
@@ -84,6 +84,10 @@
   - 再生中に canvas input が来た場合は stroke draft を開始せず、既存 drag も cancel して free-ink を無効化するようにした
   - `settings.json5` に editor UI / base style / entrance の resolved snapshot を保存し、次回起動時に style / effect / font / template / guide が戻るようにした
   - 上記 bugfix バッチについて `cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過し、manual / report / progress も同期した
+  - `.docs/16_remaining_tasks_plan.md` を新設し、未実装の v1.0 残項目と future work を task 番号つきで整理した
+  - `.docs/16_remaining_tasks_plan.md` に task ごとの具体的な困り方、不可逆寄りの先決事項、共通の doc/test 読み順を追記し、大域計画の最終見直し版へ更新した
+  - Windows の release binary だけ二重にコンソールが開く問題について、原因を `windows_subsystem` 未宣言と切り分け、`crates/app/src/main.rs` に release 専用 GUI subsystem 宣言を追加した
+  - 上記の回帰として `windows_release_build_declares_gui_subsystem` を追加し、targeted test / `cargo test -p pauseink-app --lib --bins` / `cargo check -p pauseink-app --all-targets` を通した
   - `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`、`cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`、`cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`、`cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`、`cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture` を red/green で通した
   - `cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
@@ -91,6 +95,10 @@
   - preset/save-state 追加後も `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture` を通過
   - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample`、`same_frame_move_keeps_pointer_button_press_as_first_preview_point`、`horizontal_guide_line_extends_to_frame_edges`、`live_preview_width_matches_downscaled_overlay_scale` を追加した
   - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - Windows release build の binary は `windows_subsystem = "windows"` を宣言し、debug の `cargo run` を維持したまま配布 exe だけ余計なコンソールを開かない構成へ修正した
+  - app 側で built-in style preset / export profile の探索先を `current_exe()` の親ディレクトリ配下 `presets/` 優先、repo fallback ありに変更し、CI 配布 archive でも `style preset` と `書き出し` 欄が欠けないようにした
+  - `scripts/package_release_asset.py` は `presets/` ツリーも release archive へ同梱するように更新し、`scripts/package_release_asset_test.py` で stage/zip 両方を回帰固定した
+  - 今回の確認として `cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
@@ -104,7 +112,7 @@
   - `timeout 5s ./target/debug/pauseink-app` は display server 不在で失敗し、headless host 制約として記録
 - 現在の未解決制約:
   - release 用 portable sidecar runtime の同梱 / provenance 整備は未着手
-  - GitHub Release workflow が生成する成果物は現時点では app binary archive で、FFmpeg sidecar 同梱はまだ含まれない
+  - GitHub Release workflow が生成する成果物は現時点では app binary + `README.md` + `presets/` を含む archive までで、FFmpeg sidecar 同梱はまだ含まれない
   - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
   - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
   - reveal-head effect と post-action chain は domain 型までで、renderer / inspector UI は未接続
@@ -132,8 +140,8 @@
 | Phase 14 | 進行中 | 92% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save は接続済み。reveal-head effect と post-action chain が残る |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
-| Phase 17 | 進行中 | 98% | README / manuals / tutorials / polish | paused batch preview / settings 復元 / effect 合成順の修正内容を docs へ同期済み |
-| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。workspace 再検証と最終記録を反映済みで、残るのは v1.0 残項目整理 |
+| Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
+| Phase 18 | 進行中 | 96% | 最終 build / test / export / Windows build 試行 | build/test/export は通過済み。残るのは packaging / 実機検証 / spec 残項目の実装 |
 
 ## 次の具体的な一手
 

@@ -42,6 +42,10 @@ def stage_payload(binary_path: Path, payload_root: Path) -> Path:
     if readme_path.is_file():
         shutil.copy2(readme_path, payload_root / readme_path.name)
 
+    presets_path = Path("presets")
+    if presets_path.is_dir():
+        shutil.copytree(presets_path, payload_root / presets_path.name)
+
     return payload_root
 
 
