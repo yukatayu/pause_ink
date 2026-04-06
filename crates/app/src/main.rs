@@ -3605,6 +3605,894 @@ impl DesktopApp {
         );
     }
 
+    fn draw_left_panel_scroll_body(&mut self, ui: &mut egui::Ui) {
+        ui.heading("テンプレート");
+        let mut template_layout_changed =
+            ui.text_edit_singleline(&mut self.template.text).changed();
+        let mut selected_template_font = self.template.font_family.clone();
+        egui::ComboBox::from_label("テンプレート font")
+            .selected_text(&selected_template_font)
+            .show_ui(ui, |ui| {
+                for family in
+                    template_font_choices(&self.local_font_families, &self.template.font_family)
+                {
+                    ui.selectable_value(&mut selected_template_font, family.clone(), family);
+                }
+            });
+        if selected_template_font != self.template.font_family {
+            self.template.font_family = selected_template_font;
+            self.font_config_dirty = true;
+            self.maybe_apply_egui_fonts(ui.ctx());
+            template_layout_changed = true;
+        }
+        template_layout_changed |= ui
+            .add(
+                egui::Slider::new(&mut self.template.settings.font_size, 24.0..=180.0)
+                    .text("フォントサイズ"),
+            )
+            .changed();
+        template_layout_changed |= ui
+            .add(egui::Slider::new(&mut self.template.settings.tracking, 0.0..=48.0).text("字間"))
+            .changed();
+        template_layout_changed |= ui
+            .add(
+                egui::Slider::new(&mut self.template.settings.slope_degrees, -20.0..=20.0)
+                    .text("傾き"),
+            )
+            .changed();
+        if template_layout_changed {
+            self.mark_project_ui_dirty();
+            self.refresh_placed_template_slots(ui.ctx());
+        }
+        ui.horizontal(|ui| {
+            if ui.button("テンプレート配置").clicked() {
+                self.template.placement_armed = true;
+                self.reset_template_slots();
+            }
+            if ui.button("前スロット").clicked() {
+                self.move_template_slot(-1);
+            }
+            if ui.button("次スロット").clicked() {
+                self.move_template_slot(1);
+            }
+            if ui.button("テンプレート解除").clicked() {
+                self.template.placement_armed = false;
+                self.reset_template_slots();
+            }
+        });
+
+        ui.separator();
+        ui.heading("フォント");
+        if ui.button("ローカル一覧更新").clicked() {
+            self.rebuild_local_font_families();
+        }
+        ui.label(format!(
+            "読み込み済み候補: {} 件",
+            self.local_font_families.len()
+        ));
+        for family in self.local_font_families.iter().take(8) {
+            ui.label(format!("・{family}"));
+        }
+        ui.separator();
+        ui.label("Google Fonts 設定:");
+        for family in &self.settings.google_fonts.families {
+            let cached =
+                google_font_cache_file(&self.portable_paths.google_fonts_cache_dir(), family);
+            ui.label(format!(
+                "・{} ({})",
+                family,
+                if cached.exists() {
+                    "cache あり"
+                } else {
+                    "cache なし"
+                }
+            ));
+        }
+        if ui.button("Google Fonts 設定を開く").clicked() {
+            self.preferences_open = true;
+        }
+    }
+
+    fn draw_right_panel_scroll_body(&mut self, ui: &mut egui::Ui) {
+        if !self.style_presets.is_empty() {
+            ui.label("style preset");
+            let previous_style_preset_id = self.selected_style_preset_id.clone();
+            egui::ComboBox::from_label("組み込み preset")
+                .selected_text(self.selected_style_preset_label())
+                .show_ui(ui, |ui| {
+                    for preset in &self.style_presets {
+                        ui.selectable_value(
+                            &mut self.selected_style_preset_id,
+                            preset.id.clone(),
+                            &preset.display_name,
+                        );
+                    }
+                });
+            if self.selected_style_preset_id != previous_style_preset_id {
+                self.sync_preset_editor_fields_from_selection();
+            }
+            if let Some(bound_id) = &self.bound_style_preset_id {
+                if let Some(bound) = self
+                    .style_presets
+                    .iter()
+                    .find(|preset| &preset.id == bound_id)
+                {
+                    ui.small(format!("現在の継承元: {}", bound.display_name));
+                }
+            } else {
+                ui.small("現在の継承元: なし");
+            }
+            if ui.button("preset を適用").clicked() {
+                self.apply_selected_style_preset();
+            }
+            if ui.button("preset 解除").clicked() {
+                self.clear_style_preset_binding();
+            }
+            ui.horizontal(|ui| {
+                ui.label("user preset ID");
+                ui.text_edit_singleline(&mut self.preset_editor_id);
+            });
+            ui.horizontal(|ui| {
+                ui.label("user preset 名");
+                ui.text_edit_singleline(&mut self.preset_editor_name);
+            });
+            ui.horizontal(|ui| {
+                if ui.button("追加保存").clicked() {
+                    self.save_user_style_preset(false);
+                }
+                if ui.button("上書き保存").clicked() {
+                    self.save_user_style_preset(true);
+                }
+                let selected_is_user = self
+                    .picked_style_preset()
+                    .is_some_and(|preset| preset.source == StylePresetSource::User);
+                if ui
+                    .add_enabled(selected_is_user, egui::Button::new("削除"))
+                    .clicked()
+                {
+                    self.delete_selected_user_style_preset();
+                }
+            });
+            ui.separator();
+        }
+        if !self.entrance_presets.is_empty() {
+            ui.label("出現 preset");
+            let previous_entrance_preset_id = self.selected_entrance_preset_id.clone();
+            egui::ComboBox::from_label("出現 preset")
+                .selected_text(self.selected_entrance_preset_label())
+                .show_ui(ui, |ui| {
+                    for preset in &self.entrance_presets {
+                        ui.selectable_value(
+                            &mut self.selected_entrance_preset_id,
+                            preset.id.clone(),
+                            &preset.display_name,
+                        );
+                    }
+                });
+            if self.selected_entrance_preset_id != previous_entrance_preset_id {
+                self.sync_entrance_preset_editor_fields_from_selection();
+            }
+            if let Some(bound_id) = &self.bound_entrance_preset_id {
+                if let Some(bound) = self
+                    .entrance_presets
+                    .iter()
+                    .find(|preset| &preset.id == bound_id)
+                {
+                    ui.small(format!("現在の継承元: {}", bound.display_name));
+                }
+            } else {
+                ui.small("現在の継承元: なし");
+            }
+            ui.horizontal(|ui| {
+                if ui.button("出現 preset を適用").clicked() {
+                    self.apply_selected_entrance_preset();
+                }
+                if ui.button("出現 preset 解除").clicked() {
+                    self.clear_entrance_preset_binding();
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("出現 preset ID");
+                ui.text_edit_singleline(&mut self.entrance_preset_editor_id);
+            });
+            ui.horizontal(|ui| {
+                ui.label("出現 preset 名");
+                ui.text_edit_singleline(&mut self.entrance_preset_editor_name);
+            });
+            ui.horizontal(|ui| {
+                if ui.button("追加保存").clicked() {
+                    self.save_user_entrance_preset(false);
+                }
+                if ui.button("上書き保存").clicked() {
+                    self.save_user_entrance_preset(true);
+                }
+                let selected_is_user = self
+                    .picked_entrance_preset()
+                    .is_some_and(|preset| preset.source == StylePresetSource::User);
+                if ui
+                    .add_enabled(selected_is_user, egui::Button::new("削除"))
+                    .clicked()
+                {
+                    self.delete_selected_user_entrance_preset();
+                }
+            });
+            ui.separator();
+        }
+        ui.label("基本スタイル");
+
+        let mut color = [
+            self.session.active_style.color.r,
+            self.session.active_style.color.g,
+            self.session.active_style.color.b,
+        ];
+        if ui.color_edit_button_srgb(&mut color).changed() {
+            self.session.active_style.color = pauseink_domain::RgbaColor::new(
+                color[0],
+                color[1],
+                color[2],
+                self.session.active_style.color.a,
+            );
+            self.style_binding.inherit_color = false;
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self
+            .bound_style_preset()
+            .and_then(|preset| preset.color_rgba)
+            .is_some()
+        {
+            ui.horizontal(|ui| {
+                ui.small(if self.style_binding.inherit_color {
+                    "色: preset 継承中"
+                } else {
+                    "色: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.style_binding.inherit_color,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.style_binding.inherit_color = true;
+                    self.refresh_bound_style_fields();
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        if ui
+            .add(
+                egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
+                    .text("太さ"),
+            )
+            .changed()
+        {
+            self.style_binding.inherit_thickness = false;
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self
+            .bound_style_preset()
+            .and_then(|preset| preset.thickness)
+            .is_some()
+        {
+            ui.horizontal(|ui| {
+                ui.small(if self.style_binding.inherit_thickness {
+                    "太さ: preset 継承中"
+                } else {
+                    "太さ: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.style_binding.inherit_thickness,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.style_binding.inherit_thickness = true;
+                    self.refresh_bound_style_fields();
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        if ui
+            .add(
+                egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
+                    .text("不透明度"),
+            )
+            .changed()
+        {
+            self.style_binding.inherit_opacity = false;
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self
+            .bound_style_preset()
+            .is_some_and(|preset| preset.opacity.is_some() || preset.color_rgba.is_some())
+        {
+            ui.horizontal(|ui| {
+                ui.small(if self.style_binding.inherit_opacity {
+                    "不透明度: preset 継承中"
+                } else {
+                    "不透明度: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.style_binding.inherit_opacity,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.style_binding.inherit_opacity = true;
+                    self.refresh_bound_style_fields();
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        if ui
+            .add(
+                egui::Slider::new(
+                    &mut self.session.active_style.stabilization_strength,
+                    0.0..=1.0,
+                )
+                .text("手ブレ補正"),
+            )
+            .changed()
+        {
+            self.style_binding.inherit_stabilization_strength = false;
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self
+            .bound_style_preset()
+            .and_then(|preset| preset.stabilization_strength)
+            .is_some()
+        {
+            ui.horizontal(|ui| {
+                ui.small(if self.style_binding.inherit_stabilization_strength {
+                    "手ブレ補正: preset 継承中"
+                } else {
+                    "手ブレ補正: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.style_binding.inherit_stabilization_strength,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.style_binding.inherit_stabilization_strength = true;
+                    self.refresh_bound_style_fields();
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("合成");
+            let mut blend_mode = self.session.active_style.blend_mode;
+            egui::ComboBox::from_id_salt("blend_mode")
+                .selected_text(blend_mode_label(blend_mode))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::BlendMode::Normal,
+                        pauseink_domain::BlendMode::Multiply,
+                        pauseink_domain::BlendMode::Screen,
+                        pauseink_domain::BlendMode::Additive,
+                    ] {
+                        ui.selectable_value(
+                            &mut blend_mode,
+                            candidate,
+                            blend_mode_label(candidate),
+                        );
+                    }
+                });
+            if blend_mode != self.session.active_style.blend_mode {
+                self.session.active_style.blend_mode = blend_mode;
+                self.style_binding.inherit_blend_mode = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        if self
+            .bound_style_preset()
+            .and_then(|preset| preset.blend_mode)
+            .is_some()
+        {
+            ui.horizontal(|ui| {
+                ui.small(if self.style_binding.inherit_blend_mode {
+                    "合成: preset 継承中"
+                } else {
+                    "合成: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.style_binding.inherit_blend_mode,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.style_binding.inherit_blend_mode = true;
+                    self.refresh_bound_style_fields();
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.collapsing("アウトライン", |ui| {
+            if ui
+                .checkbox(&mut self.session.active_style.outline.enabled, "有効")
+                .changed()
+            {
+                self.style_binding.inherit_outline = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.session.active_style.outline.width, 0.0..=24.0)
+                        .text("幅"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_outline = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            let mut outline_color = rgba_to_color32(self.session.active_style.outline.color);
+            if ui.color_edit_button_srgba(&mut outline_color).changed() {
+                self.session.active_style.outline.color = color32_to_rgba(outline_color);
+                self.style_binding.inherit_outline = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.outline.clone())
+                .is_some()
+            {
+                ui.horizontal(|ui| {
+                    ui.small(if self.style_binding.inherit_outline {
+                        "アウトライン: preset 継承中"
+                    } else {
+                        "アウトライン: 上書き中"
+                    });
+                    if ui
+                        .add_enabled(
+                            !self.style_binding.inherit_outline,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        self.style_binding.inherit_outline = true;
+                        self.refresh_bound_style_fields();
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+            }
+        });
+        ui.collapsing("ドロップシャドウ", |ui| {
+            if ui
+                .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
+                .changed()
+            {
+                self.style_binding.inherit_drop_shadow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut self.session.active_style.drop_shadow.offset_x,
+                        -64.0..=64.0,
+                    )
+                    .text("横オフセット"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_drop_shadow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut self.session.active_style.drop_shadow.offset_y,
+                        -64.0..=64.0,
+                    )
+                    .text("縦オフセット"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_drop_shadow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut self.session.active_style.drop_shadow.blur_radius,
+                        0.0..=48.0,
+                    )
+                    .text("ぼかし"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_drop_shadow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            let mut shadow_color = rgba_to_color32(self.session.active_style.drop_shadow.color);
+            if ui.color_edit_button_srgba(&mut shadow_color).changed() {
+                self.session.active_style.drop_shadow.color = color32_to_rgba(shadow_color);
+                self.style_binding.inherit_drop_shadow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.drop_shadow.clone())
+                .is_some()
+            {
+                ui.horizontal(|ui| {
+                    ui.small(if self.style_binding.inherit_drop_shadow {
+                        "ドロップシャドウ: preset 継承中"
+                    } else {
+                        "ドロップシャドウ: 上書き中"
+                    });
+                    if ui
+                        .add_enabled(
+                            !self.style_binding.inherit_drop_shadow,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        self.style_binding.inherit_drop_shadow = true;
+                        self.refresh_bound_style_fields();
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+            }
+        });
+        ui.collapsing("グロー", |ui| {
+            if ui
+                .checkbox(&mut self.session.active_style.glow.enabled, "有効")
+                .changed()
+            {
+                self.style_binding.inherit_glow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.session.active_style.glow.blur_radius, 0.0..=48.0)
+                        .text("ぼかし"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_glow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            let mut glow_color = rgba_to_color32(self.session.active_style.glow.color);
+            if ui.color_edit_button_srgba(&mut glow_color).changed() {
+                self.session.active_style.glow.color = color32_to_rgba(glow_color);
+                self.style_binding.inherit_glow = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.glow.clone())
+                .is_some()
+            {
+                ui.horizontal(|ui| {
+                    ui.small(if self.style_binding.inherit_glow {
+                        "グロー: preset 継承中"
+                    } else {
+                        "グロー: 上書き中"
+                    });
+                    if ui
+                        .add_enabled(
+                            !self.style_binding.inherit_glow,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        self.style_binding.inherit_glow = true;
+                        self.refresh_bound_style_fields();
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+            }
+        });
+        ui.separator();
+        ui.label("出現");
+        ui.horizontal(|ui| {
+            ui.label("方式");
+            let mut entrance_kind = self.session.active_entrance.kind;
+            egui::ComboBox::from_id_salt("entrance_kind")
+                .selected_text(entrance_kind_label(entrance_kind))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::EntranceKind::Instant,
+                        pauseink_domain::EntranceKind::PathTrace,
+                        pauseink_domain::EntranceKind::Wipe,
+                        pauseink_domain::EntranceKind::Dissolve,
+                    ] {
+                        ui.selectable_value(
+                            &mut entrance_kind,
+                            candidate,
+                            entrance_kind_label(candidate),
+                        );
+                    }
+                });
+            if entrance_kind != self.session.active_entrance.kind {
+                self.session.active_entrance.kind = entrance_kind;
+                self.entrance_binding.inherit_kind = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_kind {
+                    "方式: preset 継承中"
+                } else {
+                    "方式: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_kind,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_kind = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("対象");
+            let mut scope = self.session.active_entrance.scope;
+            egui::ComboBox::from_id_salt("entrance_scope")
+                .selected_text(entrance_scope_label(scope))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::EffectScope::Stroke,
+                        pauseink_domain::EffectScope::GlyphObject,
+                        pauseink_domain::EffectScope::Group,
+                        pauseink_domain::EffectScope::Run,
+                    ] {
+                        ui.selectable_value(&mut scope, candidate, entrance_scope_label(candidate));
+                    }
+                });
+            if scope != self.session.active_entrance.scope {
+                self.session.active_entrance.scope = scope;
+                self.entrance_binding.inherit_scope = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_scope {
+                    "対象: preset 継承中"
+                } else {
+                    "対象: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_scope,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_scope = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("順序");
+            let mut order = self.session.active_entrance.order;
+            egui::ComboBox::from_id_salt("entrance_order")
+                .selected_text(entrance_order_label(order))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::EffectOrder::Serial,
+                        pauseink_domain::EffectOrder::Reverse,
+                        pauseink_domain::EffectOrder::Parallel,
+                    ] {
+                        ui.selectable_value(&mut order, candidate, entrance_order_label(candidate));
+                    }
+                });
+            if order != self.session.active_entrance.order {
+                self.session.active_entrance.order = order;
+                self.entrance_binding.inherit_order = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_order {
+                    "順序: preset 継承中"
+                } else {
+                    "順序: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_order,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_order = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("時間モード");
+            let mut duration_mode = self.session.active_entrance.duration_mode;
+            egui::ComboBox::from_id_salt("entrance_duration_mode")
+                .selected_text(entrance_duration_mode_label(duration_mode))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::EntranceDurationMode::FixedTotalDuration,
+                        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength,
+                    ] {
+                        ui.selectable_value(
+                            &mut duration_mode,
+                            candidate,
+                            entrance_duration_mode_label(candidate),
+                        );
+                    }
+                });
+            if duration_mode != self.session.active_entrance.duration_mode {
+                self.session.active_entrance.duration_mode = duration_mode;
+                self.entrance_binding.inherit_duration_mode = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_duration_mode {
+                    "時間モード: preset 継承中"
+                } else {
+                    "時間モード: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_duration_mode,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_duration_mode = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        let mut entrance_duration_ms =
+            media_duration_to_millis(self.session.active_entrance.duration) as f32;
+        if ui
+            .add(
+                egui::Slider::new(&mut entrance_duration_ms, 50.0..=5_000.0)
+                    .logarithmic(true)
+                    .text(match self.session.active_entrance.duration_mode {
+                        pauseink_domain::EntranceDurationMode::FixedTotalDuration => "出現時間 ms",
+                        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                            "基準時間 ms"
+                        }
+                    }),
+            )
+            .changed()
+        {
+            self.session.active_entrance.duration =
+                pauseink_domain::MediaDuration::from_millis(entrance_duration_ms.round() as i64);
+            self.entrance_binding.inherit_duration_ms = false;
+            self.sync_active_entrance_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_duration_ms {
+                    "出現時間: preset 継承中"
+                } else {
+                    "出現時間: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_duration_ms,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_duration_ms = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        if ui
+            .add(
+                egui::Slider::new(&mut self.session.active_entrance.speed_scalar, 0.1..=8.0)
+                    .logarithmic(true)
+                    .text("出現速度"),
+            )
+            .changed()
+        {
+            self.entrance_binding.inherit_speed_scalar = false;
+            self.sync_active_entrance_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        if self.bound_entrance_preset().is_some() {
+            ui.horizontal(|ui| {
+                ui.small(if self.entrance_binding.inherit_speed_scalar {
+                    "出現速度: preset 継承中"
+                } else {
+                    "出現速度: 上書き中"
+                });
+                if ui
+                    .add_enabled(
+                        !self.entrance_binding.inherit_speed_scalar,
+                        egui::Button::new("presetへ戻す"),
+                    )
+                    .clicked()
+                {
+                    self.entrance_binding.inherit_speed_scalar = true;
+                    self.refresh_bound_entrance_fields();
+                    self.sync_active_entrance_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+            });
+        }
+        ui.small(match self.session.active_entrance.duration_mode {
+            pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+                "固定時間モードでは、値が短いほど速く出現します。出現速度はこの時間に追加で倍率を掛けます。"
+            }
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                "長さ比例モードでは、基準時間を 600px 相当の長さへ当てて、出現速度倍率で最終時間を調整します。"
+            }
+        });
+        ui.separator();
+        ui.label("ガイド");
+        if ui
+            .add(
+                egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
+                    .text("ガイド傾き"),
+            )
+            .changed()
+        {
+            self.mark_project_ui_dirty();
+            self.refresh_guide_geometry();
+        }
+        if ui.button("ガイド解除").clicked() {
+            self.clear_guide_state();
+        }
+        ui.separator();
+        self.draw_export_panel(ui);
+    }
+
     fn draw_bottom_tab_scroll_region(&self, ui: &mut egui::Ui) {
         let available_size = ui.available_size();
         let content_width =
@@ -3622,6 +4510,26 @@ impl DesktopApp {
                 self.draw_bottom_tab_contents(ui);
             });
     }
+}
+
+fn show_side_panel_scroll_body<R>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let viewport_width = ui.available_width().max(0.0);
+    let viewport_height = ui.available_height().max(0.0);
+
+    egui::ScrollArea::vertical()
+        .id_salt(id_salt)
+        .auto_shrink([false, false])
+        .max_width(viewport_width)
+        .max_height(viewport_height)
+        .show(ui, |ui| {
+            ui.set_width(viewport_width);
+            ui.set_min_width(viewport_width);
+            add_contents(ui)
+        })
 }
 
 impl eframe::App for DesktopApp {
@@ -3836,97 +4744,9 @@ impl eframe::App for DesktopApp {
                 }
 
                 ui.separator();
-                ui.heading("テンプレート");
-                let mut template_layout_changed =
-                    ui.text_edit_singleline(&mut self.template.text).changed();
-                let mut selected_template_font = self.template.font_family.clone();
-                egui::ComboBox::from_label("テンプレート font")
-                    .selected_text(&selected_template_font)
-                    .show_ui(ui, |ui| {
-                        for family in
-                            template_font_choices(&self.local_font_families, &self.template.font_family)
-                        {
-                            ui.selectable_value(
-                                &mut selected_template_font,
-                                family.clone(),
-                                family,
-                            );
-                        }
-                    });
-                if selected_template_font != self.template.font_family {
-                    self.template.font_family = selected_template_font;
-                    self.font_config_dirty = true;
-                    self.maybe_apply_egui_fonts(ui.ctx());
-                    template_layout_changed = true;
-                }
-                template_layout_changed |= ui
-                    .add(
-                    egui::Slider::new(&mut self.template.settings.font_size, 24.0..=180.0)
-                        .text("フォントサイズ"))
-                    .changed();
-                template_layout_changed |= ui
-                    .add(
-                    egui::Slider::new(&mut self.template.settings.tracking, 0.0..=48.0)
-                        .text("字間"))
-                    .changed();
-                template_layout_changed |= ui
-                    .add(
-                    egui::Slider::new(&mut self.template.settings.slope_degrees, -20.0..=20.0)
-                        .text("傾き"))
-                    .changed();
-                if template_layout_changed {
-                    self.mark_project_ui_dirty();
-                    self.refresh_placed_template_slots(ui.ctx());
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("テンプレート配置").clicked() {
-                        self.template.placement_armed = true;
-                        self.reset_template_slots();
-                    }
-                    if ui.button("前スロット").clicked() {
-                        self.move_template_slot(-1);
-                    }
-                    if ui.button("次スロット").clicked() {
-                        self.move_template_slot(1);
-                    }
-                    if ui.button("テンプレート解除").clicked() {
-                        self.template.placement_armed = false;
-                        self.reset_template_slots();
-                    }
+                show_side_panel_scroll_body(ui, "left_panel_scroll_body", |ui| {
+                    self.draw_left_panel_scroll_body(ui);
                 });
-
-                ui.separator();
-                ui.heading("フォント");
-                if ui.button("ローカル一覧更新").clicked() {
-                    self.rebuild_local_font_families();
-                }
-                ui.label(format!(
-                    "読み込み済み候補: {} 件",
-                    self.local_font_families.len()
-                ));
-                for family in self.local_font_families.iter().take(8) {
-                    ui.label(format!("・{family}"));
-                }
-                ui.separator();
-                ui.label("Google Fonts 設定:");
-                for family in &self.settings.google_fonts.families {
-                    let cached = google_font_cache_file(
-                        &self.portable_paths.google_fonts_cache_dir(),
-                        family,
-                    );
-                    ui.label(format!(
-                        "・{} ({})",
-                        family,
-                        if cached.exists() {
-                            "cache あり"
-                        } else {
-                            "cache なし"
-                        }
-                    ));
-                }
-                if ui.button("Google Fonts 設定を開く").clicked() {
-                    self.preferences_open = true;
-                }
             });
 
         egui::Panel::right("inspector")
@@ -3940,819 +4760,9 @@ impl eframe::App for DesktopApp {
                     self.session.set_project_title(title);
                 }
                 ui.separator();
-                if !self.style_presets.is_empty() {
-                    ui.label("style preset");
-                    let previous_style_preset_id = self.selected_style_preset_id.clone();
-                    egui::ComboBox::from_label("組み込み preset")
-                        .selected_text(self.selected_style_preset_label())
-                        .show_ui(ui, |ui| {
-                            for preset in &self.style_presets {
-                                ui.selectable_value(
-                                    &mut self.selected_style_preset_id,
-                                    preset.id.clone(),
-                                    &preset.display_name,
-                                );
-                            }
-                        });
-                    if self.selected_style_preset_id != previous_style_preset_id {
-                        self.sync_preset_editor_fields_from_selection();
-                    }
-                    if let Some(bound_id) = &self.bound_style_preset_id {
-                        if let Some(bound) =
-                            self.style_presets.iter().find(|preset| &preset.id == bound_id)
-                        {
-                            ui.small(format!("現在の継承元: {}", bound.display_name));
-                        }
-                    } else {
-                        ui.small("現在の継承元: なし");
-                    }
-                    if ui.button("preset を適用").clicked() {
-                        self.apply_selected_style_preset();
-                    }
-                    if ui.button("preset 解除").clicked() {
-                        self.clear_style_preset_binding();
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label("user preset ID");
-                        ui.text_edit_singleline(&mut self.preset_editor_id);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("user preset 名");
-                        ui.text_edit_singleline(&mut self.preset_editor_name);
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("追加保存").clicked() {
-                            self.save_user_style_preset(false);
-                        }
-                        if ui.button("上書き保存").clicked() {
-                            self.save_user_style_preset(true);
-                        }
-                        let selected_is_user = self
-                            .picked_style_preset()
-                            .is_some_and(|preset| preset.source == StylePresetSource::User);
-                        if ui
-                            .add_enabled(selected_is_user, egui::Button::new("削除"))
-                            .clicked()
-                        {
-                            self.delete_selected_user_style_preset();
-                        }
-                    });
-                    ui.separator();
-                }
-                if !self.entrance_presets.is_empty() {
-                    ui.label("出現 preset");
-                    let previous_entrance_preset_id = self.selected_entrance_preset_id.clone();
-                    egui::ComboBox::from_label("出現 preset")
-                        .selected_text(self.selected_entrance_preset_label())
-                        .show_ui(ui, |ui| {
-                            for preset in &self.entrance_presets {
-                                ui.selectable_value(
-                                    &mut self.selected_entrance_preset_id,
-                                    preset.id.clone(),
-                                    &preset.display_name,
-                                );
-                            }
-                        });
-                    if self.selected_entrance_preset_id != previous_entrance_preset_id {
-                        self.sync_entrance_preset_editor_fields_from_selection();
-                    }
-                    if let Some(bound_id) = &self.bound_entrance_preset_id {
-                        if let Some(bound) = self
-                            .entrance_presets
-                            .iter()
-                            .find(|preset| &preset.id == bound_id)
-                        {
-                            ui.small(format!("現在の継承元: {}", bound.display_name));
-                        }
-                    } else {
-                        ui.small("現在の継承元: なし");
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("出現 preset を適用").clicked() {
-                            self.apply_selected_entrance_preset();
-                        }
-                        if ui.button("出現 preset 解除").clicked() {
-                            self.clear_entrance_preset_binding();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("出現 preset ID");
-                        ui.text_edit_singleline(&mut self.entrance_preset_editor_id);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("出現 preset 名");
-                        ui.text_edit_singleline(&mut self.entrance_preset_editor_name);
-                    });
-                    ui.horizontal(|ui| {
-                        if ui.button("追加保存").clicked() {
-                            self.save_user_entrance_preset(false);
-                        }
-                        if ui.button("上書き保存").clicked() {
-                            self.save_user_entrance_preset(true);
-                        }
-                        let selected_is_user = self
-                            .picked_entrance_preset()
-                            .is_some_and(|preset| preset.source == StylePresetSource::User);
-                        if ui
-                            .add_enabled(selected_is_user, egui::Button::new("削除"))
-                            .clicked()
-                        {
-                            self.delete_selected_user_entrance_preset();
-                        }
-                    });
-                    ui.separator();
-                }
-                ui.label("基本スタイル");
-
-                let mut color = [
-                    self.session.active_style.color.r,
-                    self.session.active_style.color.g,
-                    self.session.active_style.color.b,
-                ];
-                if ui.color_edit_button_srgb(&mut color).changed() {
-                    self.session.active_style.color = pauseink_domain::RgbaColor::new(
-                        color[0],
-                        color[1],
-                        color[2],
-                        self.session.active_style.color.a,
-                    );
-                    self.style_binding.inherit_color = false;
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self
-                    .bound_style_preset()
-                    .and_then(|preset| preset.color_rgba)
-                    .is_some()
-                {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.style_binding.inherit_color {
-                            "色: preset 継承中"
-                        } else {
-                            "色: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.style_binding.inherit_color,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.style_binding.inherit_color = true;
-                            self.refresh_bound_style_fields();
-                            self.sync_active_style_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
-                            .text("太さ"),
-                    )
-                    .changed()
-                {
-                    self.style_binding.inherit_thickness = false;
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self.bound_style_preset().and_then(|preset| preset.thickness).is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.style_binding.inherit_thickness {
-                            "太さ: preset 継承中"
-                        } else {
-                            "太さ: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.style_binding.inherit_thickness,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.style_binding.inherit_thickness = true;
-                            self.refresh_bound_style_fields();
-                            self.sync_active_style_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
-                            .text("不透明度"),
-                    )
-                    .changed()
-                {
-                    self.style_binding.inherit_opacity = false;
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self
-                    .bound_style_preset()
-                    .is_some_and(|preset| preset.opacity.is_some() || preset.color_rgba.is_some())
-                {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.style_binding.inherit_opacity {
-                            "不透明度: preset 継承中"
-                        } else {
-                            "不透明度: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.style_binding.inherit_opacity,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.style_binding.inherit_opacity = true;
-                            self.refresh_bound_style_fields();
-                            self.sync_active_style_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(
-                            &mut self.session.active_style.stabilization_strength,
-                            0.0..=1.0,
-                        )
-                        .text("手ブレ補正"),
-                    )
-                    .changed()
-                {
-                    self.style_binding.inherit_stabilization_strength = false;
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self
-                    .bound_style_preset()
-                    .and_then(|preset| preset.stabilization_strength)
-                    .is_some()
-                {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.style_binding.inherit_stabilization_strength {
-                            "手ブレ補正: preset 継承中"
-                        } else {
-                            "手ブレ補正: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.style_binding.inherit_stabilization_strength,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.style_binding.inherit_stabilization_strength = true;
-                            self.refresh_bound_style_fields();
-                            self.sync_active_style_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.label("合成");
-                    let mut blend_mode = self.session.active_style.blend_mode;
-                    egui::ComboBox::from_id_salt("blend_mode")
-                        .selected_text(blend_mode_label(blend_mode))
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                pauseink_domain::BlendMode::Normal,
-                                pauseink_domain::BlendMode::Multiply,
-                                pauseink_domain::BlendMode::Screen,
-                                pauseink_domain::BlendMode::Additive,
-                            ] {
-                                ui.selectable_value(
-                                    &mut blend_mode,
-                                    candidate,
-                                    blend_mode_label(candidate),
-                                );
-                            }
-                        });
-                    if blend_mode != self.session.active_style.blend_mode {
-                        self.session.active_style.blend_mode = blend_mode;
-                        self.style_binding.inherit_blend_mode = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
+                show_side_panel_scroll_body(ui, "inspector_scroll_body", |ui| {
+                    self.draw_right_panel_scroll_body(ui);
                 });
-                if self
-                    .bound_style_preset()
-                    .and_then(|preset| preset.blend_mode)
-                    .is_some()
-                {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.style_binding.inherit_blend_mode {
-                            "合成: preset 継承中"
-                        } else {
-                            "合成: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.style_binding.inherit_blend_mode,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.style_binding.inherit_blend_mode = true;
-                            self.refresh_bound_style_fields();
-                            self.sync_active_style_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.collapsing("アウトライン", |ui| {
-                    if ui
-                        .checkbox(&mut self.session.active_style.outline.enabled, "有効")
-                        .changed()
-                    {
-                        self.style_binding.inherit_outline = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.session.active_style.outline.width,
-                                0.0..=24.0,
-                            )
-                            .text("幅"),
-                        )
-                        .changed()
-                    {
-                        self.style_binding.inherit_outline = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    let mut outline_color = rgba_to_color32(self.session.active_style.outline.color);
-                    if ui.color_edit_button_srgba(&mut outline_color).changed() {
-                        self.session.active_style.outline.color = color32_to_rgba(outline_color);
-                        self.style_binding.inherit_outline = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if self
-                        .bound_style_preset()
-                        .and_then(|preset| preset.outline.clone())
-                        .is_some()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.small(if self.style_binding.inherit_outline {
-                                "アウトライン: preset 継承中"
-                            } else {
-                                "アウトライン: 上書き中"
-                            });
-                            if ui
-                                .add_enabled(
-                                    !self.style_binding.inherit_outline,
-                                    egui::Button::new("presetへ戻す"),
-                                )
-                                .clicked()
-                            {
-                                self.style_binding.inherit_outline = true;
-                                self.refresh_bound_style_fields();
-                                self.sync_active_style_to_current_object();
-                                self.mark_project_ui_dirty();
-                            }
-                        });
-                    }
-                });
-                ui.collapsing("ドロップシャドウ", |ui| {
-                    if ui
-                        .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
-                        .changed()
-                    {
-                        self.style_binding.inherit_drop_shadow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.session.active_style.drop_shadow.offset_x,
-                                -64.0..=64.0,
-                            )
-                            .text("横オフセット"),
-                        )
-                        .changed()
-                    {
-                        self.style_binding.inherit_drop_shadow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.session.active_style.drop_shadow.offset_y,
-                                -64.0..=64.0,
-                            )
-                            .text("縦オフセット"),
-                        )
-                        .changed()
-                    {
-                        self.style_binding.inherit_drop_shadow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.session.active_style.drop_shadow.blur_radius,
-                                0.0..=48.0,
-                            )
-                            .text("ぼかし"),
-                        )
-                        .changed()
-                    {
-                        self.style_binding.inherit_drop_shadow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    let mut shadow_color =
-                        rgba_to_color32(self.session.active_style.drop_shadow.color);
-                    if ui.color_edit_button_srgba(&mut shadow_color).changed() {
-                        self.session.active_style.drop_shadow.color = color32_to_rgba(shadow_color);
-                        self.style_binding.inherit_drop_shadow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if self
-                        .bound_style_preset()
-                        .and_then(|preset| preset.drop_shadow.clone())
-                        .is_some()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.small(if self.style_binding.inherit_drop_shadow {
-                                "ドロップシャドウ: preset 継承中"
-                            } else {
-                                "ドロップシャドウ: 上書き中"
-                            });
-                            if ui
-                                .add_enabled(
-                                    !self.style_binding.inherit_drop_shadow,
-                                    egui::Button::new("presetへ戻す"),
-                                )
-                                .clicked()
-                            {
-                                self.style_binding.inherit_drop_shadow = true;
-                                self.refresh_bound_style_fields();
-                                self.sync_active_style_to_current_object();
-                                self.mark_project_ui_dirty();
-                            }
-                        });
-                    }
-                });
-                ui.collapsing("グロー", |ui| {
-                    if ui
-                        .checkbox(&mut self.session.active_style.glow.enabled, "有効")
-                        .changed()
-                    {
-                        self.style_binding.inherit_glow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if ui
-                        .add(
-                            egui::Slider::new(
-                                &mut self.session.active_style.glow.blur_radius,
-                                0.0..=48.0,
-                            )
-                            .text("ぼかし"),
-                        )
-                        .changed()
-                    {
-                        self.style_binding.inherit_glow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    let mut glow_color = rgba_to_color32(self.session.active_style.glow.color);
-                    if ui.color_edit_button_srgba(&mut glow_color).changed() {
-                        self.session.active_style.glow.color = color32_to_rgba(glow_color);
-                        self.style_binding.inherit_glow = false;
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                    if self
-                        .bound_style_preset()
-                        .and_then(|preset| preset.glow.clone())
-                        .is_some()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.small(if self.style_binding.inherit_glow {
-                                "グロー: preset 継承中"
-                            } else {
-                                "グロー: 上書き中"
-                            });
-                            if ui
-                                .add_enabled(
-                                    !self.style_binding.inherit_glow,
-                                    egui::Button::new("presetへ戻す"),
-                                )
-                                .clicked()
-                            {
-                                self.style_binding.inherit_glow = true;
-                                self.refresh_bound_style_fields();
-                                self.sync_active_style_to_current_object();
-                                self.mark_project_ui_dirty();
-                            }
-                        });
-                    }
-                });
-                ui.separator();
-                ui.label("出現");
-                ui.horizontal(|ui| {
-                    ui.label("方式");
-                    let mut entrance_kind = self.session.active_entrance.kind;
-                    egui::ComboBox::from_id_salt("entrance_kind")
-                        .selected_text(entrance_kind_label(entrance_kind))
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                pauseink_domain::EntranceKind::Instant,
-                                pauseink_domain::EntranceKind::PathTrace,
-                                pauseink_domain::EntranceKind::Wipe,
-                                pauseink_domain::EntranceKind::Dissolve,
-                            ] {
-                                ui.selectable_value(
-                                    &mut entrance_kind,
-                                    candidate,
-                                    entrance_kind_label(candidate),
-                                );
-                            }
-                        });
-                    if entrance_kind != self.session.active_entrance.kind {
-                        self.session.active_entrance.kind = entrance_kind;
-                        self.entrance_binding.inherit_kind = false;
-                        self.sync_active_entrance_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_kind {
-                            "方式: preset 継承中"
-                        } else {
-                            "方式: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_kind,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_kind = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.label("対象");
-                    let mut scope = self.session.active_entrance.scope;
-                    egui::ComboBox::from_id_salt("entrance_scope")
-                        .selected_text(entrance_scope_label(scope))
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                pauseink_domain::EffectScope::Stroke,
-                                pauseink_domain::EffectScope::GlyphObject,
-                                pauseink_domain::EffectScope::Group,
-                                pauseink_domain::EffectScope::Run,
-                            ] {
-                                ui.selectable_value(
-                                    &mut scope,
-                                    candidate,
-                                    entrance_scope_label(candidate),
-                                );
-                            }
-                        });
-                    if scope != self.session.active_entrance.scope {
-                        self.session.active_entrance.scope = scope;
-                        self.entrance_binding.inherit_scope = false;
-                        self.sync_active_entrance_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_scope {
-                            "対象: preset 継承中"
-                        } else {
-                            "対象: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_scope,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_scope = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.label("順序");
-                    let mut order = self.session.active_entrance.order;
-                    egui::ComboBox::from_id_salt("entrance_order")
-                        .selected_text(entrance_order_label(order))
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                pauseink_domain::EffectOrder::Serial,
-                                pauseink_domain::EffectOrder::Reverse,
-                                pauseink_domain::EffectOrder::Parallel,
-                            ] {
-                                ui.selectable_value(
-                                    &mut order,
-                                    candidate,
-                                    entrance_order_label(candidate),
-                                );
-                            }
-                        });
-                    if order != self.session.active_entrance.order {
-                        self.session.active_entrance.order = order;
-                        self.entrance_binding.inherit_order = false;
-                        self.sync_active_entrance_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_order {
-                            "順序: preset 継承中"
-                        } else {
-                            "順序: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_order,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_order = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.label("時間モード");
-                    let mut duration_mode = self.session.active_entrance.duration_mode;
-                    egui::ComboBox::from_id_salt("entrance_duration_mode")
-                        .selected_text(entrance_duration_mode_label(duration_mode))
-                        .show_ui(ui, |ui| {
-                            for candidate in [
-                                pauseink_domain::EntranceDurationMode::FixedTotalDuration,
-                                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength,
-                            ] {
-                                ui.selectable_value(
-                                    &mut duration_mode,
-                                    candidate,
-                                    entrance_duration_mode_label(candidate),
-                                );
-                            }
-                        });
-                    if duration_mode != self.session.active_entrance.duration_mode {
-                        self.session.active_entrance.duration_mode = duration_mode;
-                        self.entrance_binding.inherit_duration_mode = false;
-                        self.sync_active_entrance_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_duration_mode {
-                            "時間モード: preset 継承中"
-                        } else {
-                            "時間モード: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_duration_mode,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_duration_mode = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                let mut entrance_duration_ms =
-                    media_duration_to_millis(self.session.active_entrance.duration) as f32;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut entrance_duration_ms, 50.0..=5_000.0)
-                            .logarithmic(true)
-                            .text(match self.session.active_entrance.duration_mode {
-                                pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
-                                    "出現時間 ms"
-                                }
-                                pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
-                                    "基準時間 ms"
-                                }
-                            }),
-                    )
-                    .changed()
-                {
-                    self.session.active_entrance.duration =
-                        pauseink_domain::MediaDuration::from_millis(
-                            entrance_duration_ms.round() as i64,
-                        );
-                    self.entrance_binding.inherit_duration_ms = false;
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_duration_ms {
-                            "出現時間: preset 継承中"
-                        } else {
-                            "出現時間: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_duration_ms,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_duration_ms = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                if ui
-                    .add(
-                        egui::Slider::new(
-                            &mut self.session.active_entrance.speed_scalar,
-                            0.1..=8.0,
-                        )
-                        .logarithmic(true)
-                        .text("出現速度"),
-                    )
-                    .changed()
-                {
-                    self.entrance_binding.inherit_speed_scalar = false;
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-                if self.bound_entrance_preset().is_some() {
-                    ui.horizontal(|ui| {
-                        ui.small(if self.entrance_binding.inherit_speed_scalar {
-                            "出現速度: preset 継承中"
-                        } else {
-                            "出現速度: 上書き中"
-                        });
-                        if ui
-                            .add_enabled(
-                                !self.entrance_binding.inherit_speed_scalar,
-                                egui::Button::new("presetへ戻す"),
-                            )
-                            .clicked()
-                        {
-                            self.entrance_binding.inherit_speed_scalar = true;
-                            self.refresh_bound_entrance_fields();
-                            self.sync_active_entrance_to_current_object();
-                            self.mark_project_ui_dirty();
-                        }
-                    });
-                }
-                ui.small(match self.session.active_entrance.duration_mode {
-                    pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
-                        "固定時間モードでは、値が短いほど速く出現します。出現速度はこの時間に追加で倍率を掛けます。"
-                    }
-                    pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
-                        "長さ比例モードでは、基準時間を 600px 相当の長さへ当てて、出現速度倍率で最終時間を調整します。"
-                    }
-                });
-                ui.separator();
-                ui.label("ガイド");
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
-                            .text("ガイド傾き"),
-                    )
-                    .changed()
-                {
-                    self.mark_project_ui_dirty();
-                    self.refresh_guide_geometry();
-                }
-                if ui.button("ガイド解除").clicked() {
-                    self.clear_guide_state();
-                }
-                ui.separator();
-                self.draw_export_panel(ui);
             });
 
         egui::TopBottomPanel::bottom("bottom_tabs")
@@ -6852,6 +6862,64 @@ mod tests {
         let large = central_height_with_scrollable_bottom_tab(400);
 
         assert!((small - large).abs() < 1.0);
+    }
+
+    fn side_panel_scroll_body_metrics(row_count: usize, screen_size: Vec2) -> (f32, f32, f32) {
+        let ctx = initialized_test_context();
+        let mut inner_height = 0.0;
+        let mut content_height = 0.0;
+        let mut content_width = 0.0;
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen_size)),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.label("固定ヘッダ");
+                    ui.separator();
+                    let output = show_side_panel_scroll_body(ui, "test-side-panel-scroll", |ui| {
+                        for index in 0..row_count {
+                            ui.label(format!("row-{index:03}"));
+                        }
+                    });
+                    inner_height = output.inner_rect.height();
+                    content_height = output.content_size.y;
+                    content_width = output.content_size.x;
+                });
+            },
+        );
+        (inner_height, content_height, content_width)
+    }
+
+    #[test]
+    fn side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport() {
+        let (small_inner_height, small_content_height, _) =
+            side_panel_scroll_body_metrics(2, Vec2::new(280.0, 180.0));
+        let (large_inner_height, large_content_height, _) =
+            side_panel_scroll_body_metrics(120, Vec2::new(280.0, 180.0));
+
+        assert!(
+            small_content_height <= small_inner_height + 1.0,
+            "内容が少ないときは viewport 内に収まるべき"
+        );
+        assert!(
+            large_content_height > large_inner_height + 1.0,
+            "内容が多いときは viewport を超え、scroll 可能であるべき"
+        );
+    }
+
+    #[test]
+    fn side_panel_scroll_body_uses_full_available_width() {
+        let (_, _, small_content_width) =
+            side_panel_scroll_body_metrics(2, Vec2::new(312.0, 180.0));
+        let (_, _, large_content_width) =
+            side_panel_scroll_body_metrics(120, Vec2::new(312.0, 180.0));
+
+        assert!(
+            (small_content_width - large_content_width).abs() < 1.0,
+            "scroll body は overflow の有無で本文幅が変わるべきではない"
+        );
     }
 
     #[test]

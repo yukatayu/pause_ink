@@ -1262,3 +1262,38 @@
   - 結果:
     - exit 0。`pauseink-app` 46 tests、`pauseink-portable-fs` 8 tests、`pauseink-presets-core` 9 tests が通過。
     - app 側では user entrance preset CRUD と、style/entrance binding state の再起動復元 test を追加した。
+- 2026-04-07T04:05:00+09:00
+  - 直近マイルストーン: `V1-08 side panel scroll / overflow hardening`
+  - 方針:
+    - 左右ペインは `resizable` のまま維持し、panel 全体ではなく「見出しと主要 status は固定」「長い control 群だけ vertical scroll」に切り分ける。
+    - 既存の bottom panel 固定高さ scroll と同様に、内容件数が増えても central canvas や下部パネルの縦レイアウトを揺らさないことを優先する。
+    - 低い画面でも `書き出し`、`preset 継承`、`Google Fonts 設定` まで辿り着けることを回帰で固定する。
+  - 着手前確認:
+    - `crates/app/src/main.rs` の `Panel::left(\"left_panel\")`、`Panel::right(\"inspector\")`、`draw_bottom_tab_scroll_region()` を読み直した。
+    - 既存 test `scrollable_bottom_tab_keeps_central_panel_height_stable_when_rows_increase` を確認し、side panel 版の layout 回帰を追加する方針を固めた。
+- 2026-04-07T04:42:00+09:00
+  - Task: `V1-08 side panel scroll / overflow hardening`
+  - sub-agent:
+    - explorer `Gauss` に `crates/app/src/main.rs` の left/right panel 境界と既存 layout test を調査させた。
+    - 採用した指摘:
+      - outer panel の ID (`left_panel` / `inspector`) と `resizable(true)` を変えず、内側だけ `fixed header + ScrollArea body` に分けるのが最小で安全。
+      - side panel 用の専用回帰 test は未整備だったため、overflow と width 安定性を app test に追加する。
+    - 却下した案:
+      - section ごとに複数 scroll を作る案。操作感が変わりやすく、今 task の目的を超えるため見送った。
+  - 実施内容:
+    - `crates/app/src/main.rs` に `show_side_panel_scroll_body()` を追加し、viewport 幅を保ったまま本文だけを `ScrollArea::vertical()` に包む helper を追加した。
+    - 左ペイン本文を `draw_left_panel_scroll_body()`、右ペイン本文を `draw_right_panel_scroll_body()` へ分離し、header 側には runtime status / title のような頻繁に見る情報だけを残した。
+    - `Panel::left(\"left_panel\")` と `Panel::right(\"inspector\")` の outer panel は ID・default width・resizable をそのまま維持した。
+    - `manual/user_guide.md` と `manual/developer_guide.md` に、左右ペインが固定ヘッダ付き縦スクロールになったことを追記した。
+  - テスト:
+    - red: `cargo test -p pauseink-app side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport -- --nocapture`
+      - `show_side_panel_scroll_body` 未定義で compile fail を確認。
+    - green:
+      - `cargo test -p pauseink-app side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport -- --nocapture`
+      - `cargo test -p pauseink-app side_panel_scroll_body_uses_full_available_width -- --nocapture`
+      - `cargo test -p pauseink-app --lib --bins`
+      - `cargo check -p pauseink-app --all-targets`
+  - 結果:
+    - exit 0。`pauseink-app` 48 tests と `--all-targets` check が通過。
+    - `side_panel_scroll_body_reports_overflow_when_contents_exceed_viewport` で overflow 時に body viewport を超える content が scroll 対象になることを固定した。
+    - `side_panel_scroll_body_uses_full_available_width` で overflow の有無で本文幅が変わらないことを固定した。
