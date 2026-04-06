@@ -141,8 +141,9 @@ v1.0 の前提:
 - `診断`
   - runtime origin
   - ffmpeg / ffprobe path
+  - 最後の検出エラー
   - encoder / muxer / hwaccel 一覧
-  - Windows で runtime が見つからない場合の sidecar 配置方法
+  - Windows / macOS / Linux ごとの runtime 再検出と配置案内
 
 ## 8. Google Fonts
 
@@ -168,4 +169,5 @@ PauseInk は既定で executable 直下に `pauseink_data/` を作ります。
 - template 字詰めは実 font shaping と kerning を使いますが、scale が切り替わる run 境界では font engine 上の自然な区切りに従います
 - built-in style preset は base style の厚みと色の適用が中心です
 - group / ungroup / multi-select / z-order UI はまだ最小です
+- Windows と macOS はこの Linux ホスト上で実行確認しておらず、runtime 探索ロジックは unit test で検証しています
 - GUI の `eframe` deprecation warning が残っていますが、現 build/test は通っています

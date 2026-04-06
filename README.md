@@ -163,6 +163,7 @@ profile:
 - app core は MIT-friendly な構成を維持する
 - FFmpeg は provider abstraction の後ろに置く
 - host の apt `ffmpeg` は検証用であり、mainline release 前提にはしない
+- runtime 診断から再検出でき、Windows / macOS / Linux の代表的な system path も探索する
 - H.264 / HEVC は optional codec pack 扱いを維持する
 
 ## 参照

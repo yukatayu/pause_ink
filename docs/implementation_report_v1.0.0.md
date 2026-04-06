@@ -4,10 +4,10 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、append 時の object style 同期、guide 解除時の stale state reset、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
-- 最新の検証済み build: `cargo build -p pauseink-app`
+- 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
 - 最新の検証済み transparent export: `cargo test --workspace` 内の `pauseink_export::tests::transparent_png_sequence_export_smoke_if_host_runtime_exists`
 
@@ -752,6 +752,44 @@
   - 実施内容: `cargo test -p pauseink-renderer -p pauseink-app --lib --bins`
   - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-renderer` 7 tests が通過。multi-pass 化後も既存 preview/clear/path-trace 回帰を壊していない。
 
+## 8.9 2026-04-06 FFmpeg runtime 再検出と探索経路の見直し
+
+- 開始時点の即時マイルストーン:
+  - `winget install --id=Gyan.FFmpeg -e` 後でも Windows で runtime を拾えるかを見直す
+  - `機能情報更新` / `診断を再取得` が capability だけでなく discovery 自体をやり直すようにする
+  - Linux/macOS を含め、system runtime 探索対象と実検証範囲を整理する
+- 根本原因の整理:
+  - app 起動時は `discover_runtime(...).ok()` で 1 回だけ検出し、その後の `機能情報更新` / `診断を再取得` は capability 再取得しか行っていなかった
+  - discovery 失敗理由が UI に残らず、WinGet 配置のどこで外れているか見えなかった
+  - system runtime 探索は `PATH` と一部既知パスのみで、Windows の `WindowsApps` や Scoop、Linux の user bin / Linuxbrew を見ていなかった
+- 今回の実装方針:
+  - `DesktopApp` に runtime 再検出 helper と `last_runtime_error` を持たせ、起動後の再 discovery を可能にする
+  - 診断 UI は current OS 向けの案内を出し、Windows では WinGet Links / Packages / PATH を明示する
+  - `pauseink-media` の探索 context に home dir を追加し、Windows/macOS/Linux の代表的 install path を unit test 付きで補強する
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `crates/media/src/lib.rs` に home dir 付き `RuntimeSearchContext` と Windows/macOS/Linux の追加探索パス、`crates/app/src/main.rs` に runtime 再検出、最後の検出エラー保持、OS 別の runtime help を追加した。
+  - 変更ファイル: `crates/media/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: 起動後に sidecar や host runtime を配置しても `機能情報更新` / `診断を再取得` で再検出できる構成になり、Windows の `winget` user-scope / package-scope、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を探索候補へ含めた。
+  - 次の一手: manual / README / progress を同期し、workspace 全体回帰と Linux host 実 runtime パス確認を記録する。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test -p pauseink-media`
+  - 結果: exit 0。17 tests が通過。`windows_runtime_search_finds_winget_links_without_path`、`windows_runtime_search_finds_nested_winget_package_bin`、`windows_runtime_candidates_cover_windowsapps_and_scoop`、`macos_runtime_candidates_cover_homebrew_and_usr_local`、`linux_runtime_candidates_cover_usr_bins` を含め、探索ロジックの unit test を更新した。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 14 tests、bin 13 tests が通過。`apply_runtime_discovery_updates_status_and_provider`、OS 別 help 文言テスト、座標変換や guide 既存回帰が維持された。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体が通過し、`pauseink-export` の composite / transparent smoke、`pauseink-media` の host probe / preview smoke も維持された。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を確認。`Panel::*` 系の deprecation warning は継続。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `command -v ffmpeg && command -v ffprobe && ffmpeg -version | head -n 1 && ffprobe -version | head -n 1`
+  - 結果: Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`6.1.1-3ubuntu5` を実確認した。
+- 2026-04-06T11:51:42+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`README.md`、`progress.md` を runtime 再検出と OS 別案内に合わせて更新した。
+  - 結果: docs / 実装 / テストの runtime 挙動を再同期した。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。
@@ -791,6 +829,7 @@
 - portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
 - GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive と `README.md` までで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
 - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
+- Windows / macOS の FFmpeg runtime 実行確認はこの Linux host では行えず、現時点の cross-platform 証跡は探索ロジックの unit test と Linux host 上の実 runtime 検証まで。
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。

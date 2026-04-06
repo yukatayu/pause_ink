@@ -45,11 +45,16 @@ fn main() -> Result<()> {
 
     let settings = load_settings_or_default(&portable_paths)?;
 
-    let runtime = discover_runtime(&portable_paths.runtime_dir, &default_platform_id(), true).ok();
+    let (runtime, runtime_error) =
+        match discover_runtime(&portable_paths.runtime_dir, &default_platform_id(), true) {
+            Ok(runtime) => (Some(runtime), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
     let options = eframe::NativeOptions::default();
     let portable_paths_for_app = portable_paths.clone();
     let settings_for_app = settings.clone();
     let runtime_for_app = runtime.clone();
+    let runtime_error_for_app = runtime_error.clone();
 
     eframe::run_native(
         "PauseInk",
@@ -65,10 +70,26 @@ fn main() -> Result<()> {
                 portable_paths_for_app.clone(),
                 settings_for_app.clone(),
                 runtime_for_app.clone(),
+                runtime_error_for_app.clone(),
             )))
         }),
     )?;
     Ok(())
+}
+
+fn summarize_runtime_status(runtime: Option<&MediaRuntime>) -> String {
+    runtime
+        .map(|runtime| {
+            format!(
+                "ランタイム: {} ({:?})",
+                runtime
+                    .build_summary
+                    .clone()
+                    .unwrap_or_else(|| runtime.ffmpeg_path.display().to_string()),
+                runtime.origin
+            )
+        })
+        .unwrap_or_else(|| "ランタイム: 未検出".to_owned())
 }
 
 fn font_data_key(prefix: &str, family_name: &str) -> String {
@@ -380,6 +401,7 @@ struct DesktopApp {
     provider: Option<FfprobeMediaProvider>,
     runtime_capabilities: Option<RuntimeCapabilities>,
     runtime_status: String,
+    last_runtime_error: Option<String>,
     logs: Vec<String>,
     local_font_families: Vec<String>,
     style_presets: Vec<BaseStylePreset>,
@@ -415,25 +437,14 @@ impl DesktopApp {
         portable_paths: PortablePaths,
         settings: Settings,
         runtime: Option<MediaRuntime>,
+        runtime_error: Option<String>,
     ) -> Self {
         let recovery_prompt_open = portable_paths.autosave_file("recovery_latest").exists();
         let provider = runtime.clone().map(FfprobeMediaProvider::new);
         let runtime_capabilities = provider
             .as_ref()
             .and_then(|provider| provider.capabilities().ok());
-        let runtime_status = runtime
-            .as_ref()
-            .map(|runtime| {
-                format!(
-                    "ランタイム: {} ({:?})",
-                    runtime
-                        .build_summary
-                        .clone()
-                        .unwrap_or_else(|| runtime.ffmpeg_path.display().to_string()),
-                    runtime.origin
-                )
-            })
-            .unwrap_or_else(|| "ランタイム: 未検出".to_owned());
+        let runtime_status = summarize_runtime_status(runtime.as_ref());
         let mut font_dirs = vec![portable_paths.google_fonts_cache_dir()];
         font_dirs.extend(settings.local_font_dirs.clone());
         let local_font_families = discover_local_font_families(&font_dirs);
@@ -462,6 +473,7 @@ impl DesktopApp {
             provider,
             runtime_capabilities,
             runtime_status,
+            last_runtime_error: runtime_error,
             logs: Vec::new(),
             local_font_families,
             selected_style_preset_id: style_presets
@@ -846,6 +858,41 @@ impl DesktopApp {
                 ));
             }
             Err(error) => self.push_log(format!("runtime capability 取得失敗: {error}")),
+        }
+    }
+
+    fn apply_runtime_discovery(
+        &mut self,
+        runtime: Option<MediaRuntime>,
+        runtime_error: Option<String>,
+    ) {
+        self.runtime_status = summarize_runtime_status(runtime.as_ref());
+        self.provider = runtime.clone().map(FfprobeMediaProvider::new);
+        self.runtime = runtime;
+        self.runtime_capabilities = None;
+        self.last_runtime_error = runtime_error;
+    }
+
+    fn rediscover_runtime(&mut self) {
+        match discover_runtime(
+            &self.portable_paths.runtime_dir,
+            &default_platform_id(),
+            true,
+        ) {
+            Ok(runtime) => {
+                self.apply_runtime_discovery(Some(runtime.clone()), None);
+                self.push_log(format!(
+                    "runtime 再検出成功: {} / {}",
+                    runtime.ffmpeg_path.display(),
+                    runtime.ffprobe_path.display()
+                ));
+                self.refresh_runtime_capabilities();
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.apply_runtime_discovery(None, Some(message.clone()));
+                self.push_log(format!("runtime 再検出失敗: {error}"));
+            }
         }
     }
 
@@ -1837,7 +1884,7 @@ impl DesktopApp {
             .resizable(true)
             .show(ctx, |ui| {
                 if ui.button("診断を再取得").clicked() {
-                    self.refresh_runtime_capabilities();
+                    self.rediscover_runtime();
                 }
                 ui.separator();
                 if let Some(runtime) = &self.runtime {
@@ -1852,6 +1899,9 @@ impl DesktopApp {
                     }
                 } else {
                     ui.label("runtime は未検出です。");
+                }
+                if let Some(error) = &self.last_runtime_error {
+                    ui.label(format!("最後の検出エラー: {error}"));
                 }
 
                 ui.separator();
@@ -1871,8 +1921,12 @@ impl DesktopApp {
                 }
 
                 ui.separator();
-                ui.heading("Windows で runtime が見つからないとき");
-                for line in ffmpeg_runtime_windows_help(&self.portable_paths.runtime_dir) {
+                ui.heading(ffmpeg_runtime_help_heading(std::env::consts::OS));
+                for line in ffmpeg_runtime_help(
+                    &self.portable_paths.runtime_dir,
+                    std::env::consts::OS,
+                    &default_platform_id(),
+                ) {
                     ui.label(line);
                 }
             });
@@ -2274,7 +2328,7 @@ impl eframe::App for DesktopApp {
                         self.runtime_diagnostics_open = true;
                     }
                     if ui.button("機能情報更新").clicked() {
-                        self.refresh_runtime_capabilities();
+                        self.rediscover_runtime();
                     }
                 });
                 if let Some(path) = self.session.media_source_hint() {
@@ -2709,17 +2763,43 @@ fn template_font_choices(local_font_families: &[String], selected_family: &str) 
     choices
 }
 
-fn ffmpeg_runtime_windows_help(runtime_root: &Path) -> Vec<String> {
-    let sidecar_dir = sidecar_runtime_dir(runtime_root, "windows-x86_64");
-    vec![
-        format!(
-            "1. 推奨配置: `{}` に `ffmpeg.exe` / `ffprobe.exe` / `manifest.json` を置きます。",
-            sidecar_dir.display()
-        ),
-        "2. sidecar を置けない場合は、`ffmpeg.exe` と `ffprobe.exe` の両方を `PATH` に通してください。"
-            .to_owned(),
-        "3. 配置後に `機能情報更新` を押すか、アプリを再起動すると再検出します。".to_owned(),
-    ]
+fn ffmpeg_runtime_help_heading(os: &str) -> &'static str {
+    match os {
+        "windows" => "Windows でランタイムが見つからないとき",
+        "macos" => "macOS でランタイムが見つからないとき",
+        _ => "Linux でランタイムが見つからないとき",
+    }
+}
+
+fn ffmpeg_runtime_help(runtime_root: &Path, os: &str, platform_id: &str) -> Vec<String> {
+    let sidecar_dir = sidecar_runtime_dir(runtime_root, platform_id);
+    match os {
+        "windows" => vec![
+            format!(
+                "1. 推奨配置: `{}` に `ffmpeg.exe` / `ffprobe.exe` / `manifest.json` を置きます。",
+                sidecar_dir.display()
+            ),
+            "2. `winget install --id=Gyan.FFmpeg -e` 後に未検出のままなら、`%LOCALAPPDATA%\\Microsoft\\WinGet\\Links` または `%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages\\...\\bin` に `ffmpeg.exe` / `ffprobe.exe` があるか確認します。".to_owned(),
+            "3. sidecar を置けない場合は、`ffmpeg.exe` と `ffprobe.exe` の両方を `PATH` へ通してください。Scoop の場合は `~/scoop/shims` も探索対象です。".to_owned(),
+            "4. 配置後は `機能情報更新` か `診断を再取得` を押すと、その場で再検出します。".to_owned(),
+        ],
+        "macos" => vec![
+            format!(
+                "1. 推奨配置: `{}` に `ffmpeg` / `ffprobe` / `manifest.json` を置きます。",
+                sidecar_dir.display()
+            ),
+            "2. host runtime を使う場合、Homebrew は `/opt/homebrew/bin` または `/usr/local/bin`、MacPorts は `/opt/local/bin` を確認します。".to_owned(),
+            "3. 配置後は `機能情報更新` か `診断を再取得` を押すと、その場で再検出します。".to_owned(),
+        ],
+        _ => vec![
+            format!(
+                "1. 推奨配置: `{}` に `ffmpeg` / `ffprobe` / `manifest.json` を置きます。",
+                sidecar_dir.display()
+            ),
+            "2. host runtime を使う場合、`/usr/bin`、`/usr/local/bin`、`/snap/bin`、`~/.local/bin`、Linuxbrew 系を順に確認します。".to_owned(),
+            "3. 配置後は `機能情報更新` か `診断を再取得` を押すと、その場で再検出します。".to_owned(),
+        ],
+    }
 }
 
 fn default_export_filename(title: &str, extension: &str) -> String {
@@ -2888,12 +2968,75 @@ mod tests {
     }
 
     #[test]
-    fn windows_runtime_help_mentions_sidecar_layout_and_path_fallback() {
-        let lines = ffmpeg_runtime_windows_help(Path::new("/tmp/pauseink_data/runtime"));
+    fn windows_runtime_help_mentions_winget_and_sidecar_layout() {
+        let lines = ffmpeg_runtime_help(
+            Path::new("/tmp/pauseink_data/runtime"),
+            "windows",
+            "windows-x86_64",
+        );
 
         assert!(lines.iter().any(|line| line.contains("windows-x86_64")));
+        assert!(lines.iter().any(|line| line.contains("WinGet")));
         assert!(lines.iter().any(|line| line.contains("ffmpeg.exe")));
         assert!(lines.iter().any(|line| line.contains("PATH")));
+    }
+
+    #[test]
+    fn apply_runtime_discovery_updates_status_and_provider() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(
+            portable_paths,
+            Settings::default(),
+            None,
+            Some("not found".to_owned()),
+        );
+        let runtime = MediaRuntime {
+            ffmpeg_path: PathBuf::from("/tmp/custom-ffmpeg"),
+            ffprobe_path: PathBuf::from("/tmp/custom-ffprobe"),
+            origin: pauseink_media::RuntimeOrigin::SystemHost,
+            manifest_path: None,
+            build_summary: Some("custom runtime".to_owned()),
+            license_summary: None,
+        };
+
+        app.apply_runtime_discovery(Some(runtime.clone()), None);
+
+        assert!(app.runtime.is_some());
+        assert!(app.provider.is_some());
+        assert!(app.runtime_status.contains("custom runtime"));
+        assert!(app.last_runtime_error.is_none());
+
+        app.apply_runtime_discovery(None, Some("still missing".to_owned()));
+        assert!(app.runtime.is_none());
+        assert!(app.provider.is_none());
+        assert_eq!(app.runtime_status, "ランタイム: 未検出");
+        assert_eq!(app.last_runtime_error.as_deref(), Some("still missing"));
+    }
+
+    #[test]
+    fn macos_runtime_help_mentions_homebrew() {
+        let lines = ffmpeg_runtime_help(
+            Path::new("/tmp/pauseink_data/runtime"),
+            "macos",
+            "macos-aarch64",
+        );
+
+        assert!(lines.iter().any(|line| line.contains("/opt/homebrew/bin")));
+        assert!(lines.iter().any(|line| line.contains("macos-aarch64")));
+    }
+
+    #[test]
+    fn linux_runtime_help_mentions_common_system_paths() {
+        let lines = ffmpeg_runtime_help(
+            Path::new("/tmp/pauseink_data/runtime"),
+            "linux",
+            "linux-x86_64",
+        );
+
+        assert!(lines.iter().any(|line| line.contains("/usr/bin")));
+        assert!(lines.iter().any(|line| line.contains("Linuxbrew")));
     }
 
     #[test]
@@ -2939,7 +3082,7 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir");
         let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
         portable_paths.ensure_exists().expect("portable dirs");
-        let mut app = DesktopApp::new(portable_paths, Settings::default(), None);
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
 
         app.guide_state = Some(GuideOverlayState::from_reference_bounds(
             pauseink_domain::Point2 { x: 100.0, y: 200.0 },

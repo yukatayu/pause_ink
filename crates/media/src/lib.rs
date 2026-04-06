@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,7 +47,11 @@ impl MediaRuntime {
 }
 
 pub fn ffmpeg_binary_name() -> &'static str {
-    if cfg!(windows) {
+    ffmpeg_binary_name_for_os(std::env::consts::OS)
+}
+
+fn ffmpeg_binary_name_for_os(os: &str) -> &'static str {
+    if os == "windows" {
         "ffmpeg.exe"
     } else {
         "ffmpeg"
@@ -54,7 +59,11 @@ pub fn ffmpeg_binary_name() -> &'static str {
 }
 
 pub fn ffprobe_binary_name() -> &'static str {
-    if cfg!(windows) {
+    ffprobe_binary_name_for_os(std::env::consts::OS)
+}
+
+fn ffprobe_binary_name_for_os(os: &str) -> &'static str {
+    if os == "windows" {
         "ffprobe.exe"
     } else {
         "ffprobe"
@@ -97,12 +106,14 @@ pub fn discover_sidecar_runtime(
 }
 
 pub fn discover_system_runtime() -> Result<MediaRuntime, MediaError> {
-    let ffmpeg_version = capture_version_output(Path::new(ffmpeg_binary_name()))?;
-    let ffprobe_version = capture_version_output(Path::new(ffprobe_binary_name()))?;
+    let (ffmpeg_path, ffprobe_path) =
+        resolve_system_runtime_paths_with_context(&RuntimeSearchContext::current())?;
+    let ffmpeg_version = capture_version_output(&ffmpeg_path)?;
+    let ffprobe_version = capture_version_output(&ffprobe_path)?;
 
     Ok(MediaRuntime {
-        ffmpeg_path: PathBuf::from(ffmpeg_binary_name()),
-        ffprobe_path: PathBuf::from(ffprobe_binary_name()),
+        ffmpeg_path,
+        ffprobe_path,
         origin: RuntimeOrigin::SystemHost,
         manifest_path: None,
         build_summary: Some(format!(
@@ -525,6 +536,256 @@ fn run_ffmpeg_query(binary_path: &Path, flag: &str) -> Result<String, MediaError
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RuntimeSearchContext {
+    os: String,
+    path_entries: Vec<PathBuf>,
+    home_dir: Option<PathBuf>,
+    local_app_data: Option<PathBuf>,
+    program_files: Option<PathBuf>,
+    program_files_x86: Option<PathBuf>,
+}
+
+impl RuntimeSearchContext {
+    fn current() -> Self {
+        Self {
+            os: std::env::consts::OS.to_owned(),
+            path_entries: std::env::var_os("PATH")
+                .map(|raw| std::env::split_paths(&raw).collect())
+                .unwrap_or_default(),
+            home_dir: std::env::var_os("HOME").map(PathBuf::from),
+            local_app_data: std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+            program_files: std::env::var_os("ProgramFiles").map(PathBuf::from),
+            program_files_x86: std::env::var_os("ProgramFiles(x86)").map(PathBuf::from),
+        }
+    }
+}
+
+fn resolve_system_runtime_paths_with_context(
+    context: &RuntimeSearchContext,
+) -> Result<(PathBuf, PathBuf), MediaError> {
+    let ffmpeg_name = ffmpeg_binary_name_for_os(&context.os);
+    let ffprobe_name = ffprobe_binary_name_for_os(&context.os);
+    let ffmpeg_candidates = collect_system_binary_candidates(ffmpeg_name, context);
+    let ffprobe_candidates = collect_system_binary_candidates(ffprobe_name, context);
+
+    if let Some(pair) = resolve_candidate_pair(&ffmpeg_candidates, &ffprobe_candidates) {
+        return Ok(pair);
+    }
+
+    Err(MediaError::RuntimeUnavailable(format!(
+        "system ffmpeg runtime not found; checked {} ffmpeg candidates and {} ffprobe candidates",
+        ffmpeg_candidates.len(),
+        ffprobe_candidates.len()
+    )))
+}
+
+fn resolve_candidate_pair(
+    ffmpeg_candidates: &[PathBuf],
+    ffprobe_candidates: &[PathBuf],
+) -> Option<(PathBuf, PathBuf)> {
+    let existing_ffmpeg = ffmpeg_candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned();
+    let existing_ffprobe = ffprobe_candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned();
+
+    if let Some(ffmpeg_path) = &existing_ffmpeg {
+        let sibling = ffmpeg_path.with_file_name(ffprobe_path_name(ffmpeg_path));
+        if sibling.is_file() {
+            return Some((ffmpeg_path.clone(), sibling));
+        }
+    }
+
+    if let Some(ffprobe_path) = &existing_ffprobe {
+        let sibling = ffprobe_path.with_file_name(ffmpeg_path_name(ffprobe_path));
+        if sibling.is_file() {
+            return Some((sibling, ffprobe_path.clone()));
+        }
+    }
+
+    match (existing_ffmpeg, existing_ffprobe) {
+        (Some(ffmpeg_path), Some(ffprobe_path)) => Some((ffmpeg_path, ffprobe_path)),
+        _ => None,
+    }
+}
+
+fn ffmpeg_path_name(path: &Path) -> &'static str {
+    if path
+        .components()
+        .any(|component| component == Component::Normal("windows".as_ref()))
+        || path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }
+}
+
+fn ffprobe_path_name(path: &Path) -> &'static str {
+    if path
+        .components()
+        .any(|component| component == Component::Normal("windows".as_ref()))
+        || path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    }
+}
+
+fn collect_system_binary_candidates(
+    binary_name: &str,
+    context: &RuntimeSearchContext,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    for entry in &context.path_entries {
+        push_unique_path(&mut candidates, entry.join(binary_name));
+    }
+
+    for directory in platform_common_search_dirs(context) {
+        push_unique_path(&mut candidates, directory.join(binary_name));
+    }
+
+    if context.os == "windows" {
+        for package_root in winget_package_roots(context) {
+            for candidate in collect_winget_package_binary_candidates(&package_root, binary_name) {
+                push_unique_path(&mut candidates, candidate);
+            }
+        }
+    }
+
+    candidates
+}
+
+fn platform_common_search_dirs(context: &RuntimeSearchContext) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    match context.os.as_str() {
+        "windows" => {
+            if let Some(local_app_data) = &context.local_app_data {
+                directories.push(local_app_data.join("Microsoft/WinGet/Links"));
+                directories.push(local_app_data.join("Microsoft/WindowsApps"));
+            }
+            if let Some(program_files) = &context.program_files {
+                directories.push(program_files.join("WinGet/Links"));
+                directories.push(program_files.join("FFmpeg/bin"));
+                directories.push(program_files.join("ffmpeg/bin"));
+                directories.push(program_files.join("Gyan/FFmpeg/bin"));
+            }
+            if let Some(program_files_x86) = &context.program_files_x86 {
+                directories.push(program_files_x86.join("WinGet/Links"));
+                directories.push(program_files_x86.join("FFmpeg/bin"));
+            }
+            if let Some(home_dir) = &context.home_dir {
+                directories.push(home_dir.join("scoop/shims"));
+            }
+        }
+        "macos" => {
+            directories.push(PathBuf::from("/opt/homebrew/bin"));
+            directories.push(PathBuf::from("/usr/local/bin"));
+            directories.push(PathBuf::from("/opt/local/bin"));
+            directories.push(PathBuf::from("/usr/bin"));
+            if let Some(home_dir) = &context.home_dir {
+                directories.push(home_dir.join(".local/bin"));
+                directories.push(home_dir.join("bin"));
+            }
+        }
+        _ => {
+            directories.push(PathBuf::from("/usr/bin"));
+            directories.push(PathBuf::from("/usr/local/bin"));
+            directories.push(PathBuf::from("/bin"));
+            directories.push(PathBuf::from("/snap/bin"));
+            directories.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin"));
+            if let Some(home_dir) = &context.home_dir {
+                directories.push(home_dir.join(".local/bin"));
+                directories.push(home_dir.join("bin"));
+                directories.push(home_dir.join(".linuxbrew/bin"));
+            }
+        }
+    }
+    directories
+}
+
+fn winget_package_roots(context: &RuntimeSearchContext) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(local_app_data) = &context.local_app_data {
+        roots.push(local_app_data.join("Microsoft/WinGet/Packages"));
+    }
+    if let Some(program_files) = &context.program_files {
+        roots.push(program_files.join("WinGet/Packages"));
+    }
+    if let Some(program_files_x86) = &context.program_files_x86 {
+        roots.push(program_files_x86.join("WinGet/Packages"));
+    }
+    roots
+}
+
+fn collect_winget_package_binary_candidates(
+    package_root: &Path,
+    binary_name: &str,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let Ok(entries) = fs::read_dir(package_root) else {
+        return candidates;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.contains("ffmpeg") {
+            continue;
+        }
+        collect_matching_binary_paths(&path, binary_name, 4, &mut candidates);
+    }
+
+    candidates
+}
+
+fn collect_matching_binary_paths(
+    root: &Path,
+    binary_name: &str,
+    depth_remaining: usize,
+    out: &mut Vec<PathBuf>,
+) {
+    if depth_remaining == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if path
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case(binary_name))
+            {
+                push_unique_path(out, path);
+            }
+        } else if path.is_dir() {
+            collect_matching_binary_paths(&path, binary_name, depth_remaining - 1, out);
+        }
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|candidate| candidate == &path) {
+        paths.push(path);
+    }
+}
+
 fn parse_encoder_names(output: &str, media_kind: char) -> Vec<String> {
     output
         .lines()
@@ -844,6 +1105,119 @@ mod tests {
             runtime.build_summary.as_deref(),
             Some("sidecar runtime 1.0.0")
         );
+    }
+
+    #[test]
+    fn windows_runtime_search_finds_winget_links_without_path() {
+        let temp_dir = tempdir().expect("temp dir");
+        let links_dir = temp_dir.path().join("LocalAppData/Microsoft/WinGet/Links");
+        fs::create_dir_all(&links_dir).expect("links dir");
+        fs::write(links_dir.join("ffmpeg.exe"), b"").expect("ffmpeg link");
+        fs::write(links_dir.join("ffprobe.exe"), b"").expect("ffprobe link");
+
+        let context = RuntimeSearchContext {
+            os: "windows".to_owned(),
+            path_entries: Vec::new(),
+            home_dir: None,
+            local_app_data: Some(temp_dir.path().join("LocalAppData")),
+            program_files: None,
+            program_files_x86: None,
+        };
+
+        let (ffmpeg, ffprobe) = resolve_system_runtime_paths_with_context(&context)
+            .expect("winget links should resolve");
+
+        assert_eq!(ffmpeg, links_dir.join("ffmpeg.exe"));
+        assert_eq!(ffprobe, links_dir.join("ffprobe.exe"));
+    }
+
+    #[test]
+    fn windows_runtime_search_finds_nested_winget_package_bin() {
+        let temp_dir = tempdir().expect("temp dir");
+        let package_bin = temp_dir
+            .path()
+            .join("LocalAppData/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-7.1-full_build/bin");
+        fs::create_dir_all(&package_bin).expect("package bin");
+        fs::write(package_bin.join("ffmpeg.exe"), b"").expect("ffmpeg package binary");
+        fs::write(package_bin.join("ffprobe.exe"), b"").expect("ffprobe package binary");
+
+        let context = RuntimeSearchContext {
+            os: "windows".to_owned(),
+            path_entries: Vec::new(),
+            home_dir: None,
+            local_app_data: Some(temp_dir.path().join("LocalAppData")),
+            program_files: None,
+            program_files_x86: None,
+        };
+
+        let (ffmpeg, ffprobe) = resolve_system_runtime_paths_with_context(&context)
+            .expect("winget package bin should resolve");
+
+        assert_eq!(ffmpeg, package_bin.join("ffmpeg.exe"));
+        assert_eq!(ffprobe, package_bin.join("ffprobe.exe"));
+    }
+
+    #[test]
+    fn macos_runtime_candidates_cover_homebrew_and_usr_local() {
+        let candidates = collect_system_binary_candidates(
+            ffmpeg_binary_name_for_os("macos"),
+            &RuntimeSearchContext {
+                os: "macos".to_owned(),
+                path_entries: Vec::new(),
+                home_dir: Some(PathBuf::from("/Users/tester")),
+                local_app_data: None,
+                program_files: None,
+                program_files_x86: None,
+            },
+        );
+
+        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/opt/local/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/usr/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/Users/tester/.local/bin/ffmpeg")));
+    }
+
+    #[test]
+    fn linux_runtime_candidates_cover_usr_bins() {
+        let candidates = collect_system_binary_candidates(
+            ffmpeg_binary_name_for_os("linux"),
+            &RuntimeSearchContext {
+                os: "linux".to_owned(),
+                path_entries: Vec::new(),
+                home_dir: Some(PathBuf::from("/home/tester")),
+                local_app_data: None,
+                program_files: None,
+                program_files_x86: None,
+            },
+        );
+
+        assert!(candidates.contains(&PathBuf::from("/usr/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/snap/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/home/linuxbrew/.linuxbrew/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/home/tester/.local/bin/ffmpeg")));
+    }
+
+    #[test]
+    fn windows_runtime_candidates_cover_windowsapps_and_scoop() {
+        let candidates = collect_system_binary_candidates(
+            ffmpeg_binary_name_for_os("windows"),
+            &RuntimeSearchContext {
+                os: "windows".to_owned(),
+                path_entries: Vec::new(),
+                home_dir: Some(PathBuf::from("C:/Users/tester")),
+                local_app_data: Some(PathBuf::from("C:/Users/tester/AppData/Local")),
+                program_files: None,
+                program_files_x86: None,
+            },
+        );
+
+        assert!(candidates.contains(&PathBuf::from(
+            "C:/Users/tester/AppData/Local/Microsoft/WindowsApps/ffmpeg.exe"
+        )));
+        assert!(candidates.contains(&PathBuf::from("C:/Users/tester/scoop/shims/ffmpeg.exe")));
     }
 
     #[test]

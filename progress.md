@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
-- 現在の即時マイルストーン: 今回の slot/style/guide 修正を report・manual・commit まで閉じる
+- 現在の即時マイルストーン: FFmpeg runtime 再検出と cross-platform 探索改善を report・manual・commit まで閉じる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -49,6 +49,11 @@
   - `ガイド解除` は overlay だけでなく capture 文脈、modifier 状態、last committed bounds もまとめて捨てるようにした
   - renderer の effect 合成を object 単位の multi-pass へ寄せ、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくい順序へ補正した
   - effect 実装状況も整理し、renderer backend は整ったが、UI/preset loader は引き続き thickness / color 中心であることを明記した
+  - FFmpeg runtime 再検出を `機能情報更新` / `診断を再取得` に接続し、起動後に sidecar や host runtime を配置した場合でもその場で再 discovery できるようにした
+  - runtime 未検出時の最後の discovery error を診断 UI に保持し、原因が見えなくなる問題を減らした
+  - Windows の `WinGet Links` / `WinGet Packages` / `WindowsApps` / Scoop、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を system runtime 探索対象に追加した
+  - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
   - slot/style/guide 修正後も `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
@@ -63,6 +68,7 @@
   - release 用 portable sidecar runtime の同梱 / provenance 整備は未着手
   - GitHub Release workflow が生成する成果物は現時点では app binary archive で、FFmpeg sidecar 同梱はまだ含まれない
   - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
+  - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
   - style preset は base style 適用中心で、entrance / clear / combo の UI binding は今後拡張余地がある
   - headless host では GUI 実表示 smoke を実行できない
 
