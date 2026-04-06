@@ -848,10 +848,10 @@
 - 2026-04-06T17:36:54+09:00
   - 事象: user から「今度は 99% で止まり、`合成動画を書き出し中100%` と表示される」と追加報告が来た。
   - root cause: `progress=end` を即 `100%` ラベルへ変換していたため、ffmpeg プロセスの終了待ちや app 側の working directory cleanup 中にも「100% なのに終わらない」状態に見えていた。さらに `start_export` worker は `Finished` 通知より先に `remove_dir_all` を実行しており、大量の frame cleanup が UI 完了通知を遅らせ得た。
-  - 実施内容: `crates/export/src/lib.rs` の `progress=end` 表示を `最終処理中` へ変更し、実完了は ffmpeg 正常終了後の `書き出し完了` に限定した。`crates/app/src/main.rs` では `send_export_finished_then_cleanup` helper を追加し、`Finished` メッセージ送信を cleanup より先に行い、cleanup は別 thread に逃がした。
+  - 実施内容: `crates/export/src/lib.rs` の `progress=end` 表示を `最終処理中` へ変更し、実完了は ffmpeg 正常終了後の `書き出し完了` に限定した。あわせて stage label を `1/3 フレーム生成`、`2/3 動画/PNG 書き出し`、`3/3 一時ファイル整理` に整理した。`crates/app/src/main.rs` では cleanup 前に `3/3 一時ファイルを整理中` を出すようにし、右ペインと `書き出しキュー` の両方で stage ごとの説明文も表示するようにした。
   - 変更ファイル: `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
-  - テスト: `cargo test -p pauseink-app export_finished_message_is_sent_before_cleanup -- --nocapture`、`cargo test -p pauseink-export ffmpeg_progress_end_clamps_to_stage_end -- --nocapture`、`cargo test -p pauseink-export composite_avi_export_reports_intermediate_progress_if_host_runtime_exists -- --nocapture`、`cargo check -p pauseink-app --all-targets` を実行した。
-  - 結果: すべて exit 0。export 完了通知が一時ファイル cleanup 待ちで遅れないことと、`progress=end` が誤って「100% 完了」に見えないことを固定できた。`Panel::*` 系 deprecation warning は継続。
+  - テスト: `cargo test -p pauseink-export ffmpeg_progress_end_clamps_to_stage_end -- --nocapture`、`cargo test -p pauseink-app export_progress_hint_explains_finalizing_stages -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。`progress=end` が誤って「100% 完了」に見えないことと、cleanup を含む最終段階が UI 上で説明付きで見えることを固定できた。`Panel::*` 系 deprecation warning は継続。
 
 ## 8.11 2026-04-06 stroke 初点欠落の再修正
 

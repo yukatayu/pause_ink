@@ -72,7 +72,7 @@
   - `.docs/11_implementation_plan.md` を再確認し、Phase 14 の残 gap は reveal-head effect、post-action chain、clear/combo preset 専用 UI であることを棚卸しした
   - 動画 export の 92% 固定は ffmpeg 実行中の progress 未更新が原因だったため、`-progress pipe:1` を使って encode 中も進捗が進むように修正した
   - hardware fallback で encode 経路が切り替わっても progress bar が逆走しないよう、pending progress は単調増加で保持するようにした
-  - `progress=end` は即「完了」扱いにせず「最終処理中」表示へ切り替え、export worker の `Finished` は一時 PNG cleanup より先に送るようにして、99% / 100% 表示のまま後片付け待ちに見える状態を解消した
+  - `progress=end` は即「完了」扱いにせず「最終処理中」表示へ切り替え、`3/3 一時ファイルを整理中` と説明文を出すようにして、99% / 100% 表示のまま何待ちか分からない状態を解消した
   - `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を再通過
   - guide の次文字縦線は、直前文字の幅で再スケールせず、位置だけ直前文字の右端へ送るように修正した
   - `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` を consume した release では guide の次文字送りが発火しないよう、modifier tap 抑止を追加した
