@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、append 時の object style 同期、guide 解除時の stale state reset、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo build -p pauseink-app`
@@ -720,6 +720,31 @@
   - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
   - 結果: exit 0。`pauseink-app` 13 + 8、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
 
+## 8.8 2026-04-06 slot/style/guide 修正メモ
+
+- 開始時点の即時マイルストーン:
+  - `前スロット` を追加して template slot の前後移動を明示する
+  - `基本スタイル` が template / guide の継続描画でも反映されるようにする
+  - `ガイド解除` 後に残る stale state を捨て、次回 guide capture の位置ずれを避ける
+  - effect 実装状況と未実装範囲を整理する
+- 根本原因の整理:
+  - template / guide の継続描画は既存 object へ stroke を append するが、renderer は object 配下の stroke を `object.style` で描くため、`active_style` だけ変えても見た目が更新されない
+  - `ガイド解除` ボタンは `guide_state` / `guide_geometry` しか消しておらず、`last_committed_object_bounds`、modifier state、guide capture context が残っていた
+  - effect は renderer/domain には outline / drop shadow / glow primitive があるが、preset loader と inspector UI は thickness / color 中心で、cross-stroke ordering を保証する compositor にはなっていない
+- 今回の実装方針:
+  - 既存 object へ append する batch に `SetGlyphObjectStyleCommand` を入れて object style を最新の active style へ同期する
+  - `ガイド解除` は guide overlay だけでなく capture context、modifier flag、last bounds もまとめて reset する
+  - slot 移動は `step_template_slot_index` helper へ寄せて underflow / overflow を防ぐ
+  - effect は今回 renderer を広げず、現状の実装範囲と今後必要な ordering rule を記録する
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `前スロット` UI、`SetGlyphObjectStyleCommand`、guide clear reset helper、関連 unit test を追加した。
+  - 変更ファイル: `crates/domain/src/project_commands.rs`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: template / guide 継続描画で style 変更が見た目へ反映される構成になり、guide clear 後の stale state も明示的に捨てるようになった。
+  - 次の一手: workspace 全体回帰、manual / progress 同期、commit / push を行う。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-domain` 16、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。
@@ -762,6 +787,7 @@
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。
+- renderer は outline / drop shadow / glow の primitive を持つが、preset loader と inspector UI はまだ thickness / color 中心で、cross-stroke effect ordering を制御する multi-pass compositor は未実装。
 - Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。

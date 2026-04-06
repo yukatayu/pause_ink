@@ -1,6 +1,6 @@
 use crate::{
     AnnotationProject, ClearEvent, ClearEventId, Command, CommandError, GlyphObject, GlyphObjectId,
-    Group, GroupId, Stroke, StrokeId,
+    Group, GroupId, Stroke, StrokeId, StyleSnapshot,
 };
 
 pub struct InsertStrokeCommand {
@@ -184,6 +184,38 @@ impl Command<AnnotationProject> for AppendStrokeToGlyphObjectCommand {
             )));
         };
         object.stroke_ids.remove(index);
+        Ok(())
+    }
+}
+
+pub struct SetGlyphObjectStyleCommand {
+    pub object_id: GlyphObjectId,
+    pub from: StyleSnapshot,
+    pub to: StyleSnapshot,
+}
+
+impl Command<AnnotationProject> for SetGlyphObjectStyleCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.style != self.from {
+            return Err(CommandError::new(format!(
+                "unexpected current style for {} during apply",
+                self.object_id.0
+            )));
+        }
+        object.style = self.to.clone();
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.style != self.to {
+            return Err(CommandError::new(format!(
+                "unexpected current style for {} during undo",
+                self.object_id.0
+            )));
+        }
+        object.style = self.from.clone();
         Ok(())
     }
 }

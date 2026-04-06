@@ -153,32 +153,40 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
     let mut referenced_strokes = HashSet::new();
 
     for object in objects {
-        for stroke_id in &object.stroke_ids {
-            referenced_strokes.insert(stroke_id.0.clone());
+        for layer in [
+            StrokeRenderLayer::DropShadow,
+            StrokeRenderLayer::Glow,
+            StrokeRenderLayer::Outline,
+            StrokeRenderLayer::Base,
+        ] {
+            for stroke_id in &object.stroke_ids {
+                referenced_strokes.insert(stroke_id.0.clone());
 
-            let Some(stroke) = request
-                .project
-                .strokes
-                .iter()
-                .find(|candidate| candidate.id == *stroke_id)
-            else {
-                continue;
-            };
+                let Some(stroke) = request
+                    .project
+                    .strokes
+                    .iter()
+                    .find(|candidate| candidate.id == *stroke_id)
+                else {
+                    continue;
+                };
 
-            let visibility =
-                evaluate_visibility(request.project, Some(object), stroke, request.time);
-            if !visibility.is_visible() {
-                continue;
+                let visibility =
+                    evaluate_visibility(request.project, Some(object), stroke, request.time);
+                if !visibility.is_visible() {
+                    continue;
+                }
+
+                render_stroke_layer(
+                    &mut pixmap,
+                    stroke,
+                    &object.style,
+                    &object.transform,
+                    visibility,
+                    render_scale,
+                    layer,
+                );
             }
-
-            render_stroke(
-                &mut pixmap,
-                stroke,
-                &object.style,
-                &object.transform,
-                visibility,
-                render_scale,
-            );
         }
     }
 
@@ -193,14 +201,22 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
             continue;
         }
 
-        render_stroke(
-            &mut pixmap,
-            stroke,
-            &stroke.style,
-            &GeometryTransform::default(),
-            visibility,
-            render_scale,
-        );
+        for layer in [
+            StrokeRenderLayer::DropShadow,
+            StrokeRenderLayer::Glow,
+            StrokeRenderLayer::Outline,
+            StrokeRenderLayer::Base,
+        ] {
+            render_stroke_layer(
+                &mut pixmap,
+                stroke,
+                &stroke.style,
+                &GeometryTransform::default(),
+                visibility,
+                render_scale,
+                layer,
+            );
+        }
     }
 
     Ok(RenderedOverlay {
@@ -337,13 +353,22 @@ fn media_duration_seconds(ticks: i64, time_base: TimeBase) -> f64 {
     ticks as f64 * time_base.numerator as f64 / time_base.denominator as f64
 }
 
-fn render_stroke(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrokeRenderLayer {
+    DropShadow,
+    Glow,
+    Outline,
+    Base,
+}
+
+fn render_stroke_layer(
     pixmap: &mut Pixmap,
     stroke: &Stroke,
     style: &StyleSnapshot,
     transform: &GeometryTransform,
     visibility: VisibilityState,
     render_scale: RenderScale,
+    layer: StrokeRenderLayer,
 ) {
     let points = transformed_visible_points(stroke, transform, visibility.path_fraction)
         .into_iter()
@@ -360,54 +385,62 @@ fn render_stroke(
         return;
     };
 
-    if style.drop_shadow.enabled {
-        let mut shadow_points = points.clone();
-        for point in &mut shadow_points {
-            point.x += style.drop_shadow.offset_x * render_scale.x;
-            point.y += style.drop_shadow.offset_y * render_scale.y;
+    match layer {
+        StrokeRenderLayer::DropShadow => {
+            if style.drop_shadow.enabled {
+                let mut shadow_points = points.clone();
+                for point in &mut shadow_points {
+                    point.x += style.drop_shadow.offset_x * render_scale.x;
+                    point.y += style.drop_shadow.offset_y * render_scale.y;
+                }
+                if let Some(shadow_path) = build_polyline_path(&shadow_points) {
+                    draw_stroked_path(
+                        pixmap,
+                        &shadow_path,
+                        (style.thickness + style.drop_shadow.blur_radius.max(0.0))
+                            * render_scale.stroke,
+                        style.drop_shadow.color,
+                        style.opacity * 0.45 * visibility.alpha,
+                        style.blend_mode,
+                    );
+                }
+            }
         }
-        if let Some(shadow_path) = build_polyline_path(&shadow_points) {
+        StrokeRenderLayer::Glow => {
+            if style.glow.enabled {
+                draw_stroked_path(
+                    pixmap,
+                    &path,
+                    (style.thickness + style.glow.blur_radius.max(0.0) * 1.8) * render_scale.stroke,
+                    style.glow.color,
+                    style.opacity * 0.35 * visibility.alpha,
+                    BlendMode::Screen,
+                );
+            }
+        }
+        StrokeRenderLayer::Outline => {
+            if style.outline.enabled && style.outline.width > 0.0 {
+                draw_stroked_path(
+                    pixmap,
+                    &path,
+                    (style.thickness + style.outline.width * 2.0) * render_scale.stroke,
+                    style.outline.color,
+                    style.opacity * visibility.alpha,
+                    style.blend_mode,
+                );
+            }
+        }
+        StrokeRenderLayer::Base => {
             draw_stroked_path(
                 pixmap,
-                &shadow_path,
-                (style.thickness + style.drop_shadow.blur_radius.max(0.0)) * render_scale.stroke,
-                style.drop_shadow.color,
-                style.opacity * 0.45 * visibility.alpha,
+                &path,
+                (style.thickness * render_scale.stroke).max(1.0),
+                style.color,
+                style.opacity * visibility.alpha,
                 style.blend_mode,
             );
         }
     }
-
-    if style.glow.enabled {
-        draw_stroked_path(
-            pixmap,
-            &path,
-            (style.thickness + style.glow.blur_radius.max(0.0) * 1.8) * render_scale.stroke,
-            style.glow.color,
-            style.opacity * 0.35 * visibility.alpha,
-            BlendMode::Screen,
-        );
-    }
-
-    if style.outline.enabled && style.outline.width > 0.0 {
-        draw_stroked_path(
-            pixmap,
-            &path,
-            (style.thickness + style.outline.width * 2.0) * render_scale.stroke,
-            style.outline.color,
-            style.opacity * visibility.alpha,
-            style.blend_mode,
-        );
-    }
-
-    draw_stroked_path(
-        pixmap,
-        &path,
-        (style.thickness * render_scale.stroke).max(1.0),
-        style.color,
-        style.opacity * visibility.alpha,
-        style.blend_mode,
-    );
 }
 
 fn transformed_visible_points(

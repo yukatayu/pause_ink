@@ -7,8 +7,8 @@ use pauseink_domain::{
     AnnotationProject, AppendStrokeToGlyphObjectCommand, ClearEvent, ClearEventId, ClearKind,
     ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath,
     GlyphObject, GlyphObjectId, InsertClearEventCommand, InsertGlyphObjectCommand,
-    InsertStrokeCommand, MediaTime, OrderingMetadata, Point2, Stroke, StrokeId, StrokeSample,
-    StyleSnapshot, DEFAULT_HISTORY_DEPTH,
+    InsertStrokeCommand, MediaTime, OrderingMetadata, Point2, SetGlyphObjectStyleCommand, Stroke,
+    StrokeId, StrokeSample, StyleSnapshot, DEFAULT_HISTORY_DEPTH,
 };
 use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
@@ -282,6 +282,29 @@ impl AppSession {
         })
     }
 
+    pub fn overwrite_glyph_object_style(
+        &mut self,
+        object_id: &GlyphObjectId,
+        style: StyleSnapshot,
+    ) -> bool {
+        let Some(object) = self
+            .project
+            .glyph_objects
+            .iter_mut()
+            .find(|object| object.id == *object_id)
+        else {
+            return false;
+        };
+
+        if object.style == style {
+            return false;
+        }
+
+        object.style = style;
+        self.dirty = true;
+        true
+    }
+
     pub fn commit_stroke(&mut self, shift_group: bool) -> AnyhowResult<Option<GlyphObjectId>> {
         let target_object_id = if shift_group {
             self.last_created_object_id.clone()
@@ -325,6 +348,13 @@ impl AppSession {
         };
 
         let selected_object_id = if let Some(object_id) = target_object_id {
+            let previous_style = self
+                .project
+                .glyph_objects
+                .iter()
+                .find(|object| object.id == object_id)
+                .map(|object| object.style.clone())
+                .ok_or_else(|| anyhow::anyhow!("target glyph object not found: {}", object_id.0))?;
             self.history.apply(
                 &mut self.project,
                 Box::new(CommandBatch::new(vec![
@@ -335,6 +365,11 @@ impl AppSession {
                     Box::new(AppendStrokeToGlyphObjectCommand {
                         object_id: object_id.clone(),
                         stroke_id: stroke_id.clone(),
+                    }),
+                    Box::new(SetGlyphObjectStyleCommand {
+                        object_id: object_id.clone(),
+                        from: previous_style,
+                        to: self.active_style.clone(),
                     }),
                 ])),
             )?;
@@ -803,6 +838,7 @@ fn corner_guard(previous: Point2, current: Point2, next: Point2) -> f32 {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use pauseink_domain::RgbaColor;
     use pauseink_media::{
         MediaProbe, MediaProvider, MediaRuntime, MediaSupport, PreviewFrame, RuntimeCapabilities,
     };
@@ -963,6 +999,32 @@ mod tests {
         assert_eq!(grouped_object, first_object);
         assert_eq!(session.project.glyph_objects.len(), 1);
         assert_eq!(session.project.glyph_objects[0].stroke_ids.len(), 2);
+    }
+
+    #[test]
+    fn appending_into_existing_object_updates_object_style_to_latest_active_style() {
+        let mut session = AppSession::default();
+
+        session.begin_stroke(Point2 { x: 0.0, y: 0.0 }, MediaTime::from_millis(0));
+        session.append_stroke_point(Point2 { x: 20.0, y: 20.0 }, MediaTime::from_millis(10));
+        let object_id = session
+            .commit_stroke(false)
+            .expect("first stroke should commit")
+            .expect("first object should exist");
+
+        session.active_style.color = RgbaColor::new(255, 64, 32, 255);
+        session.active_style.thickness = 12.0;
+
+        session.begin_stroke(Point2 { x: 30.0, y: 10.0 }, MediaTime::from_millis(20));
+        session.append_stroke_point(Point2 { x: 48.0, y: 12.0 }, MediaTime::from_millis(30));
+        session
+            .commit_stroke_into_object(Some(object_id))
+            .expect("second stroke should append");
+
+        let object = &session.project.glyph_objects[0];
+        assert_eq!(object.stroke_ids.len(), 2);
+        assert_eq!(object.style.color, RgbaColor::new(255, 64, 32, 255));
+        assert_eq!(object.style.thickness, 12.0);
     }
 
     #[test]

@@ -695,6 +695,53 @@ impl DesktopApp {
         self.push_log("ガイド縦線を次文字位置へ進めました。");
     }
 
+    fn clear_guide_state(&mut self) {
+        self.guide_state = None;
+        self.guide_geometry = None;
+        self.last_committed_object_bounds = None;
+        self.guide_capture_state.cancel();
+        self.guide_capture_armed = false;
+        self.guide_modifier_was_down = false;
+        self.guide_modifier_used_for_stroke = false;
+        self.push_log("ガイドを解除しました。");
+    }
+
+    fn move_template_slot(&mut self, delta: isize) {
+        let slot_len = self.template.placed_slots.as_ref().map_or(0, Vec::len);
+        self.template.current_slot_index =
+            step_template_slot_index(self.template.current_slot_index, slot_len, delta);
+    }
+
+    fn current_style_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
+        if self.template.placed_slots.is_some() {
+            return self
+                .template
+                .slot_object_ids
+                .get(self.template.current_slot_index)
+                .cloned()
+                .flatten();
+        }
+
+        if self.guide_capture_state.in_progress {
+            return self.guide_capture_state.current_target_object_id();
+        }
+
+        self.session.selected_object_id.clone()
+    }
+
+    fn sync_active_style_to_current_object(&mut self) {
+        let Some(object_id) = self.current_style_target_object_id() else {
+            return;
+        };
+
+        if self
+            .session
+            .overwrite_glyph_object_style(&object_id, self.session.active_style.clone())
+        {
+            self.overlay_key = None;
+        }
+    }
+
     fn handle_guide_modifier_tap(&mut self, ctx: &egui::Context) {
         let modifier_active = self.guide_modifier_active(ctx);
         if modifier_active && !self.guide_modifier_was_down {
@@ -777,6 +824,7 @@ impl DesktopApp {
                 pauseink_domain::RgbaColor::new(color[0], color[1], color[2], color[3]);
             self.session.active_style.opacity = 1.0;
         }
+        self.sync_active_style_to_current_object();
         self.push_log(format!("style preset 適用: {}", preset.display_name));
     }
 
@@ -1019,10 +1067,7 @@ impl DesktopApp {
                 session.active_style.stabilization_strength =
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
-                self.guide_capture_state.cancel();
-                self.guide_state = None;
-                self.guide_geometry = None;
-                self.last_committed_object_bounds = None;
+                self.clear_guide_state();
                 self.template.placed_slots = None;
                 self.template.slot_object_ids.clear();
                 self.template.current_slot_index = 0;
@@ -2283,12 +2328,11 @@ impl eframe::App for DesktopApp {
                         self.template.placed_slots = None;
                         self.template.slot_object_ids.clear();
                     }
+                    if ui.button("前スロット").clicked() {
+                        self.move_template_slot(-1);
+                    }
                     if ui.button("次スロット").clicked() {
-                        if let Some(slots) = &self.template.placed_slots {
-                            if self.template.current_slot_index + 1 < slots.len() {
-                                self.template.current_slot_index += 1;
-                            }
-                        }
+                        self.move_template_slot(1);
                     }
                     if ui.button("テンプレート解除").clicked() {
                         self.template.placement_armed = false;
@@ -2378,15 +2422,26 @@ impl eframe::App for DesktopApp {
                 if ui.color_edit_button_srgba(&mut color).changed() {
                     self.session.active_style.color =
                         pauseink_domain::RgbaColor::new(color.r(), color.g(), color.b(), color.a());
+                    self.sync_active_style_to_current_object();
                 }
-                ui.add(
-                    egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
-                        .text("太さ"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
-                        .text("不透明度"),
-                );
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
+                            .text("太さ"),
+                    )
+                    .changed()
+                {
+                    self.sync_active_style_to_current_object();
+                }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
+                            .text("不透明度"),
+                    )
+                    .changed()
+                {
+                    self.sync_active_style_to_current_object();
+                }
                 ui.add(
                     egui::Slider::new(
                         &mut self.session.active_style.stabilization_strength,
@@ -2406,8 +2461,7 @@ impl eframe::App for DesktopApp {
                     self.refresh_guide_geometry();
                 }
                 if ui.button("ガイド解除").clicked() {
-                    self.guide_state = None;
-                    self.guide_geometry = None;
+                    self.clear_guide_state();
                 }
                 ui.separator();
                 self.draw_export_panel(ui);
@@ -2727,9 +2781,25 @@ fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
     Color32::from_rgba_unmultiplied(style.color.r, style.color.g, style.color.b, alpha)
 }
 
+fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> usize {
+    if slot_len == 0 {
+        return 0;
+    }
+
+    if delta.is_negative() {
+        current.saturating_sub(delta.unsigned_abs())
+    } else {
+        current
+            .saturating_add(delta as usize)
+            .min(slot_len.saturating_sub(1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pauseink_portable_fs::{PortablePaths, Settings};
+    use tempfile::tempdir;
 
     #[test]
     fn preview_pointer_roundtrips_through_frame_space_mapping() {
@@ -2853,5 +2923,51 @@ mod tests {
         assert_eq!(state.current_target_object_id(), Some(object_id.clone()));
         assert_eq!(state.take_if_pending_after_commit(), Some(object_id));
         assert!(!state.in_progress);
+    }
+
+    #[test]
+    fn template_slot_stepper_supports_previous_and_next_without_overflow() {
+        assert_eq!(step_template_slot_index(0, 0, -1), 0);
+        assert_eq!(step_template_slot_index(0, 3, -1), 0);
+        assert_eq!(step_template_slot_index(1, 3, -1), 0);
+        assert_eq!(step_template_slot_index(1, 3, 1), 2);
+        assert_eq!(step_template_slot_index(2, 3, 1), 2);
+    }
+
+    #[test]
+    fn clearing_guide_state_drops_overlay_and_stale_capture_context() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None);
+
+        app.guide_state = Some(GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.guide_geometry = app
+            .guide_state
+            .map(|guide_state| guide_state.build_geometry(0.0));
+        app.last_committed_object_bounds = Some((
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.guide_capture_armed = true;
+        app.guide_modifier_was_down = true;
+        app.guide_modifier_used_for_stroke = true;
+        app.guide_capture_state.start();
+        app.guide_capture_state
+            .record_committed_object(pauseink_domain::GlyphObjectId::new("object-1"));
+
+        app.clear_guide_state();
+
+        assert!(app.guide_state.is_none());
+        assert!(app.guide_geometry.is_none());
+        assert!(app.last_committed_object_bounds.is_none());
+        assert!(!app.guide_capture_armed);
+        assert!(!app.guide_modifier_was_down);
+        assert!(!app.guide_modifier_used_for_stroke);
+        assert!(app.guide_capture_state.current_target_object_id().is_none());
+        assert!(!app.guide_capture_state.in_progress);
     }
 }

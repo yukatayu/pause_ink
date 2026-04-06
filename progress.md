@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize の polish に加え、描画中ストロークのライブプレビューまで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
-- 現在の即時マイルストーン: 今回の live stroke preview 修正を report・manual・commit まで閉じる
+- 現在の即時マイルストーン: 今回の slot/style/guide 修正を report・manual・commit まで閉じる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -44,8 +44,13 @@
   - Ctrl guide capture は modifier 押下中の複数 stroke を同一 reference glyph に寄せ、modifier release で確定する挙動へ更新した
   - 描画中の stroke を `AppSession` の draft から stabilized preview として取り出し、committed overlay の上に live 表示するよう更新した
   - live preview sanity review sub-agent でも、draft は editor-only overlay として app painter で描くのが最小で安全という結論を確認した
+  - `前スロット` を追加し、template slot の前後移動を underflow / overflow しない helper へ寄せた
+  - 既存 object へ stroke を append する際、object style も最新の active style へ同期するよう修正し、基本スタイル変更が template / guide の継続描画で反映されるようにした
+  - `ガイド解除` は overlay だけでなく capture 文脈、modifier 状態、last committed bounds もまとめて捨てるようにした
+  - effect 実装状況も確認し、renderer には outline / drop shadow / glow があるが、UI/preset loader と cross-stroke ordering は未完であることを整理した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
+  - slot/style/guide 修正後も `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
   - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
   - `cargo test --workspace` を通過
   - `cargo check -p pauseink-app --all-targets` を通過
@@ -86,6 +91,6 @@
 
 ## 次の具体的な一手
 
-1. display server がある Linux または実機 Windows で、template 字詰め・font dropdown・transport bar・guide 進行・live stroke preview を目視確認する。
+1. display server がある Linux または実機 Windows で、template 字詰め・font dropdown・transport bar・guide 進行・live stroke preview・前後 slot 移動を目視確認する。
 2. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行する。
 3. release 用 portable sidecar runtime の bundling / provenance / notices を詰める。

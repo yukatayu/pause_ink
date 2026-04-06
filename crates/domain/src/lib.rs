@@ -476,6 +476,46 @@ mod tests {
     }
 
     #[test]
+    fn glyph_object_style_command_roundtrips_through_history() {
+        let mut project = AnnotationProject {
+            glyph_objects: vec![GlyphObject {
+                id: GlyphObjectId::new("object-1"),
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 255, 255, 255),
+                    thickness: 6.0,
+                    ..StyleSnapshot::default()
+                },
+                ..GlyphObject::default()
+            }],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+        let original = project.glyph_objects[0].style.clone();
+        let updated = StyleSnapshot {
+            color: RgbaColor::new(255, 64, 32, 255),
+            thickness: 12.0,
+            ..StyleSnapshot::default()
+        };
+
+        history
+            .apply(
+                &mut project,
+                Box::new(SetGlyphObjectStyleCommand {
+                    object_id: GlyphObjectId::new("object-1"),
+                    from: original.clone(),
+                    to: updated.clone(),
+                }),
+            )
+            .expect("style update should apply");
+
+        assert_eq!(project.glyph_objects[0].style, updated);
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.glyph_objects[0].style, original);
+        assert!(history.redo(&mut project).expect("redo should succeed"));
+        assert_eq!(project.glyph_objects[0].style, updated);
+    }
+
+    #[test]
     fn append_stroke_command_groups_multiple_strokes_under_one_object() {
         let mut project = AnnotationProject {
             strokes: vec![Stroke {
