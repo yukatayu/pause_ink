@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -133,7 +133,7 @@ jobs:
           for target in release_targets:
               for os_name, platform, binary_path, archive_format in [
                   ("ubuntu-24.04", "linux-x86_64", "target/release/pauseink-app", "tar.gz"),
-                  ("macos-13", "macos-x86_64", "target/release/pauseink-app", "tar.gz"),
+                  ("macos-15-intel", "macos-x86_64", "target/release/pauseink-app", "tar.gz"),
                   ("windows-latest", "windows-x86_64", "target/release/pauseink-app.exe", "zip"),
               ]:
                   build_matrix["include"].append(
@@ -180,7 +180,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ matrix.tag }}
@@ -230,7 +230,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ matrix.tag }}
@@ -257,7 +257,7 @@ jobs:
             libxrandr-dev
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
@@ -274,7 +274,7 @@ jobs:
         run: python scripts/package_release_asset.py --binary "${{ matrix.binary_path }}" --platform "${{ matrix.platform }}" --version "${{ matrix.tag }}" --format "${{ matrix.archive_format }}" --output-dir dist
 
       - name: Upload packaged artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.tag_slug }}-${{ matrix.platform }}
           path: dist/*
@@ -293,7 +293,7 @@ jobs:
 
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: release-${{ matrix.tag_slug }}-*
           merge-multiple: true
