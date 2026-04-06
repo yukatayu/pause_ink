@@ -4,7 +4,7 @@
 プロジェクト拡張子: **`.pauseink`**
 
 この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
-現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD まで接続されています。
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD、outline 起点の複数選択 / group / z-order foundation まで接続されています。
 
 ## PauseInk とは
 
@@ -43,6 +43,7 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - built-in + user entrance preset の overlay 読み込み、追加保存、上書き保存、削除
 - outline / drop shadow / glow / blend mode の inspector 編集
 - entrance kind / scope / order / duration mode / duration / speed scalar の inspector 編集
+- 下部 `オブジェクト一覧` からの複数選択、group / ungroup、`背面へ` / `一つ後ろ` / `一つ前` / `前面へ`
 - `.pauseink` / `settings.json5` への resolved base style snapshot、resolved entrance snapshot、選択 preset ID、field-level binding state、template text/font/layout、guide 傾きの保存と復元
 
 ## まだ mainline packaging に含めていないもの

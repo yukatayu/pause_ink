@@ -1,15 +1,17 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result as AnyhowResult;
 use pauseink_domain::{
-    AnnotationProject, AppendStrokeToGlyphObjectCommand, ClearEvent, ClearEventId, ClearKind,
-    ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath,
-    EntranceBehavior, GlyphObject, GlyphObjectId, InsertClearEventCommand,
-    InsertGlyphObjectCommand, InsertStrokeCommand, MediaTime, OrderingMetadata, Point2,
-    SetGlyphObjectEntranceCommand, SetGlyphObjectStyleCommand, Stroke, StrokeId, StrokeSample,
-    StyleSnapshot, DEFAULT_HISTORY_DEPTH,
+    AnnotationProject, AppendStrokeToGlyphObjectCommand, BatchSetGlyphObjectEntranceCommand,
+    BatchSetGlyphObjectStyleCommand, ClearEvent, ClearEventId, ClearKind, ClearOrdering,
+    ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath, EntranceBehavior,
+    GlyphObject, GlyphObjectEntranceChange, GlyphObjectId, GlyphObjectStyleChange,
+    GlyphObjectZIndexChange, Group, GroupId, InsertClearEventCommand, InsertGlyphObjectCommand,
+    InsertGroupCommand, InsertStrokeCommand, MediaTime, NormalizeZOrderCommand, OrderingMetadata,
+    Point2, RemoveGroupCommand, SetGlyphObjectEntranceCommand, SetGlyphObjectStyleCommand, Stroke,
+    StrokeId, StrokeSample, StyleSnapshot, DEFAULT_HISTORY_DEPTH,
 };
 use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
@@ -73,6 +75,20 @@ struct StrokeDraft {
     samples: Vec<StrokeSample>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SelectionState {
+    pub selected_object_ids: Vec<GlyphObjectId>,
+    pub selected_group_ids: Vec<GroupId>,
+    pub focused_object_id: Option<GlyphObjectId>,
+    pub focused_group_id: Option<GroupId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct GroupSelectionContext {
+    group_ids: Vec<GroupId>,
+    object_ids: Vec<GlyphObjectId>,
+}
+
 pub struct AppSession {
     pub document: PauseInkDocument,
     pub project: AnnotationProject,
@@ -83,12 +99,13 @@ pub struct AppSession {
     pub active_entrance: EntranceBehavior,
     pub guide: GuideState,
     pub template: TemplateState,
-    pub selected_object_id: Option<GlyphObjectId>,
+    pub selection: SelectionState,
     pub document_path: Option<PathBuf>,
     pub dirty: bool,
     history: CommandHistory<AnnotationProject>,
     stroke_draft: Option<StrokeDraft>,
     last_created_object_id: Option<GlyphObjectId>,
+    last_group_selection_context: Option<GroupSelectionContext>,
     next_id_counter: u64,
     next_capture_order: u64,
 }
@@ -113,12 +130,13 @@ impl AppSession {
             active_entrance,
             guide: GuideState::default(),
             template: TemplateState::default(),
-            selected_object_id: None,
+            selection: SelectionState::default(),
             document_path: None,
             dirty: false,
             history: CommandHistory::with_limit(history_limit),
             stroke_draft: None,
             last_created_object_id: None,
+            last_group_selection_context: None,
             next_id_counter: 1,
             next_capture_order: 1,
             document,
@@ -142,12 +160,13 @@ impl AppSession {
             active_entrance,
             guide: GuideState::default(),
             template: TemplateState::default(),
-            selected_object_id: None,
+            selection: SelectionState::default(),
             document_path: None,
             dirty: false,
             history: CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH),
             stroke_draft: None,
             last_created_object_id: None,
+            last_group_selection_context: None,
             next_id_counter,
             next_capture_order,
         })
@@ -314,50 +333,284 @@ impl AppSession {
         })
     }
 
+    pub fn selected_object_ids(&self) -> Vec<GlyphObjectId> {
+        self.selection.selected_object_ids.clone()
+    }
+
+    pub fn selected_group_ids(&self) -> Vec<GroupId> {
+        self.selection.selected_group_ids.clone()
+    }
+
+    pub fn focused_object_id(&self) -> Option<GlyphObjectId> {
+        self.selection.focused_object_id.clone()
+    }
+
+    pub fn is_object_selected(&self, object_id: &GlyphObjectId) -> bool {
+        self.selection.selected_object_ids.contains(object_id)
+    }
+
+    pub fn is_group_selected(&self, group_id: &GroupId) -> bool {
+        self.selection.selected_group_ids.contains(group_id)
+    }
+
+    pub fn replace_object_selection(&mut self, object_ids: Vec<GlyphObjectId>) {
+        self.selection.selected_object_ids = dedupe_object_ids(
+            object_ids
+                .into_iter()
+                .filter(|object_id| self.project.glyph_object_index(object_id).is_some()),
+        );
+        self.selection.selected_group_ids.clear();
+        self.selection.focused_group_id = None;
+        self.selection.focused_object_id = self.selection.selected_object_ids.last().cloned();
+    }
+
+    pub fn replace_group_selection(&mut self, group_ids: Vec<GroupId>) {
+        self.selection.selected_group_ids = dedupe_group_ids(
+            group_ids
+                .into_iter()
+                .filter(|group_id| self.project.group_index(group_id).is_some()),
+        );
+        self.selection.selected_object_ids.clear();
+        self.selection.focused_group_id = self.selection.selected_group_ids.last().cloned();
+        self.selection.focused_object_id = self
+            .selection
+            .focused_group_id
+            .as_ref()
+            .and_then(|group_id| self.group_member_object_ids(group_id).into_iter().next());
+    }
+
+    pub fn toggle_object_selection(&mut self, object_id: GlyphObjectId) {
+        if self.project.glyph_object_index(&object_id).is_none() {
+            return;
+        }
+        toggle_vec_membership(&mut self.selection.selected_object_ids, object_id.clone());
+        self.selection.selected_group_ids.clear();
+        self.selection.focused_group_id = None;
+        self.selection.focused_object_id = if self.selection.selected_object_ids.is_empty() {
+            None
+        } else {
+            Some(object_id)
+        };
+    }
+
+    pub fn toggle_group_selection(&mut self, group_id: GroupId) {
+        if self.project.group_index(&group_id).is_none() {
+            return;
+        }
+        toggle_vec_membership(&mut self.selection.selected_group_ids, group_id.clone());
+        self.selection.selected_object_ids.clear();
+        self.selection.focused_group_id = if self.selection.selected_group_ids.is_empty() {
+            None
+        } else {
+            Some(group_id.clone())
+        };
+        self.selection.focused_object_id = if self.selection.selected_group_ids.is_empty() {
+            None
+        } else {
+            self.group_member_object_ids(&group_id).into_iter().next()
+        };
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = SelectionState::default();
+    }
+
+    pub fn apply_active_style_to_selection(&mut self) -> AnyhowResult<bool> {
+        self.apply_style_to_object_ids(
+            &self.selected_target_object_ids(),
+            self.active_style.clone(),
+        )
+    }
+
+    pub fn apply_active_entrance_to_selection(&mut self) -> AnyhowResult<bool> {
+        self.apply_entrance_to_object_ids(
+            &self.selected_target_object_ids(),
+            self.active_entrance.clone(),
+        )
+    }
+
     pub fn overwrite_glyph_object_style(
         &mut self,
         object_id: &GlyphObjectId,
         style: StyleSnapshot,
-    ) -> bool {
-        let Some(object) = self
-            .project
-            .glyph_objects
-            .iter_mut()
-            .find(|object| object.id == *object_id)
-        else {
-            return false;
-        };
-
-        if object.style == style {
-            return false;
-        }
-
-        object.style = style;
-        self.dirty = true;
-        true
+    ) -> AnyhowResult<bool> {
+        self.apply_style_to_object_ids(std::slice::from_ref(object_id), style)
     }
 
     pub fn overwrite_glyph_object_entrance(
         &mut self,
         object_id: &GlyphObjectId,
         entrance: EntranceBehavior,
-    ) -> bool {
-        let Some(object) = self
-            .project
-            .glyph_objects
-            .iter_mut()
-            .find(|object| object.id == *object_id)
-        else {
-            return false;
-        };
+    ) -> AnyhowResult<bool> {
+        self.apply_entrance_to_object_ids(std::slice::from_ref(object_id), entrance)
+    }
 
-        if object.entrance == entrance {
-            return false;
+    pub fn group_selected_objects(&mut self) -> AnyhowResult<Option<GroupId>> {
+        let object_ids = self.selected_object_ids();
+        if object_ids.len() < 2 {
+            return Ok(None);
+        }
+        if object_ids
+            .iter()
+            .any(|object_id| self.group_for_object_id(object_id).is_some())
+        {
+            anyhow::bail!("既に group へ所属している object は v1.0 では group 化できません。");
         }
 
-        object.entrance = entrance;
+        let created_at = object_ids
+            .iter()
+            .filter_map(|object_id| {
+                self.project
+                    .glyph_objects
+                    .iter()
+                    .find(|object| object.id == *object_id)
+                    .map(|object| object.created_at)
+            })
+            .min()
+            .unwrap_or_else(|| self.current_time());
+        let group = Group {
+            id: GroupId::new(self.allocate_id("group")),
+            glyph_object_ids: object_ids.clone(),
+            created_at,
+            ..Group::default()
+        };
+        let group_id = group.id.clone();
+        self.history.apply(
+            &mut self.project,
+            Box::new(InsertGroupCommand { group, index: None }),
+        )?;
+        self.last_group_selection_context = Some(GroupSelectionContext {
+            group_ids: vec![group_id.clone()],
+            object_ids: object_ids.clone(),
+        });
+        self.replace_group_selection(vec![group_id.clone()]);
         self.dirty = true;
-        true
+        Ok(Some(group_id))
+    }
+
+    pub fn ungroup_selected_groups(&mut self) -> AnyhowResult<bool> {
+        let groups = self
+            .project
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| self.selection.selected_group_ids.contains(&group.id))
+            .map(|(index, group)| (index, group.clone()))
+            .collect::<Vec<_>>();
+        if groups.is_empty() {
+            return Ok(false);
+        }
+
+        let object_ids = dedupe_object_ids(
+            groups
+                .iter()
+                .flat_map(|(_, group)| group.glyph_object_ids.clone()),
+        );
+        let group_ids = groups
+            .iter()
+            .map(|(_, group)| group.id.clone())
+            .collect::<Vec<_>>();
+        let commands = groups
+            .iter()
+            .map(|(index, group)| {
+                Box::new(RemoveGroupCommand {
+                    group: group.clone(),
+                    index: *index,
+                }) as Box<dyn pauseink_domain::Command<AnnotationProject>>
+            })
+            .collect();
+        self.history
+            .apply(&mut self.project, Box::new(CommandBatch::new(commands)))?;
+        self.last_group_selection_context = Some(GroupSelectionContext {
+            group_ids,
+            object_ids: object_ids.clone(),
+        });
+        self.replace_object_selection(object_ids);
+        self.dirty = true;
+        Ok(true)
+    }
+
+    pub fn z_ordered_object_ids(&self) -> Vec<GlyphObjectId> {
+        let mut objects = self.project.glyph_objects.iter().collect::<Vec<_>>();
+        objects.sort_by(|left, right| {
+            left.ordering
+                .z_index
+                .cmp(&right.ordering.z_index)
+                .then(
+                    left.ordering
+                        .capture_order
+                        .cmp(&right.ordering.capture_order),
+                )
+                .then(left.id.0.cmp(&right.id.0))
+        });
+        objects
+            .into_iter()
+            .map(|object| object.id.clone())
+            .collect()
+    }
+
+    pub fn move_selected_objects_to_front(&mut self) -> AnyhowResult<bool> {
+        self.reorder_selected_objects(|ordered_ids, selected_ids| {
+            let selected = selected_ids.iter().cloned().collect::<HashSet<_>>();
+            let mut remaining = Vec::new();
+            let mut picked = Vec::new();
+            for object_id in ordered_ids {
+                if selected.contains(&object_id) {
+                    picked.push(object_id);
+                } else {
+                    remaining.push(object_id);
+                }
+            }
+            remaining.extend(picked);
+            remaining
+        })
+    }
+
+    pub fn move_selected_objects_to_back(&mut self) -> AnyhowResult<bool> {
+        self.reorder_selected_objects(|ordered_ids, selected_ids| {
+            let selected = selected_ids.iter().cloned().collect::<HashSet<_>>();
+            let mut remaining = Vec::new();
+            let mut picked = Vec::new();
+            for object_id in ordered_ids {
+                if selected.contains(&object_id) {
+                    picked.push(object_id);
+                } else {
+                    remaining.push(object_id);
+                }
+            }
+            picked.extend(remaining);
+            picked
+        })
+    }
+
+    pub fn move_selected_objects_forward_one(&mut self) -> AnyhowResult<bool> {
+        self.reorder_selected_objects(|mut ordered_ids, selected_ids| {
+            let selected = selected_ids.iter().cloned().collect::<HashSet<_>>();
+            if ordered_ids.len() >= 2 {
+                for index in (0..ordered_ids.len() - 1).rev() {
+                    if selected.contains(&ordered_ids[index])
+                        && !selected.contains(&ordered_ids[index + 1])
+                    {
+                        ordered_ids.swap(index, index + 1);
+                    }
+                }
+            }
+            ordered_ids
+        })
+    }
+
+    pub fn move_selected_objects_backward_one(&mut self) -> AnyhowResult<bool> {
+        self.reorder_selected_objects(|mut ordered_ids, selected_ids| {
+            let selected = selected_ids.iter().cloned().collect::<HashSet<_>>();
+            for index in 1..ordered_ids.len() {
+                if selected.contains(&ordered_ids[index])
+                    && !selected.contains(&ordered_ids[index - 1])
+                {
+                    ordered_ids.swap(index - 1, index);
+                }
+            }
+            ordered_ids
+        })
     }
 
     pub fn commit_stroke(&mut self, shift_group: bool) -> AnyhowResult<Option<GlyphObjectId>> {
@@ -473,7 +726,7 @@ impl AppSession {
             object_id
         };
 
-        self.selected_object_id = Some(selected_object_id.clone());
+        self.replace_object_selection(vec![selected_object_id.clone()]);
         self.last_created_object_id = Some(selected_object_id.clone());
         self.dirty = true;
         Ok(Some(selected_object_id))
@@ -525,6 +778,234 @@ impl AppSession {
         Some((min, max))
     }
 
+    fn selected_target_object_ids(&self) -> Vec<GlyphObjectId> {
+        let selected_objects = self
+            .selection
+            .selected_object_ids
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let selected_groups = self
+            .selection
+            .selected_group_ids
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut target_ids = selected_objects;
+        for group in &self.project.groups {
+            if selected_groups.contains(&group.id) {
+                for object_id in &group.glyph_object_ids {
+                    target_ids.insert(object_id.clone());
+                }
+            }
+        }
+
+        self.project
+            .glyph_objects
+            .iter()
+            .filter(|object| target_ids.contains(&object.id))
+            .map(|object| object.id.clone())
+            .collect()
+    }
+
+    fn group_for_object_id(&self, object_id: &GlyphObjectId) -> Option<GroupId> {
+        self.project
+            .groups
+            .iter()
+            .find(|group| group.glyph_object_ids.contains(object_id))
+            .map(|group| group.id.clone())
+    }
+
+    fn group_member_object_ids(&self, group_id: &GroupId) -> Vec<GlyphObjectId> {
+        self.project
+            .groups
+            .iter()
+            .find(|group| group.id == *group_id)
+            .map(|group| group.glyph_object_ids.clone())
+            .unwrap_or_default()
+    }
+
+    fn apply_style_to_object_ids(
+        &mut self,
+        object_ids: &[GlyphObjectId],
+        style: StyleSnapshot,
+    ) -> AnyhowResult<bool> {
+        let changes = object_ids
+            .iter()
+            .filter_map(|object_id| {
+                self.project
+                    .glyph_objects
+                    .iter()
+                    .find(|object| object.id == *object_id)
+                    .filter(|object| object.style != style)
+                    .map(|object| GlyphObjectStyleChange {
+                        object_id: object_id.clone(),
+                        from: object.style.clone(),
+                        to: style.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return Ok(false);
+        }
+
+        self.history.apply(
+            &mut self.project,
+            Box::new(BatchSetGlyphObjectStyleCommand { changes }),
+        )?;
+        self.dirty = true;
+        Ok(true)
+    }
+
+    fn apply_entrance_to_object_ids(
+        &mut self,
+        object_ids: &[GlyphObjectId],
+        entrance: EntranceBehavior,
+    ) -> AnyhowResult<bool> {
+        let changes = object_ids
+            .iter()
+            .filter_map(|object_id| {
+                self.project
+                    .glyph_objects
+                    .iter()
+                    .find(|object| object.id == *object_id)
+                    .filter(|object| object.entrance != entrance)
+                    .map(|object| GlyphObjectEntranceChange {
+                        object_id: object_id.clone(),
+                        from: object.entrance.clone(),
+                        to: entrance.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return Ok(false);
+        }
+
+        self.history.apply(
+            &mut self.project,
+            Box::new(BatchSetGlyphObjectEntranceCommand { changes }),
+        )?;
+        self.dirty = true;
+        Ok(true)
+    }
+
+    fn reorder_selected_objects<F>(&mut self, transform: F) -> AnyhowResult<bool>
+    where
+        F: FnOnce(Vec<GlyphObjectId>, &[GlyphObjectId]) -> Vec<GlyphObjectId>,
+    {
+        let selected_ids = self.selected_target_object_ids();
+        if selected_ids.is_empty() {
+            return Ok(false);
+        }
+        let current_order = self.z_ordered_object_ids();
+        let next_order = transform(current_order.clone(), &selected_ids);
+        if next_order == current_order {
+            return Ok(false);
+        }
+
+        let changes = next_order
+            .iter()
+            .enumerate()
+            .filter_map(|(index, object_id)| {
+                self.project
+                    .glyph_objects
+                    .iter()
+                    .find(|object| object.id == *object_id)
+                    .and_then(|object| {
+                        let to = index as i32;
+                        (object.ordering.z_index != to).then(|| GlyphObjectZIndexChange {
+                            object_id: object_id.clone(),
+                            from: object.ordering.z_index,
+                            to,
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return Ok(false);
+        }
+
+        self.history.apply(
+            &mut self.project,
+            Box::new(NormalizeZOrderCommand { changes }),
+        )?;
+        self.dirty = true;
+        Ok(true)
+    }
+
+    fn repair_selection_after_project_change(&mut self) {
+        self.selection
+            .selected_object_ids
+            .retain(|object_id| self.project.glyph_object_index(object_id).is_some());
+        self.selection
+            .selected_group_ids
+            .retain(|group_id| self.project.group_index(group_id).is_some());
+        if self
+            .selection
+            .focused_object_id
+            .as_ref()
+            .is_some_and(|object_id| self.project.glyph_object_index(object_id).is_none())
+        {
+            self.selection.focused_object_id = None;
+        }
+        if self
+            .selection
+            .focused_group_id
+            .as_ref()
+            .is_some_and(|group_id| self.project.group_index(group_id).is_none())
+        {
+            self.selection.focused_group_id = None;
+        }
+
+        if let Some(context) = &self.last_group_selection_context {
+            let existing_group_ids = context
+                .group_ids
+                .iter()
+                .filter(|group_id| self.project.group_index(group_id).is_some())
+                .cloned()
+                .collect::<Vec<_>>();
+            let existing_object_ids = context
+                .object_ids
+                .iter()
+                .filter(|object_id| self.project.glyph_object_index(object_id).is_some())
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let selection_matches_context_objects = self.selection.selected_group_ids.is_empty()
+                && self.selection.selected_object_ids == existing_object_ids;
+            if !existing_group_ids.is_empty()
+                && (selection_matches_context_objects
+                    || (self.selection.selected_object_ids.is_empty()
+                        && self.selection.selected_group_ids.is_empty()))
+            {
+                self.replace_group_selection(existing_group_ids);
+                return;
+            }
+
+            if self.selection.selected_object_ids.is_empty()
+                && self.selection.selected_group_ids.is_empty()
+                && !existing_object_ids.is_empty()
+            {
+                self.replace_object_selection(existing_object_ids);
+                return;
+            }
+        }
+
+        if self.selection.focused_object_id.is_none() {
+            self.selection.focused_object_id = self.selection.selected_object_ids.last().cloned();
+        }
+        if self.selection.focused_group_id.is_none() {
+            self.selection.focused_group_id = self.selection.selected_group_ids.last().cloned();
+        }
+        if self
+            .last_created_object_id
+            .as_ref()
+            .is_some_and(|object_id| self.project.glyph_object_index(object_id).is_none())
+        {
+            self.last_created_object_id = None;
+        }
+    }
+
     pub fn insert_clear_event(&mut self, kind: ClearKind) -> AnyhowResult<ClearEventId> {
         let clear_event = ClearEvent {
             id: ClearEventId::new(self.allocate_id("clear")),
@@ -550,6 +1031,7 @@ impl AppSession {
         let changed = self.history.undo(&mut self.project)?;
         if changed {
             self.dirty = true;
+            self.repair_selection_after_project_change();
         }
         Ok(changed)
     }
@@ -558,6 +1040,7 @@ impl AppSession {
         let changed = self.history.redo(&mut self.project)?;
         if changed {
             self.dirty = true;
+            self.repair_selection_after_project_change();
         }
         Ok(changed)
     }
@@ -710,6 +1193,39 @@ impl AppSession {
         let order = self.next_capture_order;
         self.next_capture_order += 1;
         order
+    }
+}
+
+fn dedupe_object_ids(ids: impl IntoIterator<Item = GlyphObjectId>) -> Vec<GlyphObjectId> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for object_id in ids {
+        if seen.insert(object_id.clone()) {
+            deduped.push(object_id);
+        }
+    }
+    deduped
+}
+
+fn dedupe_group_ids(ids: impl IntoIterator<Item = GroupId>) -> Vec<GroupId> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for group_id in ids {
+        if seen.insert(group_id.clone()) {
+            deduped.push(group_id);
+        }
+    }
+    deduped
+}
+
+fn toggle_vec_membership<T>(items: &mut Vec<T>, value: T)
+where
+    T: Clone + PartialEq,
+{
+    if let Some(index) = items.iter().position(|item| item == &value) {
+        items.remove(index);
+    } else {
+        items.push(value);
     }
 }
 
@@ -1425,6 +1941,224 @@ mod tests {
             .commit_stroke_into_object(None)
             .expect("commit should succeed");
         assert!(session.current_stroke_preview().is_none());
+    }
+
+    #[test]
+    fn multi_select_style_and_entrance_apply_to_selected_objects_and_roundtrip_history() {
+        let mut session = AppSession::default();
+        for start_x in [0.0, 40.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 20.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(object_ids.clone());
+        session.active_style.thickness = 19.0;
+        session.active_style.opacity = 0.35;
+        session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        session.active_entrance.speed_scalar = 1.8;
+
+        session
+            .apply_active_style_to_selection()
+            .expect("style apply should succeed");
+        session
+            .apply_active_entrance_to_selection()
+            .expect("entrance apply should succeed");
+
+        assert_eq!(session.project.glyph_objects[0].style.thickness, 19.0);
+        assert_eq!(session.project.glyph_objects[1].style.thickness, 19.0);
+        assert_eq!(
+            session.project.glyph_objects[0].entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert_eq!(
+            session.project.glyph_objects[1].entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+
+        assert!(session.undo().expect("undo should succeed"));
+        assert!(session.undo().expect("undo should succeed"));
+        assert_eq!(session.project.glyph_objects[0].style.thickness, 6.0);
+        assert_eq!(session.project.glyph_objects[1].style.thickness, 6.0);
+        assert_eq!(
+            session.project.glyph_objects[0].entrance.kind,
+            pauseink_domain::EntranceKind::Instant
+        );
+        assert_eq!(
+            session.project.glyph_objects[1].entrance.kind,
+            pauseink_domain::EntranceKind::Instant
+        );
+    }
+
+    #[test]
+    fn group_selected_objects_and_undo_redo_keep_selection_consistent() {
+        let mut session = AppSession::default();
+        for start_x in [0.0, 40.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 20.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(object_ids.clone());
+
+        let group_id = session
+            .group_selected_objects()
+            .expect("grouping should succeed")
+            .expect("group should be created");
+
+        assert_eq!(session.project.groups.len(), 1);
+        assert_eq!(session.selected_group_ids(), vec![group_id.clone()]);
+        assert!(session.selected_object_ids().is_empty());
+
+        assert!(session.undo().expect("undo should succeed"));
+        assert!(session.project.groups.is_empty());
+        assert_eq!(session.selected_object_ids(), object_ids);
+        assert!(session.selected_group_ids().is_empty());
+
+        assert!(session.redo().expect("redo should succeed"));
+        assert_eq!(session.selected_group_ids(), vec![group_id]);
+        assert!(session.selected_object_ids().is_empty());
+    }
+
+    #[test]
+    fn move_selected_objects_forward_and_backward_preserves_relative_order() {
+        let mut session = AppSession::default();
+        for (start_x, z_index) in [(0.0, 0), (30.0, 1), (60.0, 2), (90.0, 3)] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 10.0,
+                    y: 10.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            let object_id = session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed")
+                .expect("object id");
+            session
+                .project
+                .glyph_objects
+                .iter_mut()
+                .find(|object| object.id == object_id)
+                .expect("object exists")
+                .ordering
+                .z_index = z_index;
+        }
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(vec![object_ids[1].clone(), object_ids[2].clone()]);
+
+        session
+            .move_selected_objects_backward_one()
+            .expect("move backward should succeed");
+        assert_eq!(
+            session.z_ordered_object_ids(),
+            vec![
+                object_ids[1].clone(),
+                object_ids[2].clone(),
+                object_ids[0].clone(),
+                object_ids[3].clone()
+            ]
+        );
+
+        session
+            .move_selected_objects_forward_one()
+            .expect("move forward should succeed");
+        assert_eq!(session.z_ordered_object_ids(), object_ids);
+
+        session
+            .move_selected_objects_to_front()
+            .expect("move to front should succeed");
+        assert_eq!(
+            session.z_ordered_object_ids(),
+            vec![
+                object_ids[0].clone(),
+                object_ids[3].clone(),
+                object_ids[1].clone(),
+                object_ids[2].clone()
+            ]
+        );
+    }
+
+    #[test]
+    fn ungroup_selected_groups_restores_object_selection() {
+        let mut session = AppSession::default();
+        for start_x in [0.0, 40.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 20.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(object_ids.clone());
+        let group_id = session
+            .group_selected_objects()
+            .expect("grouping should succeed")
+            .expect("group id");
+
+        session.replace_group_selection(vec![group_id]);
+        assert!(session
+            .ungroup_selected_groups()
+            .expect("ungroup should succeed"));
+
+        assert!(session.project.groups.is_empty());
+        assert_eq!(session.selected_object_ids(), object_ids);
     }
 
     #[test]

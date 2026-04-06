@@ -6,13 +6,19 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-05` として selection / group / z-order foundation を実装し、outline 起点の複数選択編集の土台を固める。
+- 現在の即時マイルストーン: 今回バッチ (`V1-01 -> V1-08 -> V1-07 -> V1-05`) は完了。次候補は `.docs/16_remaining_tasks_plan.md` の `V1-02 reveal-head effect`。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
   - `develop` ブランチで作業継続
+  - `V1-05` の前提として、selection の source of truth を `AppSession` に一本化し、group 入れ子禁止・outline 起点・selected objects の相対順を保つ z-order 移動で進める方針を再確認した
+  - `V1-05` では domain command と app selection state の両方を TDD で進め、複数選択・group/ungroup・batch style/entrance・z-order を同一履歴モデルへ載せる方針を確定した
+  - `V1-05` を完了し、`SelectionState`、`RemoveGroupCommand`、`BatchSetGlyphObjectStyleCommand`、`BatchSetGlyphObjectEntranceCommand`、`NormalizeZOrderCommand` を追加した
+  - 下部 `オブジェクト一覧` から object / group の複数選択、group / ungroup、`背面へ` / `一つ後ろ` / `一つ前` / `前面へ` を実行できるようにした
+  - style / entrance inspector は直接 mutate をやめ、選択対象全体へ history 経由で適用されるようにした
+  - `cargo test -p pauseink-domain`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets`、`cargo test --workspace` を再通過した
   - `V1-01` に着手し、現行 `style preset` へ entrance が混在している loader / save / restore / CRUD / UI を、後続の clear/combo 実装で手戻りしない形へ分離する作業を開始した
   - `V1-01` では built-in/user preset の読み込み互換を保ちつつ、style / entrance / clear / combo の category と portable directory を分離する方針で進める
   - `V1-01` の binding metadata は project/settings の editor UI state 側へ保持し、resolved snapshot は project `presets` 側へ残す方針で実装を始める
@@ -175,10 +181,10 @@
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
 | Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
-| Phase 18 | 進行中 | 99% | `V1-05` の選択・グループ・前後移動基盤を閉じる | `V1-08` と `V1-07` 完了。次は selection / group / z-order foundation |
+| Phase 18 | 完了 | 100% | `V1-05` の選択・グループ・前後移動基盤を閉じる | outline 起点の複数選択、group / ungroup、batch style / entrance、z-order foundation を history 付きで接続 |
 
 ## 次の具体的な一手
 
-1. display server がある Linux または実機 Windows で、effect editor、出現速度 editor、preset 保存/再読込、template 字詰め、guide 進行を目視確認する。
-2. reveal-head effect / post-action chain / clear-combo preset 専用 UI の扱いを `.docs/11_implementation_plan.md` に照らして確定し、実装か明示 de-scope のどちらかを report へ固定する。
+1. display server がある Linux または実機 Windows で、outline 起点の複数選択 / group / z-order、effect editor、出現速度 editor、template 字詰め、guide 進行を目視確認する。
+2. `.docs/16_remaining_tasks_plan.md` に従って `V1-02 reveal-head effect` と `V1-03 post-action chain` を順番に進める。
 3. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行し、release 用 portable sidecar runtime の bundling / provenance / notices を詰める。

@@ -605,6 +605,232 @@ mod tests {
     }
 
     #[test]
+    fn remove_group_command_roundtrips_through_history() {
+        let group = Group {
+            id: GroupId::new("group-1"),
+            glyph_object_ids: vec![
+                GlyphObjectId::new("object-1"),
+                GlyphObjectId::new("object-2"),
+            ],
+            ..Group::default()
+        };
+        let mut project = AnnotationProject {
+            groups: vec![group.clone()],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(RemoveGroupCommand {
+                    group: group.clone(),
+                    index: 0,
+                }),
+            )
+            .expect("group removal should apply");
+
+        assert!(project.groups.is_empty());
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.groups, vec![group.clone()]);
+        assert!(history.redo(&mut project).expect("redo should succeed"));
+        assert!(project.groups.is_empty());
+    }
+
+    #[test]
+    fn update_group_membership_command_roundtrips_through_history() {
+        let mut project = AnnotationProject {
+            groups: vec![Group {
+                id: GroupId::new("group-1"),
+                glyph_object_ids: vec![GlyphObjectId::new("object-1")],
+                ..Group::default()
+            }],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(UpdateGroupMembershipCommand {
+                    group_id: GroupId::new("group-1"),
+                    from_glyph_object_ids: vec![GlyphObjectId::new("object-1")],
+                    to_glyph_object_ids: vec![
+                        GlyphObjectId::new("object-1"),
+                        GlyphObjectId::new("object-2"),
+                    ],
+                    from_loose_stroke_ids: vec![],
+                    to_loose_stroke_ids: vec![],
+                }),
+            )
+            .expect("membership update should apply");
+
+        assert_eq!(
+            project.groups[0].glyph_object_ids,
+            vec![
+                GlyphObjectId::new("object-1"),
+                GlyphObjectId::new("object-2")
+            ]
+        );
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(
+            project.groups[0].glyph_object_ids,
+            vec![GlyphObjectId::new("object-1")]
+        );
+    }
+
+    #[test]
+    fn batch_style_and_entrance_commands_update_multiple_objects_and_undo() {
+        let original_style = StyleSnapshot::default();
+        let original_entrance = EntranceBehavior::default();
+        let updated_style = StyleSnapshot {
+            thickness: 18.0,
+            opacity: 0.4,
+            ..StyleSnapshot::default()
+        };
+        let mut updated_entrance = EntranceBehavior::default();
+        updated_entrance.kind = EntranceKind::PathTrace;
+        updated_entrance.speed_scalar = 2.0;
+        let mut project = AnnotationProject {
+            glyph_objects: vec![
+                GlyphObject {
+                    id: GlyphObjectId::new("object-1"),
+                    style: original_style.clone(),
+                    entrance: original_entrance.clone(),
+                    ..GlyphObject::default()
+                },
+                GlyphObject {
+                    id: GlyphObjectId::new("object-2"),
+                    style: original_style.clone(),
+                    entrance: original_entrance.clone(),
+                    ..GlyphObject::default()
+                },
+            ],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(CommandBatch::new(vec![
+                    Box::new(BatchSetGlyphObjectStyleCommand {
+                        changes: vec![
+                            GlyphObjectStyleChange {
+                                object_id: GlyphObjectId::new("object-1"),
+                                from: original_style.clone(),
+                                to: updated_style.clone(),
+                            },
+                            GlyphObjectStyleChange {
+                                object_id: GlyphObjectId::new("object-2"),
+                                from: original_style.clone(),
+                                to: updated_style.clone(),
+                            },
+                        ],
+                    }),
+                    Box::new(BatchSetGlyphObjectEntranceCommand {
+                        changes: vec![
+                            GlyphObjectEntranceChange {
+                                object_id: GlyphObjectId::new("object-1"),
+                                from: original_entrance.clone(),
+                                to: updated_entrance.clone(),
+                            },
+                            GlyphObjectEntranceChange {
+                                object_id: GlyphObjectId::new("object-2"),
+                                from: original_entrance.clone(),
+                                to: updated_entrance.clone(),
+                            },
+                        ],
+                    }),
+                ])),
+            )
+            .expect("batch updates should apply");
+
+        assert_eq!(project.glyph_objects[0].style, updated_style);
+        assert_eq!(project.glyph_objects[1].style, updated_style);
+        assert_eq!(project.glyph_objects[0].entrance, updated_entrance);
+        assert_eq!(project.glyph_objects[1].entrance, updated_entrance);
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.glyph_objects[0].style, original_style);
+        assert_eq!(project.glyph_objects[1].style, original_style);
+        assert_eq!(project.glyph_objects[0].entrance, original_entrance);
+        assert_eq!(project.glyph_objects[1].entrance, original_entrance);
+    }
+
+    #[test]
+    fn normalize_z_order_command_reorders_without_touching_capture_or_reveal_order() {
+        let mut project = AnnotationProject {
+            glyph_objects: vec![
+                GlyphObject {
+                    id: GlyphObjectId::new("object-1"),
+                    ordering: OrderingMetadata {
+                        z_index: 40,
+                        capture_order: 10,
+                        reveal_order: 11,
+                    },
+                    ..GlyphObject::default()
+                },
+                GlyphObject {
+                    id: GlyphObjectId::new("object-2"),
+                    ordering: OrderingMetadata {
+                        z_index: 10,
+                        capture_order: 20,
+                        reveal_order: 21,
+                    },
+                    ..GlyphObject::default()
+                },
+                GlyphObject {
+                    id: GlyphObjectId::new("object-3"),
+                    ordering: OrderingMetadata {
+                        z_index: 25,
+                        capture_order: 30,
+                        reveal_order: 31,
+                    },
+                    ..GlyphObject::default()
+                },
+            ],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(NormalizeZOrderCommand {
+                    changes: vec![
+                        GlyphObjectZIndexChange {
+                            object_id: GlyphObjectId::new("object-2"),
+                            from: 10,
+                            to: 0,
+                        },
+                        GlyphObjectZIndexChange {
+                            object_id: GlyphObjectId::new("object-3"),
+                            from: 25,
+                            to: 1,
+                        },
+                        GlyphObjectZIndexChange {
+                            object_id: GlyphObjectId::new("object-1"),
+                            from: 40,
+                            to: 2,
+                        },
+                    ],
+                }),
+            )
+            .expect("normalize should apply");
+
+        assert_eq!(project.glyph_objects[0].ordering.capture_order, 10);
+        assert_eq!(project.glyph_objects[1].ordering.capture_order, 20);
+        assert_eq!(project.glyph_objects[2].ordering.capture_order, 30);
+        assert_eq!(project.glyph_objects[0].ordering.reveal_order, 11);
+        assert_eq!(project.glyph_objects[1].ordering.reveal_order, 21);
+        assert_eq!(project.glyph_objects[2].ordering.reveal_order, 31);
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.glyph_objects[0].ordering.z_index, 40);
+        assert_eq!(project.glyph_objects[1].ordering.z_index, 10);
+        assert_eq!(project.glyph_objects[2].ordering.z_index, 25);
+    }
+
+    #[test]
     fn page_interval_tracks_previous_and_next_clear_boundaries() {
         let clears = vec![
             ClearEvent {

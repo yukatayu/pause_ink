@@ -2104,7 +2104,7 @@ impl DesktopApp {
         self.template_details_open = open;
     }
 
-    fn current_style_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
+    fn current_direct_edit_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
         if self.template.placed_slots.is_some() {
             return self
                 .template
@@ -2118,32 +2118,40 @@ impl DesktopApp {
             return self.guide_capture_state.current_target_object_id();
         }
 
-        self.session.selected_object_id.clone()
+        None
     }
 
     fn sync_active_style_to_current_object(&mut self) {
-        let Some(object_id) = self.current_style_target_object_id() else {
-            return;
+        let result = if let Some(object_id) = self.current_direct_edit_target_object_id() {
+            self.session
+                .overwrite_glyph_object_style(&object_id, self.session.active_style.clone())
+        } else {
+            self.session.apply_active_style_to_selection()
         };
 
-        if self
-            .session
-            .overwrite_glyph_object_style(&object_id, self.session.active_style.clone())
-        {
-            self.overlay_key = None;
+        match result {
+            Ok(true) => {
+                self.overlay_key = None;
+            }
+            Ok(false) => {}
+            Err(error) => self.push_log(format!("style 適用失敗: {error:#}")),
         }
     }
 
     fn sync_active_entrance_to_current_object(&mut self) {
-        let Some(object_id) = self.current_style_target_object_id() else {
-            return;
+        let result = if let Some(object_id) = self.current_direct_edit_target_object_id() {
+            self.session
+                .overwrite_glyph_object_entrance(&object_id, self.session.active_entrance.clone())
+        } else {
+            self.session.apply_active_entrance_to_selection()
         };
 
-        if self
-            .session
-            .overwrite_glyph_object_entrance(&object_id, self.session.active_entrance.clone())
-        {
-            self.overlay_key = None;
+        match result {
+            Ok(true) => {
+                self.overlay_key = None;
+            }
+            Ok(false) => {}
+            Err(error) => self.push_log(format!("出現設定の適用失敗: {error:#}")),
         }
     }
 
@@ -3655,19 +3663,191 @@ impl DesktopApp {
         }
     }
 
-    fn draw_bottom_tab_contents(&self, ui: &mut egui::Ui) {
+    fn draw_bottom_tab_contents(&mut self, ui: &mut egui::Ui) {
         match self.bottom_tab {
             BottomTab::Outline => {
-                for object in &self.session.project.glyph_objects {
+                let selected_object_count = self.session.selected_object_ids().len();
+                let selected_group_count = self.session.selected_group_ids().len();
+                let has_selected_targets = !(self.session.selected_object_ids().is_empty()
+                    && self.session.selected_group_ids().is_empty());
+                ui.horizontal_wrapped(|ui| {
                     ui.label(format!(
-                        "{} / stroke:{} / page:{} / z:{}",
-                        object.id.0,
-                        object.stroke_ids.len(),
-                        object.page_index(&self.session.project.clear_events),
-                        object.ordering.z_index
+                        "選択: object {} / group {}",
+                        selected_object_count, selected_group_count
                     ));
+                    if ui
+                        .add_enabled(selected_object_count >= 2, egui::Button::new("グループ化"))
+                        .clicked()
+                    {
+                        match self.session.group_selected_objects() {
+                            Ok(Some(_)) => {}
+                            Ok(None) => {}
+                            Err(error) => self.push_log(format!("group 化失敗: {error:#}")),
+                        }
+                    }
+                    if ui
+                        .add_enabled(selected_group_count > 0, egui::Button::new("グループ解除"))
+                        .clicked()
+                    {
+                        match self.session.ungroup_selected_groups() {
+                            Ok(true) => {}
+                            Ok(false) => {}
+                            Err(error) => self.push_log(format!("group 解除失敗: {error:#}")),
+                        }
+                    }
+                    if ui
+                        .add_enabled(has_selected_targets, egui::Button::new("背面へ"))
+                        .clicked()
+                    {
+                        match self.session.move_selected_objects_to_back() {
+                            Ok(true) => self.overlay_key = None,
+                            Ok(false) => {}
+                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                        }
+                    }
+                    if ui
+                        .add_enabled(has_selected_targets, egui::Button::new("一つ後ろ"))
+                        .clicked()
+                    {
+                        match self.session.move_selected_objects_backward_one() {
+                            Ok(true) => self.overlay_key = None,
+                            Ok(false) => {}
+                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                        }
+                    }
+                    if ui
+                        .add_enabled(has_selected_targets, egui::Button::new("一つ前"))
+                        .clicked()
+                    {
+                        match self.session.move_selected_objects_forward_one() {
+                            Ok(true) => self.overlay_key = None,
+                            Ok(false) => {}
+                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                        }
+                    }
+                    if ui
+                        .add_enabled(has_selected_targets, egui::Button::new("前面へ"))
+                        .clicked()
+                    {
+                        match self.session.move_selected_objects_to_front() {
+                            Ok(true) => self.overlay_key = None,
+                            Ok(false) => {}
+                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                        }
+                    }
+                });
+                ui.separator();
+
+                let toggle_multi =
+                    ui.input(|input| input.modifiers.command || input.modifiers.ctrl);
+                let groups = self
+                    .session
+                    .project
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        (
+                            group.id.clone(),
+                            group.name.clone(),
+                            group.glyph_object_ids.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let grouped_object_ids = groups
+                    .iter()
+                    .flat_map(|(_, _, object_ids)| object_ids.iter().cloned())
+                    .collect::<std::collections::HashSet<_>>();
+
+                for (group_id, group_name, object_ids) in groups {
+                    let group_selected = self.session.is_group_selected(&group_id);
+                    let group_label = group_name
+                        .as_deref()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("グループ {}", group_id.0));
+                    let header = egui::CollapsingHeader::new(format!(
+                        "{}{} / object:{}",
+                        if group_selected { "● " } else { "" },
+                        group_label,
+                        object_ids.len()
+                    ))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for object_id in object_ids {
+                            if let Some(object) = self
+                                .session
+                                .project
+                                .glyph_objects
+                                .iter()
+                                .find(|object| object.id == object_id)
+                            {
+                                let selected = self.session.is_object_selected(&object.id);
+                                let response = ui.selectable_label(
+                                    selected,
+                                    format!(
+                                        "  {} / stroke:{} / page:{} / z:{}",
+                                        object.id.0,
+                                        object.stroke_ids.len(),
+                                        object.page_index(&self.session.project.clear_events),
+                                        object.ordering.z_index
+                                    ),
+                                );
+                                if response.clicked() {
+                                    if toggle_multi {
+                                        self.session.toggle_object_selection(object.id.clone());
+                                    } else {
+                                        self.session
+                                            .replace_object_selection(vec![object.id.clone()]);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    if header.header_response.clicked() {
+                        if toggle_multi {
+                            self.session.toggle_group_selection(group_id.clone());
+                        } else {
+                            self.session.replace_group_selection(vec![group_id.clone()]);
+                        }
+                    }
                 }
-                if self.session.project.glyph_objects.is_empty() {
+
+                let ungrouped_objects = self
+                    .session
+                    .project
+                    .glyph_objects
+                    .iter()
+                    .filter(|object| !grouped_object_ids.contains(&object.id))
+                    .map(|object| {
+                        (
+                            object.id.clone(),
+                            object.stroke_ids.len(),
+                            object.page_index(&self.session.project.clear_events),
+                            object.ordering.z_index,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                for (object_id, stroke_count, page_index, z_index) in ungrouped_objects {
+                    let selected = self.session.is_object_selected(&object_id);
+                    let response = ui.selectable_label(
+                        selected,
+                        format!(
+                            "{} / stroke:{} / page:{} / z:{}",
+                            object_id.0, stroke_count, page_index, z_index
+                        ),
+                    );
+                    if response.clicked() {
+                        if toggle_multi {
+                            self.session.toggle_object_selection(object_id.clone());
+                        } else {
+                            self.session
+                                .replace_object_selection(vec![object_id.clone()]);
+                        }
+                    }
+                }
+
+                if self.session.project.glyph_objects.is_empty()
+                    && self.session.project.groups.is_empty()
+                {
                     ui.label("オブジェクトはまだありません。");
                 }
             }
@@ -4606,7 +4786,7 @@ impl DesktopApp {
         self.draw_export_panel(ui);
     }
 
-    fn draw_bottom_tab_scroll_region(&self, ui: &mut egui::Ui) {
+    fn draw_bottom_tab_scroll_region(&mut self, ui: &mut egui::Ui) {
         let available_size = ui.available_size();
         let content_width =
             clamp_bottom_panel_content_width(self.bottom_panel_content_width).max(available_size.x);

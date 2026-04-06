@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 18 完了。
+- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了し、残 task は `V1-02 / V1-03 / V1-04 / V1-06 / packaging / QA` に移った。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -1343,3 +1343,43 @@
     - `template_advanced_settings_change_reflows_placed_slots_immediately` で advanced controls の即時 reflow を固定した。
     - `guide_overlay_state_applies_gap_ratio_without_changing_vertical_set_width` と `guide_overlay_state_negative_gap_ratio_still_advances_forward_without_bounds` で、gap が位置だけに効き縦線セット幅は一定であることを固定した。
     - save/reopen と settings relaunch の両方で、`line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode / guide_next_gap_ratio` が戻ることを固定した。
+- 2026-04-07T07:00:00+09:00
+  - 直近マイルストーン: `V1-05 selection / multi-select / group / ungroup / z-order foundation`
+  - 方針:
+    - selection の source of truth は `AppSession` に一本化し、outline 起点で object / group を複数選択できる土台を先に作る。
+    - group の入れ子は v1.0 では禁止し、group 化は「未所属 object をまとめる」操作として実装する。
+    - z-order は選択 object の相対順を保ったまま前後移動し、正規化 command で履歴往復できる形に揃える。
+    - batch style / entrance は selection 全体へ同一 snapshot を適用し、renderer には selection 概念を持ち込まない。
+  - 着手前確認:
+    - `.docs/16_remaining_tasks_plan.md` の `V1-05` と `V1-06` を再確認し、V1.0 では outline panel 起点・canvas 直接選択は scope 外という前提を固定した。
+    - `crates/app/src/lib.rs` の単一 `selected_object_id`、`crates/domain/src/project_commands.rs` の group / z-index command 群、`crates/app/src/main.rs` の bottom outline 最小表示を読み直した。
+    - `V1-05` では domain / app の両方で failing test を先に追加し、その後に command / session / UI を順番に埋める。
+- 2026-04-07T08:25:00+09:00
+  - Task: `V1-05 selection / multi-select / group / ungroup / z-order foundation`
+  - sub-agent:
+    - explorer `Avicenna` に単一選択 state と group/z-order touch point を read-only 調査させた。
+    - 採用した指摘:
+      - single selection の source of truth は `AppSession.selected_object_id` 1 本だったため、session-only `SelectionState` へ置換する。
+      - inspector の style / entrance apply が history を通らない点が主要 gap だったため、batch command 経由へ寄せる。
+      - renderer の正しい z-order 基準は `(z_index, capture_order, id)` なので、dense な `z_index` 正規化でも capture/reveal order を触らない。
+  - 実施内容:
+    - `crates/domain/src/project_commands.rs` に `RemoveGroupCommand`、`UpdateGroupMembershipCommand`、`BatchSetGlyphObjectStyleCommand`、`BatchSetGlyphObjectEntranceCommand`、`NormalizeZOrderCommand` と各 change struct を追加した。
+    - `crates/app/src/lib.rs` の `selected_object_id` を `SelectionState` へ置換し、object / group の selection、group / ungroup、batch style / entrance apply、z-order move、undo/redo 後の selection 修復を `AppSession` に集約した。
+    - `group` 系の undo/redo では `last_group_selection_context` を持ち、group が存在する状態では group selection、group が消えた状態では member object selection へ復元するようにした。
+    - `crates/app/src/main.rs` では inspector の style / entrance 反映を history 経由へ差し替え、下部 `オブジェクト一覧` を object / group selectable な outline へ拡張した。
+    - outline から `グループ化` / `グループ解除` / `背面へ` / `一つ後ろ` / `一つ前` / `前面へ` を実行できるようにし、`Ctrl`/`Cmd` 併用クリックで複数選択できるようにした。
+    - `manual/user_guide.md` と `manual/developer_guide.md` を、outline 起点の複数選択編集と selection/history 境界の実装に合わせて更新した。
+  - テスト:
+    - red:
+      - `cargo test -p pauseink-domain remove_group_command_roundtrips_through_history -- --nocapture`
+      - `cargo test -p pauseink-app multi_select_style_and_entrance_apply_to_selected_objects_and_roundtrip_history -- --nocapture`
+      - いずれも新 command / selection API 未実装で compile fail を確認した。
+    - green:
+      - `cargo test -p pauseink-domain -- --nocapture`
+      - `cargo test -p pauseink-app --lib --bins`
+      - `cargo check -p pauseink-app --all-targets`
+      - `cargo test --workspace`
+  - 結果:
+    - exit 0。workspace test 全通、`pauseink-app --all-targets` check 通過。
+    - app 側では `multi_select_style_and_entrance_apply_to_selected_objects_and_roundtrip_history`、`group_selected_objects_and_undo_redo_keep_selection_consistent`、`move_selected_objects_forward_and_backward_preserves_relative_order`、`ungroup_selected_groups_restores_object_selection` を追加して回帰固定した。
+    - domain 側では group remove / membership update / batch style-entrance / z-order normalize の往復を unit test で固定した。

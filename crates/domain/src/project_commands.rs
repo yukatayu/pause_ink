@@ -86,9 +86,85 @@ impl Command<AnnotationProject> for InsertGroupCommand {
     }
 }
 
+pub struct RemoveGroupCommand {
+    pub group: Group,
+    pub index: usize,
+}
+
+impl Command<AnnotationProject> for RemoveGroupCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let Some(current_index) = state.group_index(&self.group.id) else {
+            return Err(CommandError::new(format!(
+                "group not found during removal: {}",
+                self.group.id.0
+            )));
+        };
+        let removed = state.groups.remove(current_index);
+        if removed != self.group {
+            return Err(CommandError::new(format!(
+                "unexpected group payload during removal: {}",
+                self.group.id.0
+            )));
+        }
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        if state.group_index(&self.group.id).is_some() {
+            return Err(CommandError::new(format!(
+                "group already exists during undo: {}",
+                self.group.id.0
+            )));
+        }
+        let index = self.index.min(state.groups.len());
+        state.groups.insert(index, self.group.clone());
+        Ok(())
+    }
+}
+
 pub struct InsertClearEventCommand {
     pub clear_event: ClearEvent,
     pub index: Option<usize>,
+}
+
+pub struct UpdateGroupMembershipCommand {
+    pub group_id: GroupId,
+    pub from_glyph_object_ids: Vec<GlyphObjectId>,
+    pub to_glyph_object_ids: Vec<GlyphObjectId>,
+    pub from_loose_stroke_ids: Vec<StrokeId>,
+    pub to_loose_stroke_ids: Vec<StrokeId>,
+}
+
+impl Command<AnnotationProject> for UpdateGroupMembershipCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let group = find_group_mut(state, &self.group_id)?;
+        if group.glyph_object_ids != self.from_glyph_object_ids
+            || group.loose_stroke_ids != self.from_loose_stroke_ids
+        {
+            return Err(CommandError::new(format!(
+                "unexpected current membership for {} during apply",
+                self.group_id.0
+            )));
+        }
+        group.glyph_object_ids = self.to_glyph_object_ids.clone();
+        group.loose_stroke_ids = self.to_loose_stroke_ids.clone();
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let group = find_group_mut(state, &self.group_id)?;
+        if group.glyph_object_ids != self.to_glyph_object_ids
+            || group.loose_stroke_ids != self.to_loose_stroke_ids
+        {
+            return Err(CommandError::new(format!(
+                "unexpected current membership for {} during undo",
+                self.group_id.0
+            )));
+        }
+        group.glyph_object_ids = self.from_glyph_object_ids.clone();
+        group.loose_stroke_ids = self.from_loose_stroke_ids.clone();
+        Ok(())
+    }
 }
 
 impl Command<AnnotationProject> for InsertClearEventCommand {
@@ -152,6 +228,43 @@ impl Command<AnnotationProject> for SetGlyphObjectZIndexCommand {
 pub struct AppendStrokeToGlyphObjectCommand {
     pub object_id: GlyphObjectId,
     pub stroke_id: StrokeId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphObjectStyleChange {
+    pub object_id: GlyphObjectId,
+    pub from: StyleSnapshot,
+    pub to: StyleSnapshot,
+}
+
+pub struct BatchSetGlyphObjectStyleCommand {
+    pub changes: Vec<GlyphObjectStyleChange>,
+}
+
+impl Command<AnnotationProject> for BatchSetGlyphObjectStyleCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in &self.changes {
+            SetGlyphObjectStyleCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .apply(state)?;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in self.changes.iter().rev() {
+            SetGlyphObjectStyleCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .undo(state)?;
+        }
+        Ok(())
+    }
 }
 
 impl Command<AnnotationProject> for AppendStrokeToGlyphObjectCommand {
@@ -226,6 +339,80 @@ pub struct SetGlyphObjectEntranceCommand {
     pub to: EntranceBehavior,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphObjectEntranceChange {
+    pub object_id: GlyphObjectId,
+    pub from: EntranceBehavior,
+    pub to: EntranceBehavior,
+}
+
+pub struct BatchSetGlyphObjectEntranceCommand {
+    pub changes: Vec<GlyphObjectEntranceChange>,
+}
+
+impl Command<AnnotationProject> for BatchSetGlyphObjectEntranceCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in &self.changes {
+            SetGlyphObjectEntranceCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .apply(state)?;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in self.changes.iter().rev() {
+            SetGlyphObjectEntranceCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .undo(state)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphObjectZIndexChange {
+    pub object_id: GlyphObjectId,
+    pub from: i32,
+    pub to: i32,
+}
+
+pub struct NormalizeZOrderCommand {
+    pub changes: Vec<GlyphObjectZIndexChange>,
+}
+
+impl Command<AnnotationProject> for NormalizeZOrderCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in &self.changes {
+            SetGlyphObjectZIndexCommand {
+                object_id: change.object_id.clone(),
+                from: change.from,
+                to: change.to,
+            }
+            .apply(state)?;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in self.changes.iter().rev() {
+            SetGlyphObjectZIndexCommand {
+                object_id: change.object_id.clone(),
+                from: change.from,
+                to: change.to,
+            }
+            .undo(state)?;
+        }
+        Ok(())
+    }
+}
+
 impl Command<AnnotationProject> for SetGlyphObjectEntranceCommand {
     fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
         let object = find_object_mut(state, &self.object_id)?;
@@ -275,6 +462,17 @@ fn find_object_mut<'a>(
         .iter_mut()
         .find(|object| object.id == *object_id)
         .ok_or_else(|| CommandError::new(format!("glyph object not found: {}", object_id.0)))
+}
+
+fn find_group_mut<'a>(
+    state: &'a mut AnnotationProject,
+    group_id: &GroupId,
+) -> Result<&'a mut Group, CommandError> {
+    state
+        .groups
+        .iter_mut()
+        .find(|group| group.id == *group_id)
+        .ok_or_else(|| CommandError::new(format!("group not found: {}", group_id.0)))
 }
 
 impl std::fmt::Display for StrokeId {
