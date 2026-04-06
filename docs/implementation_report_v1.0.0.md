@@ -1020,6 +1020,31 @@
     - 回帰: `cargo check -p pauseink-app --all-targets`
     - 補助確認: `python3 scripts/package_release_asset.py --help`
   - 結果: release build だけ GUI subsystem を宣言する構成になり、debug 時の `cargo run` を壊さずに Windows の余計なコンソール表示を抑止する方向へ修正できた。`gh` はこのホストに入っていないため、GitHub Actions 上の再実行確認は push 後の CI に委ねる。`eframe/egui` の deprecation warning は継続。
+- 2026-04-06T21:12:00+09:00
+  - 事象: user から「`cargo run` では正常だが、CI の release artifact では `style preset` 欄と `書き出し` 欄が表示されない」と報告が来た。
+  - root cause:
+    - `crates/app/src/main.rs` は built-in export profile / style preset を `env!("CARGO_MANIFEST_DIR")` 起点の repo path から読んでおり、repo 外へ展開した release artifact では解決できなかった。
+    - `scripts/package_release_asset.py` も `README.md` と binary しか archive に含めておらず、配布物側に `presets/` が存在しなかった。
+  - 実施内容:
+    - `DesktopApp::new_with_asset_root(...)` を追加し、release 実行時は `current_exe()` の親ディレクトリを asset root として渡すよう変更した。
+    - built-in style preset / export profile の探索先を `<asset root>/presets/...` 優先、存在しない場合のみ repo fallback する helper に整理した。
+    - `scripts/package_release_asset.py` は `presets/` ツリーを payload へ copy するよう更新した。
+    - Python 回帰 test `scripts/package_release_asset_test.py` を追加し、staging payload と zip archive の両方に `presets/style_presets` と `presets/export_profiles` が入ることを固定した。
+    - app 側にも `desktop_app_prefers_packaged_builtin_assets_when_present` と `desktop_app_falls_back_to_repository_builtin_assets_when_packaged_dirs_are_missing` を追加し、配布時と開発時の両経路を固定した。
+  - 変更ファイル: `crates/app/src/main.rs`, `scripts/package_release_asset.py`, `scripts/package_release_asset_test.py`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - `cargo test -p pauseink-app desktop_app_prefers_packaged_builtin_assets_when_present -- --nocapture`
+    - `cargo test -p pauseink-app desktop_app_falls_back_to_repository_builtin_assets_when_packaged_dirs_are_missing -- --nocapture`
+    - `cargo test -p pauseink-app windows_release_build_declares_gui_subsystem -- --nocapture`
+    - `python3 -m unittest scripts/package_release_asset_test.py`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+    - `python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`
+    - `tar -tzf <artifact>` で `README.md` と `presets/style_presets` / `presets/export_profiles` を確認
+  - 結果:
+    - 配布 binary は repo が無い場所でも built-in style/export asset を読めるようになった。
+    - release archive は app binary に加えて `README.md` と `presets/` を含むようになり、CI 生成物でも inspector の `style preset` と `書き出し` 欄が欠けない前提になった。
+    - この Linux host では Windows 実機起動確認まではできないため、最終確認は CI artifact を Windows 上で起動して行う必要がある。
 
 ## 9. Export / profile メモ
 
@@ -1058,7 +1083,7 @@
 ## 12. 既知の問題 / 制約
 
 - portable sidecar runtime 自体の bundling / provenance 整備は未完了で、現検証は host apt `ffmpeg` に依存している。
-- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive と `README.md` までで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
+- GitHub Release workflow が生成する成果物は現時点で `pauseink-app` binary archive に `README.md` と `presets/` を含むところまでで、portable FFmpeg sidecar / notices の同梱はまだ含めていない。
 - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入で停止した。`rustup target add x86_64-pc-windows-gnu` と、必要なら MinGW linker 整備が次の blocker 解消手順。
 - Windows / macOS の FFmpeg runtime 実行確認はこの Linux host では行えず、現時点の cross-platform 証跡は探索ロジックの unit test と Linux host 上の実 runtime 検証まで。
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。

@@ -1,4 +1,7 @@
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,11 +78,12 @@ fn main() -> Result<()> {
                 &settings_for_app,
                 None,
             );
-            Ok(Box::new(DesktopApp::new(
+            Ok(Box::new(DesktopApp::new_with_asset_root(
                 portable_paths_for_app.clone(),
                 settings_for_app.clone(),
                 runtime_for_app.clone(),
                 runtime_error_for_app.clone(),
+                executable_dir.clone(),
             )))
         }),
     )?;
@@ -606,6 +610,7 @@ impl Default for ExportState {
 
 struct DesktopApp {
     session: AppSession,
+    asset_root: PathBuf,
     portable_paths: PortablePaths,
     settings: Settings,
     runtime: Option<MediaRuntime>,
@@ -658,11 +663,28 @@ struct DesktopApp {
 }
 
 impl DesktopApp {
+    #[cfg(test)]
     fn new(
         portable_paths: PortablePaths,
         settings: Settings,
         runtime: Option<MediaRuntime>,
         runtime_error: Option<String>,
+    ) -> Self {
+        Self::new_with_asset_root(
+            portable_paths,
+            settings,
+            runtime,
+            runtime_error,
+            repository_asset_root(),
+        )
+    }
+
+    fn new_with_asset_root(
+        portable_paths: PortablePaths,
+        settings: Settings,
+        runtime: Option<MediaRuntime>,
+        runtime_error: Option<String>,
+        asset_root: PathBuf,
     ) -> Self {
         let recovery_prompt_open = portable_paths.autosave_file("recovery_latest").exists();
         let provider = runtime.clone().map(FfprobeMediaProvider::new);
@@ -673,11 +695,9 @@ impl DesktopApp {
         let mut font_dirs = vec![portable_paths.google_fonts_cache_dir()];
         font_dirs.extend(settings.local_font_dirs.clone());
         let local_font_families = discover_local_font_families(&font_dirs);
-        let export_catalog = ExportCatalog::load_builtin_from_dir(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/export_profiles"),
-        )
-        .ok();
-        let style_presets = load_style_presets(&portable_paths).unwrap_or_default();
+        let export_catalog =
+            ExportCatalog::load_builtin_from_dir(&builtin_export_profile_dir(&asset_root)).ok();
+        let style_presets = load_style_presets(&portable_paths, &asset_root).unwrap_or_default();
         let mut session = AppSession::with_history_limit(settings.history_depth);
         session.active_style.stabilization_strength =
             (settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
@@ -696,6 +716,7 @@ impl DesktopApp {
 
         let mut app = Self {
             session,
+            asset_root,
             portable_paths,
             settings,
             runtime,
@@ -847,7 +868,7 @@ impl DesktopApp {
 
     fn reload_style_presets(&mut self) {
         let previous_selection = self.selected_style_preset_id.clone();
-        match load_style_presets(&self.portable_paths) {
+        match load_style_presets(&self.portable_paths, &self.asset_root) {
             Ok(style_presets) => {
                 self.style_presets = style_presets;
                 if self.selected_style_preset_id.is_empty() {
@@ -3959,15 +3980,50 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
     )
 }
 
+fn repository_asset_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
 fn repository_style_preset_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/style_presets")
+    repository_asset_root().join("presets/style_presets")
+}
+
+fn repository_export_profile_dir() -> PathBuf {
+    repository_asset_root().join("presets/export_profiles")
+}
+
+fn packaged_style_preset_dir(asset_root: &Path) -> PathBuf {
+    asset_root.join("presets/style_presets")
+}
+
+fn packaged_export_profile_dir(asset_root: &Path) -> PathBuf {
+    asset_root.join("presets/export_profiles")
+}
+
+fn builtin_style_preset_dir(asset_root: &Path) -> PathBuf {
+    let packaged_dir = packaged_style_preset_dir(asset_root);
+    if packaged_dir.is_dir() {
+        packaged_dir
+    } else {
+        repository_style_preset_dir()
+    }
+}
+
+fn builtin_export_profile_dir(asset_root: &Path) -> PathBuf {
+    let packaged_dir = packaged_export_profile_dir(asset_root);
+    if packaged_dir.is_dir() {
+        packaged_dir
+    } else {
+        repository_export_profile_dir()
+    }
 }
 
 fn load_style_presets(
     portable_paths: &PortablePaths,
+    asset_root: &Path,
 ) -> std::result::Result<Vec<BaseStylePreset>, String> {
     load_base_style_presets_overlay(
-        &repository_style_preset_dir(),
+        &builtin_style_preset_dir(asset_root),
         Some(&portable_paths.user_style_presets_dir()),
     )
     .map_err(|error| error.to_string())
@@ -4494,6 +4550,113 @@ mod tests {
         assert_eq!(preset.display_name, "ユーザー上書きマーカー");
         assert_eq!(preset.thickness, Some(22.0));
         assert_eq!(preset.opacity, Some(0.35));
+    }
+
+    #[test]
+    fn desktop_app_prefers_packaged_builtin_assets_when_present() {
+        let temp_dir = tempdir().expect("temp dir");
+        let asset_root = temp_dir.path().join("PauseInk");
+        let style_dir = asset_root.join("presets/style_presets");
+        let export_dir = asset_root.join("presets/export_profiles");
+        std::fs::create_dir_all(&style_dir).expect("style dir");
+        std::fs::create_dir_all(&export_dir).expect("export dir");
+        std::fs::write(
+            style_dir.join("portable_marker.json5"),
+            r#"
+            {
+              id: "portable_marker",
+              display_name: "配布用マーカー",
+              base_style: {
+                thickness: 13.0,
+                opacity: 0.45,
+                color_rgba: [0.4, 0.8, 0.2, 0.45],
+              },
+            }
+            "#,
+        )
+        .expect("style preset");
+        std::fs::write(
+            export_dir.join("portable_medium.json5"),
+            r#"
+            {
+              id: "portable_medium",
+              display_name: "配布用中",
+              source_kind: "app_authored",
+              compatibility: "any",
+              notes: "配布 build 用 profile",
+              settings_buckets: {
+                "720p": {
+                  target_video_bitrate_kbps: 4100,
+                  max_video_bitrate_kbps: 6200,
+                  audio_bitrate_kbps: 128,
+                  sample_rate_hz: 48000,
+                  keyframe_interval_seconds: 2,
+                  preferred_audio_codecs: ["libopus"],
+                },
+              },
+            }
+            "#,
+        )
+        .expect("export profile");
+
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let app = DesktopApp::new_with_asset_root(
+            portable_paths,
+            Settings::default(),
+            None,
+            None,
+            asset_root,
+        );
+
+        assert!(
+            app.style_presets
+                .iter()
+                .any(|preset| preset.id == "portable_marker"
+                    && preset.display_name == "配布用マーカー"),
+            "配布 artifact に同梱した style preset が優先読込されてほしい"
+        );
+        let catalog = app
+            .export
+            .catalog
+            .as_ref()
+            .expect("packaged export catalog should load");
+        assert!(
+            catalog.resolve("webm_vp9_opus", "portable_medium").is_ok(),
+            "配布 artifact に同梱した export profile が UI に出てほしい"
+        );
+    }
+
+    #[test]
+    fn desktop_app_falls_back_to_repository_builtin_assets_when_packaged_dirs_are_missing() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let app = DesktopApp::new_with_asset_root(
+            portable_paths,
+            Settings::default(),
+            None,
+            None,
+            temp_dir.path().join("missing-release-root"),
+        );
+
+        assert!(
+            app.style_presets
+                .iter()
+                .any(|preset| preset.id == "marker_highlight"),
+            "packaged asset が無い開発実行では repo 既定 preset に fallback したい"
+        );
+        let catalog = app
+            .export
+            .catalog
+            .as_ref()
+            .expect("repository export catalog should load");
+        assert!(
+            catalog.resolve("webm_vp9_opus", "medium").is_ok(),
+            "packaged asset が無くても repo 既定 export profile を使いたい"
+        );
     }
 
     #[test]
@@ -5462,9 +5625,9 @@ mod tests {
         let source = include_str!("main.rs");
 
         assert!(
-            source.contains(
-                "#![cfg_attr(all(target_os = \"windows\", not(debug_assertions)), windows_subsystem = \"windows\")]"
-            ),
+            source.contains("windows_subsystem = \"windows\"")
+                && source.contains("target_os = \"windows\"")
+                && source.contains("not(debug_assertions)"),
             "Windows release build では GUI subsystem を宣言し、二重にコンソールが開かないようにしたい"
         );
     }
