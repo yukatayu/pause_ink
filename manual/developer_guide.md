@@ -106,7 +106,7 @@ PauseInk は family と profile を分離しています。
 - color_rgba
 
 entrance / clear / combo preset の宣言フィールドは将来拡張余地として保持していますが、v1.0 実装ではまだ active UI binding を絞っています。
-renderer 側には outline / drop shadow / glow の描画処理がありますが、inspector UI と preset loader はまだ thickness / color 中心です。さらに effect の合成順は現状 stroke-local で、後続 stroke の outline を先行 stroke 本体の背面へ必ず回す multi-pass compositor にはなっていません。
+renderer 側には outline / drop shadow / glow の描画処理があり、同一 object 内では outer effect を先に、stroke 本体を後に描く multi-pass compositor にしてあります。これにより、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくくしています。いっぽうで inspector UI と preset loader はまだ thickness / color 中心で、effect パラメータを UI から細かく触る導線は未実装です。
 
 ## 7. FFmpeg runtime
 

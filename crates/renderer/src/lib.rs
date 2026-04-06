@@ -663,6 +663,16 @@ mod tests {
         image.rgba_pixels[(y * image.width as usize + x) * 4 + 3]
     }
 
+    fn rgba_at(image: &RenderedOverlay, x: usize, y: usize) -> [u8; 4] {
+        let index = (y * image.width as usize + x) * 4;
+        [
+            image.rgba_pixels[index],
+            image.rgba_pixels[index + 1],
+            image.rgba_pixels[index + 2],
+            image.rgba_pixels[index + 3],
+        ]
+    }
+
     #[test]
     fn visible_stroke_renders_non_zero_alpha_pixels() {
         let project = AnnotationProject {
@@ -830,5 +840,92 @@ mod tests {
         assert!(alpha_at(&image, 6, 10) > 0);
         assert!(alpha_at(&image, 54, 10) > 0);
         assert_eq!(alpha_at(&image, image.width as usize - 1, 10), 0);
+    }
+
+    #[test]
+    fn later_stroke_outline_stays_behind_earlier_stroke_body_within_same_object() {
+        let horizontal = Stroke {
+            id: StrokeId::new("stroke-horizontal"),
+            raw_samples: vec![
+                StrokeSample {
+                    position: Point2 { x: 12.0, y: 24.0 },
+                    at: MediaTime::from_millis(0),
+                    pressure: None,
+                },
+                StrokeSample {
+                    position: Point2 { x: 116.0, y: 24.0 },
+                    at: MediaTime::from_millis(10),
+                    pressure: None,
+                },
+            ],
+            created_at: MediaTime::from_millis(0),
+            ..Stroke::default()
+        };
+        let vertical = Stroke {
+            id: StrokeId::new("stroke-vertical"),
+            raw_samples: vec![
+                StrokeSample {
+                    position: Point2 { x: 64.0, y: 8.0 },
+                    at: MediaTime::from_millis(20),
+                    pressure: None,
+                },
+                StrokeSample {
+                    position: Point2 { x: 64.0, y: 40.0 },
+                    at: MediaTime::from_millis(30),
+                    pressure: None,
+                },
+            ],
+            created_at: MediaTime::from_millis(20),
+            ..Stroke::default()
+        };
+        let style = StyleSnapshot {
+            color: RgbaColor::new(255, 64, 32, 255),
+            thickness: 6.0,
+            outline: pauseink_domain::OutlineStyle {
+                enabled: true,
+                width: 4.0,
+                color: RgbaColor::new(0, 0, 0, 255),
+            },
+            ..StyleSnapshot::default()
+        };
+        let project = AnnotationProject {
+            strokes: vec![horizontal, vertical],
+            glyph_objects: vec![GlyphObject {
+                id: GlyphObjectId::new("object-cross"),
+                stroke_ids: vec![
+                    StrokeId::new("stroke-horizontal"),
+                    StrokeId::new("stroke-vertical"),
+                ],
+                style,
+                ..GlyphObject::default()
+            }],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(100),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let rgba = rgba_at(&image, 69, 24);
+        assert!(
+            rgba[0] > 180,
+            "expected horizontal body to stay visible, got {rgba:?}"
+        );
+        assert!(
+            rgba[1] < 120,
+            "expected non-outline dominant pixel, got {rgba:?}"
+        );
+        assert!(
+            rgba[2] < 120,
+            "expected non-outline dominant pixel, got {rgba:?}"
+        );
+        assert!(rgba[3] > 0, "expected visible pixel, got {rgba:?}");
     }
 }

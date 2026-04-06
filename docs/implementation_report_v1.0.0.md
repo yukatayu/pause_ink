@@ -730,12 +730,12 @@
 - 根本原因の整理:
   - template / guide の継続描画は既存 object へ stroke を append するが、renderer は object 配下の stroke を `object.style` で描くため、`active_style` だけ変えても見た目が更新されない
   - `ガイド解除` ボタンは `guide_state` / `guide_geometry` しか消しておらず、`last_committed_object_bounds`、modifier state、guide capture context が残っていた
-  - effect は renderer/domain には outline / drop shadow / glow primitive があるが、preset loader と inspector UI は thickness / color 中心で、cross-stroke ordering を保証する compositor にはなっていない
+  - effect は renderer/domain には outline / drop shadow / glow primitive があるが、preset loader と inspector UI は thickness / color 中心で、cross-stroke ordering の保証も不足していた
 - 今回の実装方針:
   - 既存 object へ append する batch に `SetGlyphObjectStyleCommand` を入れて object style を最新の active style へ同期する
   - `ガイド解除` は guide overlay だけでなく capture context、modifier flag、last bounds もまとめて reset する
   - slot 移動は `step_template_slot_index` helper へ寄せて underflow / overflow を防ぐ
-  - effect は今回 renderer を広げず、現状の実装範囲と今後必要な ordering rule を記録する
+  - effect は UI を広げず、renderer backend だけ object 単位の multi-pass へ補正して ordering rule を先に固定する
 - 2026-04-06T11:16:14+09:00
   - 実施内容: `前スロット` UI、`SetGlyphObjectStyleCommand`、guide clear reset helper、関連 unit test を追加した。
   - 変更ファイル: `crates/domain/src/project_commands.rs`, `crates/app/src/lib.rs`, `crates/app/src/main.rs`
@@ -744,6 +744,13 @@
 - 2026-04-06T11:16:14+09:00
   - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
   - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-domain` 16、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: renderer の stroke effect 描画を object 単位の multi-pass へ切り替え、cross-stroke outline ordering の regression test を追加した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`
+  - 結果: 同一 object 内では drop shadow / glow / outline を全 stroke ぶん先に描き、その後に stroke 本体を重ねる構成になった。`x` の 2 画目 outline が 1 画目本体を覆いにくい順序を backend で固定した。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo test -p pauseink-renderer -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` 14 + 10、`pauseink-renderer` 7 tests が通過。multi-pass 化後も既存 preview/clear/path-trace 回帰を壊していない。
 
 ## 9. Export / profile メモ
 
@@ -787,7 +794,7 @@
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。
-- renderer は outline / drop shadow / glow の primitive を持つが、preset loader と inspector UI はまだ thickness / color 中心で、cross-stroke effect ordering を制御する multi-pass compositor は未実装。
+- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。ただし preset loader と inspector UI はまだ thickness / color 中心で、effect パラメータを UI から細かく触る導線は未実装。
 - Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。

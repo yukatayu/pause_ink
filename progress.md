@@ -6,7 +6,7 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
 - 現在の即時マイルストーン: 今回の slot/style/guide 修正を report・manual・commit まで閉じる
 - 最新の確認事項:
@@ -47,7 +47,8 @@
   - `前スロット` を追加し、template slot の前後移動を underflow / overflow しない helper へ寄せた
   - 既存 object へ stroke を append する際、object style も最新の active style へ同期するよう修正し、基本スタイル変更が template / guide の継続描画で反映されるようにした
   - `ガイド解除` は overlay だけでなく capture 文脈、modifier 状態、last committed bounds もまとめて捨てるようにした
-  - effect 実装状況も確認し、renderer には outline / drop shadow / glow があるが、UI/preset loader と cross-stroke ordering は未完であることを整理した
+  - renderer の effect 合成を object 単位の multi-pass へ寄せ、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくい順序へ補正した
+  - effect 実装状況も整理し、renderer backend は整ったが、UI/preset loader は引き続き thickness / color 中心であることを明記した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
   - slot/style/guide 修正後も `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
