@@ -130,6 +130,9 @@ pub struct Settings {
     pub stroke_stabilization_default: u8,
     pub google_fonts: GoogleFontsSettings,
     pub local_font_dirs: Vec<PathBuf>,
+    pub editor_ui_state: Option<serde_json::Value>,
+    pub base_style_state: Option<serde_json::Value>,
+    pub entrance_state: Option<serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -144,6 +147,9 @@ impl Default for Settings {
             stroke_stabilization_default: 35,
             google_fonts: GoogleFontsSettings::default(),
             local_font_dirs: Vec::new(),
+            editor_ui_state: None,
+            base_style_state: None,
+            entrance_state: None,
         }
     }
 }

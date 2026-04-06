@@ -384,6 +384,7 @@ fn render_overlay_sequence(
         let overlay = render_overlay_rgba(&RenderRequest {
             project: &snapshot.project,
             time,
+            preview_force_visible_batch: None,
             width: snapshot.width,
             height: snapshot.height,
             source_width: snapshot.width,
@@ -434,7 +435,11 @@ fn export_png_sequence(
         };
         report_progress(ExportProgressUpdate {
             fraction,
-            stage_label: format!("2/3 PNG 連番を書き出し中 {}/{}", frame_index + 1, frame_count),
+            stage_label: format!(
+                "2/3 PNG 連番を書き出し中 {}/{}",
+                frame_index + 1,
+                frame_count
+            ),
         });
     }
     Ok(())

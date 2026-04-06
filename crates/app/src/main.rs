@@ -566,7 +566,8 @@ fn export_progress_hint(progress_label: &str) -> &'static str {
         "書き出し自体は終わっており、作業用の一時ファイルを削除しています。"
     } else if progress_label.contains("最終処理中") {
         "ffmpeg がコンテナの最終化を行っています。完了までもう少し待ってください。"
-    } else if progress_label.contains("フレーム生成中") || progress_label.contains("フレームを準備中")
+    } else if progress_label.contains("フレーム生成中")
+        || progress_label.contains("フレームを準備中")
     {
         "各フレーム用の透明オーバーレイ画像を生成しています。動画が長いほど時間がかかります。"
     } else if progress_label.contains("書き出し中") {
@@ -627,7 +628,17 @@ struct DesktopApp {
     preview_texture: Option<egui::TextureHandle>,
     preview_key: Option<(PathBuf, i64, u32, u32)>,
     overlay_texture: Option<egui::TextureHandle>,
-    overlay_key: Option<(i64, usize, usize, u32, u32, u32, u32)>,
+    overlay_key: Option<(
+        i64,
+        usize,
+        usize,
+        u32,
+        u32,
+        u32,
+        u32,
+        Option<pauseink_domain::MediaTime>,
+    )>,
+    preview_visible_batch_anchor: Option<pauseink_domain::MediaTime>,
     canvas_drag_active: bool,
     guide_capture_armed: bool,
     guide_modifier_was_down: bool,
@@ -681,7 +692,7 @@ impl DesktopApp {
         let (preset_editor_id, preset_editor_name) =
             preset_editor_fields_from_selection(&style_presets, &selected_style_preset_id);
 
-        Self {
+        let mut app = Self {
             session,
             portable_paths,
             settings,
@@ -708,6 +719,7 @@ impl DesktopApp {
             preview_key: None,
             overlay_texture: None,
             overlay_key: None,
+            preview_visible_batch_anchor: None,
             canvas_drag_active: false,
             guide_capture_armed: false,
             guide_modifier_was_down: false,
@@ -722,7 +734,9 @@ impl DesktopApp {
             pending_export: None,
             last_update_at: Instant::now(),
             last_autosave_at: Instant::now(),
-        }
+        };
+        app.restore_app_ui_state_from_settings();
+        app
     }
 
     fn push_log(&mut self, message: impl Into<String>) {
@@ -735,6 +749,73 @@ impl DesktopApp {
 
     fn mark_project_ui_dirty(&mut self) {
         self.session.dirty = true;
+    }
+
+    fn current_preview_force_visible_batch(&self) -> Option<pauseink_domain::MediaTime> {
+        let is_playing = self
+            .session
+            .playback
+            .as_ref()
+            .is_some_and(|playback| playback.is_playing);
+        if is_playing {
+            None
+        } else {
+            self.preview_visible_batch_anchor
+        }
+    }
+
+    fn set_preview_force_visible_batch(&mut self, anchor: pauseink_domain::MediaTime) {
+        if self.preview_visible_batch_anchor == Some(anchor) {
+            return;
+        }
+        self.preview_visible_batch_anchor = Some(anchor);
+        self.overlay_key = None;
+    }
+
+    fn finalize_preview_force_visible_batch(&mut self) {
+        if self.preview_visible_batch_anchor.take().is_some() {
+            self.overlay_key = None;
+        }
+    }
+
+    fn cancel_active_canvas_stroke(&mut self) {
+        if !self.canvas_drag_active
+            && self.session.current_stroke_preview().is_none()
+            && !self.guide_capture_state.in_progress
+        {
+            return;
+        }
+
+        self.session.cancel_stroke();
+        self.canvas_drag_active = false;
+        self.guide_capture_armed = false;
+        self.guide_capture_state.cancel();
+        self.guide_modifier_used_for_stroke = false;
+    }
+
+    fn play_transport(&mut self) {
+        self.finalize_preview_force_visible_batch();
+        self.cancel_active_canvas_stroke();
+        if self.session.play() {
+            self.preview_key = None;
+            self.overlay_key = None;
+        }
+    }
+
+    fn pause_transport(&mut self) {
+        if self.session.pause() {
+            self.preview_key = None;
+            self.overlay_key = None;
+        }
+    }
+
+    fn seek_transport(&mut self, time: pauseink_domain::MediaTime) {
+        self.finalize_preview_force_visible_batch();
+        self.cancel_active_canvas_stroke();
+        if self.session.seek(time) {
+            self.preview_key = None;
+            self.overlay_key = None;
+        }
     }
 
     fn selected_style_preset(&self) -> Option<&BaseStylePreset> {
@@ -934,6 +1015,21 @@ impl DesktopApp {
         presets.insert(PROJECT_ENTRANCE_PRESET_KEY.to_owned(), entrance_state);
     }
 
+    fn persist_app_ui_state_into_settings(&mut self) {
+        self.settings.editor_ui_state = Some(
+            serde_json::to_value(ProjectEditorUiState::capture(self))
+                .expect("settings editor ui state should serialize"),
+        );
+        self.settings.base_style_state = Some(
+            serde_json::to_value(SavedBaseStylePresetState::capture(self))
+                .expect("settings base style state should serialize"),
+        );
+        self.settings.entrance_state = Some(
+            serde_json::to_value(SavedEntrancePresetState::capture(self))
+                .expect("settings entrance state should serialize"),
+        );
+    }
+
     fn restore_project_ui_state_from_document(&mut self) {
         if let Some(editor_state) = self
             .session
@@ -970,6 +1066,47 @@ impl DesktopApp {
             .presets
             .get(PROJECT_ENTRANCE_PRESET_KEY)
             .cloned()
+            .and_then(|value| serde_json::from_value::<SavedEntrancePresetState>(value).ok())
+        {
+            self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
+            if let Some(preset_id) = entrance_state.preset_id {
+                self.selected_style_preset_id = preset_id;
+            }
+        }
+
+        self.font_config_dirty = true;
+        self.reset_template_slots();
+        self.refresh_guide_geometry();
+        self.sync_preset_editor_fields_from_selection();
+    }
+
+    fn restore_app_ui_state_from_settings(&mut self) {
+        if let Some(editor_state) = self
+            .settings
+            .editor_ui_state
+            .clone()
+            .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
+        {
+            editor_state.template.apply_to(&mut self.template);
+            self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+        }
+
+        if let Some(base_style_state) = self
+            .settings
+            .base_style_state
+            .clone()
+            .and_then(|value| serde_json::from_value::<SavedBaseStylePresetState>(value).ok())
+        {
+            self.session.active_style = base_style_state.resolved_snapshot;
+            if let Some(preset_id) = base_style_state.preset_id {
+                self.selected_style_preset_id = preset_id;
+            }
+        }
+
+        if let Some(entrance_state) = self
+            .settings
+            .entrance_state
+            .clone()
             .and_then(|value| serde_json::from_value::<SavedEntrancePresetState>(value).ok())
         {
             self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
@@ -1569,6 +1706,8 @@ impl DesktopApp {
             self.push_log("export はすでに実行中です。");
             return;
         }
+        self.finalize_preview_force_visible_batch();
+        self.cancel_active_canvas_stroke();
 
         let Some(runtime) = self.runtime.clone() else {
             self.push_log("runtime 未検出のため export を開始できません。");
@@ -1664,6 +1803,9 @@ impl DesktopApp {
     }
 
     fn import_media(&mut self, path: PathBuf) {
+        self.finalize_preview_force_visible_batch();
+        self.cancel_active_canvas_stroke();
+
         let Some(provider) = self.provider.as_ref() else {
             self.push_log("FFmpeg runtime が見つからないためメディアを読込できません。");
             self.runtime_diagnostics_open = true;
@@ -1681,6 +1823,8 @@ impl DesktopApp {
     }
 
     fn open_project(&mut self, path: PathBuf) {
+        self.finalize_preview_force_visible_batch();
+        self.cancel_active_canvas_stroke();
         match AppSession::load_project_from_path(&path) {
             Ok(mut session) => {
                 session.set_history_limit(self.settings.history_depth);
@@ -1688,6 +1832,7 @@ impl DesktopApp {
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
                 self.clear_guide_state();
+                self.restore_app_ui_state_from_settings();
                 self.restore_project_ui_state_from_document();
                 self.template.placement_armed = false;
                 self.preview_key = None;
@@ -1699,6 +1844,7 @@ impl DesktopApp {
     }
 
     fn save_project(&mut self, path: PathBuf) {
+        self.finalize_preview_force_visible_batch();
         self.persist_project_ui_state_into_document();
         match self.session.save_project_to_path(&path) {
             Ok(()) => {
@@ -1811,6 +1957,7 @@ impl DesktopApp {
         source_width: u32,
         source_height: u32,
     ) {
+        let preview_force_visible_batch = self.current_preview_force_visible_batch();
         let key = (
             self.session.current_time().ticks,
             self.session.project.strokes.len(),
@@ -1819,6 +1966,7 @@ impl DesktopApp {
             target_height,
             source_width,
             source_height,
+            preview_force_visible_batch,
         );
         if self.overlay_key.as_ref() == Some(&key) {
             return;
@@ -1827,6 +1975,7 @@ impl DesktopApp {
         match render_overlay_rgba(&RenderRequest {
             project: &self.session.project,
             time: self.session.current_time(),
+            preview_force_visible_batch,
             width: target_width.max(1),
             height: target_height.max(1),
             source_width: source_width.max(1),
@@ -1861,6 +2010,16 @@ impl DesktopApp {
         frame_height: u32,
         ctx: &egui::Context,
     ) {
+        if self
+            .session
+            .playback
+            .as_ref()
+            .is_some_and(|playback| playback.is_playing)
+        {
+            self.cancel_active_canvas_stroke();
+            return;
+        }
+
         let pointer_position = response
             .interact_pointer_pos()
             .or_else(|| ctx.input(|input| input.pointer.hover_pos()));
@@ -1890,6 +2049,7 @@ impl DesktopApp {
         let mut started_stroke_this_frame = false;
 
         if !self.canvas_drag_active && press_started_on_canvas {
+            let batch_anchor = self.session.current_time();
             self.guide_capture_armed =
                 self.guide_modifier_active(ctx) && self.template.placed_slots.is_none();
             if self.guide_capture_armed {
@@ -1903,8 +2063,8 @@ impl DesktopApp {
                     frame_width,
                     frame_height,
                 ) {
-                    self.session
-                        .begin_stroke(frame_point, self.session.current_time());
+                    self.set_preview_force_visible_batch(batch_anchor);
+                    self.session.begin_stroke(frame_point, batch_anchor);
                     self.canvas_drag_active = true;
                     started_stroke_this_frame = true;
                 }
@@ -2198,6 +2358,7 @@ impl DesktopApp {
     }
 
     fn save_settings(&mut self) {
+        self.persist_app_ui_state_into_settings();
         match save_settings_to_file(&self.portable_paths, &self.settings) {
             Ok(()) => {}
             Err(error) => self.push_log(format!("settings 保存失敗: {error}")),
@@ -2239,6 +2400,7 @@ impl DesktopApp {
                 session.active_style.stabilization_strength =
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
+                self.restore_app_ui_state_from_settings();
                 self.restore_project_ui_state_from_document();
                 self.preview_key = None;
                 self.overlay_key = None;
@@ -2969,9 +3131,9 @@ impl eframe::App for DesktopApp {
                     .clicked()
                 {
                     if playing {
-                        self.session.pause();
+                        self.pause_transport();
                     } else {
-                        self.session.play();
+                        self.play_transport();
                     }
                 }
 
@@ -2994,7 +3156,7 @@ impl eframe::App for DesktopApp {
                         duration.ticks as f64 / 1000.0
                     ));
                     if response.changed() {
-                        self.session.seek(pauseink_domain::MediaTime::from_millis(
+                        self.seek_transport(pauseink_domain::MediaTime::from_millis(
                             current_ms.round() as i64,
                         ));
                     }
@@ -4005,7 +4167,8 @@ fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> us
 mod tests {
     use super::*;
     use eframe::egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
-    use pauseink_portable_fs::{PortablePaths, Settings};
+    use pauseink_media::{ImportedMedia, MediaProbe, MediaSupport, PlaybackState};
+    use pauseink_portable_fs::{load_settings_from_file, PortablePaths, Settings};
     use tempfile::tempdir;
 
     fn initialized_test_context() -> egui::Context {
@@ -4018,6 +4181,28 @@ mod tests {
             |_ctx| {},
         );
         ctx
+    }
+
+    fn sample_imported_media() -> ImportedMedia {
+        ImportedMedia {
+            source_path: PathBuf::from("sample.mp4"),
+            probe: MediaProbe {
+                format_name: Some("mp4".into()),
+                duration_seconds: Some(5.0),
+                duration_raw: Some("5.000000".into()),
+                width: Some(1280),
+                height: Some(720),
+                frame_rate: Some(30.0),
+                avg_frame_rate_raw: Some("30/1".into()),
+                r_frame_rate_raw: Some("30/1".into()),
+                pix_fmt: Some("yuv420p".into()),
+                has_alpha: false,
+                has_audio: true,
+                video_codec: Some("h264".into()),
+                audio_codec: Some("aac".into()),
+                support: MediaSupport::Supported,
+            },
+        }
     }
 
     fn run_canvas_input_frame(
@@ -4197,6 +4382,84 @@ mod tests {
     }
 
     #[test]
+    fn save_and_relaunch_restores_style_template_and_effect_state_from_settings_file() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
+        app.session.active_style.thickness = 13.0;
+        app.session.active_style.opacity = 0.42;
+        app.session.active_style.outline.enabled = true;
+        app.session.active_style.outline.width = 4.0;
+        app.session.active_style.drop_shadow.enabled = true;
+        app.session.active_style.drop_shadow.offset_x = 5.0;
+        app.session.active_style.glow.enabled = true;
+        app.session.active_style.glow.blur_radius = 12.0;
+        app.session.active_style.blend_mode = pauseink_domain::BlendMode::Additive;
+        app.session.active_style.stabilization_strength = 0.77;
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        app.session.active_entrance.duration_mode =
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
+        app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
+        app.session.active_entrance.speed_scalar = 2.2;
+        app.template.text = "次回起動復元".to_owned();
+        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.settings.font_size = 128.0;
+        app.template.settings.tracking = 12.0;
+        app.template.settings.slope_degrees = 9.5;
+        app.template.settings.underlay_mode = UnderlayMode::FaintFill;
+        app.settings.guide_slope_degrees = -6.0;
+
+        app.save_settings();
+
+        let reopened_settings =
+            pauseink_portable_fs::load_settings_or_default(&portable_paths).expect("settings load");
+        let reopened = DesktopApp::new(portable_paths, reopened_settings, None, None);
+
+        assert_eq!(reopened.selected_style_preset_id, "marker_highlight");
+        assert_eq!(reopened.session.active_style.thickness, 13.0);
+        assert!((reopened.session.active_style.opacity - 0.42).abs() < 0.001);
+        assert!((reopened.session.active_style.stabilization_strength - 0.77).abs() < 0.001);
+        assert!(reopened.session.active_style.outline.enabled);
+        assert!(reopened.session.active_style.drop_shadow.enabled);
+        assert!(reopened.session.active_style.glow.enabled);
+        assert_eq!(
+            reopened.session.active_style.blend_mode,
+            pauseink_domain::BlendMode::Additive
+        );
+        assert_eq!(
+            reopened.session.active_style.color,
+            pauseink_domain::RgbaColor::new(240, 32, 64, 255)
+        );
+        assert_eq!(
+            reopened.session.active_entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert_eq!(
+            reopened.session.active_entrance.duration_mode,
+            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
+        );
+        assert_eq!(
+            media_duration_to_millis(reopened.session.active_entrance.duration),
+            900
+        );
+        assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
+        assert_eq!(reopened.template.text, "次回起動復元");
+        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
+        assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
+        assert!((reopened.template.settings.slope_degrees - 9.5).abs() < 0.01);
+        assert_eq!(
+            reopened.template.settings.underlay_mode,
+            UnderlayMode::FaintFill
+        );
+        assert!((reopened.settings.guide_slope_degrees - -6.0).abs() < 0.01);
+    }
+
+    #[test]
     fn desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids() {
         let temp_dir = tempdir().expect("temp dir");
         let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
@@ -4229,6 +4492,59 @@ mod tests {
         assert_eq!(preset.display_name, "ユーザー上書きマーカー");
         assert_eq!(preset.thickness, Some(22.0));
         assert_eq!(preset.opacity, Some(0.35));
+    }
+
+    #[test]
+    fn save_settings_and_restart_restore_workspace_style_and_template_state() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.session.active_style.color = pauseink_domain::RgbaColor::new(250, 180, 32, 255);
+        app.session.active_style.thickness = 15.0;
+        app.session.active_style.opacity = 0.38;
+        app.session.active_style.outline.enabled = true;
+        app.session.active_style.outline.width = 5.0;
+        app.session.active_style.drop_shadow.enabled = true;
+        app.session.active_style.drop_shadow.offset_x = 6.0;
+        app.session.active_style.drop_shadow.offset_y = 4.0;
+        app.session.active_style.drop_shadow.blur_radius = 7.0;
+        app.session.active_style.glow.enabled = true;
+        app.session.active_style.glow.blur_radius = 9.0;
+        app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
+        app.session.active_entrance.speed_scalar = 1.8;
+        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.text = "再起動復元".to_owned();
+        app.template.settings.font_size = 132.0;
+        app.template.settings.tracking = 10.0;
+        app.template.settings.slope_degrees = 8.0;
+        app.settings.guide_slope_degrees = -4.5;
+
+        app.save_settings();
+
+        let loaded = load_settings_from_file(&portable_paths).expect("settings should load");
+        let reopened = DesktopApp::new(portable_paths, loaded, None, None);
+
+        assert_eq!(reopened.selected_style_preset_id, "marker_highlight");
+        assert_eq!(reopened.session.active_style.thickness, 15.0);
+        assert!((reopened.session.active_style.opacity - 0.38).abs() < 0.001);
+        assert!(reopened.session.active_style.outline.enabled);
+        assert!((reopened.session.active_style.outline.width - 5.0).abs() < 0.001);
+        assert!(reopened.session.active_style.drop_shadow.enabled);
+        assert!((reopened.session.active_style.drop_shadow.offset_x - 6.0).abs() < 0.001);
+        assert!(reopened.session.active_style.glow.enabled);
+        assert_eq!(
+            reopened.session.active_entrance.kind,
+            pauseink_domain::EntranceKind::PathTrace
+        );
+        assert!((reopened.session.active_entrance.speed_scalar - 1.8).abs() < 0.001);
+        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert_eq!(reopened.template.text, "再起動復元");
+        assert!((reopened.template.settings.font_size - 132.0).abs() < 0.001);
+        assert!((reopened.template.settings.slope_degrees - 8.0).abs() < 0.001);
+        assert!((reopened.settings.guide_slope_degrees - -4.5).abs() < 0.001);
     }
 
     #[test]
@@ -4666,6 +4982,63 @@ mod tests {
     }
 
     #[test]
+    fn playback_running_disables_canvas_stroke_capture() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.session.playback = Some(PlaybackState::new(sample_imported_media()));
+        assert!(app.session.play());
+
+        run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(Pos2::new(120.0, 120.0)),
+                Event::PointerButton {
+                    pos: Pos2::new(120.0, 120.0),
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+
+        assert!(!app.canvas_drag_active, "再生中は stroke を開始しない");
+        assert!(
+            app.session.current_stroke_preview().is_none(),
+            "再生中に preview draft を作ってはいけない"
+        );
+    }
+
+    #[test]
+    fn preview_force_visible_batch_tracks_written_batch_not_current_transport_time() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.session.playback = Some(PlaybackState::new(sample_imported_media()));
+
+        app.set_preview_force_visible_batch(pauseink_domain::MediaTime::from_millis(1_000));
+        app.session
+            .seek(pauseink_domain::MediaTime::from_millis(1_120));
+
+        assert_eq!(
+            app.current_preview_force_visible_batch(),
+            Some(pauseink_domain::MediaTime::from_millis(1_000)),
+            "paused preview は current transport time ではなく、いま fully visible 扱いにした batch anchor を保持すべき"
+        );
+
+        app.play_transport();
+        assert_eq!(
+            app.current_preview_force_visible_batch(),
+            None,
+            "play 開始時には preview-only batch override を timeline へ戻すべき"
+        );
+    }
+
+    #[test]
     fn committed_stroke_keeps_press_origin_as_first_raw_sample() {
         let temp_dir = tempdir().expect("temp dir");
         let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
@@ -4730,6 +5103,57 @@ mod tests {
             (first.position.y - expected_press_origin.y).abs() < 0.01,
             "最初の y sample は press origin を保つべき"
         );
+    }
+
+    #[test]
+    fn canvas_input_is_ignored_while_playback_is_running() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.session.playback = Some(pauseink_media::PlaybackState {
+            media: pauseink_media::ImportedMedia {
+                source_path: PathBuf::from("/tmp/example.mp4"),
+                probe: pauseink_media::MediaProbe {
+                    format_name: Some("mp4".to_owned()),
+                    duration_seconds: Some(10.0),
+                    duration_raw: Some("10".to_owned()),
+                    width: Some(1280),
+                    height: Some(720),
+                    frame_rate: Some(30.0),
+                    avg_frame_rate_raw: Some("30/1".to_owned()),
+                    r_frame_rate_raw: Some("30/1".to_owned()),
+                    pix_fmt: Some("yuv420p".to_owned()),
+                    has_alpha: false,
+                    has_audio: true,
+                    video_codec: Some("h264".to_owned()),
+                    audio_codec: Some("aac".to_owned()),
+                    support: pauseink_media::MediaSupport::Supported,
+                },
+            },
+            current_time: pauseink_domain::MediaTime::from_millis(250),
+            is_playing: true,
+        });
+
+        let press = Pos2::new(120.0, 120.0);
+        run_canvas_input_frame(
+            &mut app,
+            &ctx,
+            vec![
+                Event::PointerMoved(press),
+                Event::PointerButton {
+                    pos: press,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+
+        assert!(!app.canvas_drag_active);
+        assert!(app.session.current_stroke_preview().is_none());
+        assert!(app.session.project.strokes.is_empty());
     }
 
     #[test]
@@ -4991,10 +5415,7 @@ mod tests {
             export_progress_hint("2/3 合成動画を書き出し中 (最終処理中)")
                 .contains("コンテナの最終化")
         );
-        assert!(
-            export_progress_hint("3/3 一時ファイルを整理中")
-                .contains("一時ファイル")
-        );
+        assert!(export_progress_hint("3/3 一時ファイルを整理中").contains("一時ファイル"));
     }
 
     #[test]

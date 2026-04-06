@@ -171,6 +171,11 @@
 
 ## 5. 作業ログ
 
+- 2026-04-06T00:00:00+09:00
+  - 実施内容: paused batch preview / cross-object effect order / workspace 設定復元 / 再生中入力禁止の bugfix バッチを開始し、即時マイルストーンを更新した。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: root cause 仮説を 1) preview と export が同じ時系列評価を共有している、2) effect が object 単位 pass で cross-object の背面保証を失っている、3) settings 保存が app workspace state を含んでいない、の 3 系統に整理した。
+  - 次の一手: renderer / app / portable settings へ failing test を追加し、原因を test で固定してから実装修正に入る。
 - 2026-04-04T23:56:59+09:00
   - 実施内容: `prototype` ブランチ作成、必読 docs 読了、workspace scaffold 調査、環境確認。
   - 変更ファイル: なし
@@ -958,6 +963,37 @@
   - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - テスト: `guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut` を追加し、`cargo test -p pauseink-app guide_modifier_tap_does_not_advance_after_ctrl_z_shortcut -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行。
   - 結果: すべて exit 0。`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` の直後に guide が意図せず次文字へ送られないことを固定できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T17:15:41+09:00
+  - 事象: user から「一時停止中に書いた object が preview で即時に全表示されない」「A/B を書いて少し再生して止めてから C を書くと、preview/export の時系列が意図に合わない」「後から描いた object の outline/drop shadow が先の body より前に見える」「outline/effect/font 等が次回起動で戻らない」と報告が来た。
+  - root cause:
+    - renderer の entrance 計算が page 単位の単一 timed queue だったため、paused し直して後から書いた batch も前の batch の完了待ちになっていた。
+    - preview と export が同じ visibility 計算を共有しており、一時停止中の current batch だけを強制表示する経路が無かった。
+    - outer effect 合成が object-first multi-pass だったため、後から描いた object の outline / drop shadow が先の object body の上に乗り得た。
+    - `settings.json5` は基本設定しか持っておらず、workspace 的な style / entrance / template / font / guide state は project reopen でしか戻らなかった。
+  - 実施内容:
+    - `RenderRequest` に `preview_force_visible_batch` を追加し、preview だけ current paused batch を fully visible にする経路を追加した。
+    - timed entrance は page 全体 1 本の queue ではなく、同じ `created_at` を持つ paused batch lane の中だけで直列化するよう変更した。採用した安全解釈は「同じ page の paused batch は並列 lane、lane 内の timed object だけが reveal 順に待つ」で、これは user 例の `A/B -> 少し再生 -> C` に最も近い。
+    - outline / glow / drop shadow / base は layer-first に描くようにし、later object の outer effect が earlier object body を潰さないようにした。
+    - `handle_canvas_input` は playback 中なら即 return し、drag 中に再生へ入ったケースも `cancel_stroke` で安全に落とすようにした。
+    - `settings.json5` に editor UI / resolved base style / resolved entrance の snapshot を保存し、起動時に style / effect / template / font / guide を復元するようにした。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/app/src/main.rs`, `crates/portable_fs/src/lib.rs`, `crates/export/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト:
+    - red/green: `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`
+    - red/green: `cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`
+    - red/green: `cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`
+    - red/green: `cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`
+    - red/green: `cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture`
+    - 回帰: `cargo test -p pauseink-renderer`
+    - 回帰: `cargo test -p pauseink-app --lib --bins`
+    - 回帰: `cargo test -p pauseink-portable-fs`
+    - 最終確認: `cargo fmt --all --check`
+    - 最終確認: `cargo test --workspace`
+    - 最終確認: `cargo check -p pauseink-app --all-targets`
+  - 結果: targeted の red/green はすべて green 化できた。`cargo fmt --all --check`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` もすべて exit 0 で、paused preview override、batch lane 並列化、cross-object effect order、再生中 input 抑止、起動時 workspace 復元の修正を workspace 回帰まで含めて固定できた。`eframe/egui 0.34.1` の `Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T17:34:28+09:00
+  - 実施内容: reviewer sub-agent `Herschel` の結果を統合し、preview の current paused batch だけを強制可視化する `preview_force_visible_batch` 経路、`created_at` ごとの paused batch lane 直列化、`drop_shadow -> glow -> outline -> base` の layer-first compositor が今回の最小安全修正であることを report へ反映した。あわせて user / developer guide に「preview 専用 override は再生 / 保存 / 書き出しで通常 timeline へ戻る」旨を追記し、`progress.md` の即時マイルストーンを完了済みへ更新した。
+  - 変更ファイル: `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: bugfix バッチの仕様意図、採用理由、検証結果、残タスク整理が docs 上でも一致した。
 
 ## 9. Export / profile メモ
 
