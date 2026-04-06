@@ -544,6 +544,12 @@
   - 結果: exit 0。5 tests passed。`next_cell_origin_x` を分離した guide geometry と grapheme scale helper の unit test を追加して通過。
 - `cargo test -p pauseink-app --lib --bins`
   - 結果: exit 0。`pauseink-app` lib 11 tests、bin 6 tests が通過。font choice list、guide vertical advance state、Windows runtime help text、pointer mapping の回帰を確認。
+- `cargo fmt --all && cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。Ctrl guide capture を modifier release 確定へ変更後も `pauseink-app` lib 11 tests、bin 8 tests が通過。`GuideCaptureState` の release / mid-drag finalize pending を unit test で固定した。
+- `cargo test --workspace`
+  - 結果: exit 0。Ctrl guide capture の確定タイミング変更後も `pauseink-app` 11 + 8、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。Ctrl guide capture を modifier release 確定へ変えた後も app 全 target compile は維持。`Panel::*` 系の deprecation warning は 9 件。
 - `cargo test --workspace`
   - 結果: exit 0。`pauseink-app` 11 + 6、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。
 - `cargo check -p pauseink-app --all-targets`
@@ -673,6 +679,7 @@
   - slope は baseline のずれだけでなく、glyph / slot box の回転にも反映する
   - font dropdown は「システム既定 + 読み込み済み family」を候補にし、選択 family だけを egui に lazy 登録する
   - guide の次文字縦線は horizontal guide を据えたまま、直前 object 幅に基づいて next-cell origin だけ送る
+  - Ctrl guide capture は pen-up 即確定ではなく、modifier 押下中の複数 stroke を同一 reference object に寄せ、modifier release で確定する
 
 ## 9. Export / profile メモ
 

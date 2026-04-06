@@ -263,6 +263,64 @@ impl GuideOverlayState {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct GuideCaptureState {
+    reference_object_id: Option<pauseink_domain::GlyphObjectId>,
+    in_progress: bool,
+    finalize_pending: bool,
+}
+
+impl GuideCaptureState {
+    fn start(&mut self) {
+        self.in_progress = true;
+        self.finalize_pending = false;
+    }
+
+    fn current_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
+        self.reference_object_id.clone()
+    }
+
+    fn record_committed_object(&mut self, object_id: pauseink_domain::GlyphObjectId) {
+        self.in_progress = true;
+        self.reference_object_id = Some(object_id);
+    }
+
+    fn note_modifier_release(
+        &mut self,
+        while_dragging: bool,
+    ) -> Option<pauseink_domain::GlyphObjectId> {
+        if !self.in_progress {
+            return None;
+        }
+
+        if while_dragging {
+            self.finalize_pending = true;
+            None
+        } else {
+            self.take_finalized_object_id()
+        }
+    }
+
+    fn take_if_pending_after_commit(&mut self) -> Option<pauseink_domain::GlyphObjectId> {
+        if self.finalize_pending {
+            self.take_finalized_object_id()
+        } else {
+            None
+        }
+    }
+
+    fn cancel(&mut self) {
+        *self = Self::default();
+    }
+
+    fn take_finalized_object_id(&mut self) -> Option<pauseink_domain::GlyphObjectId> {
+        let object_id = self.reference_object_id.take();
+        self.in_progress = false;
+        self.finalize_pending = false;
+        object_id
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct TemplateGraphemeLayout {
     grapheme: String,
@@ -329,6 +387,7 @@ struct DesktopApp {
     template: TemplatePreviewState,
     export: ExportState,
     guide_state: Option<GuideOverlayState>,
+    guide_capture_state: GuideCaptureState,
     guide_geometry: Option<GuideGeometry>,
     last_committed_object_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     bottom_tab: BottomTab,
@@ -413,6 +472,7 @@ impl DesktopApp {
             template: TemplatePreviewState::default(),
             export,
             guide_state: None,
+            guide_capture_state: GuideCaptureState::default(),
             guide_geometry: None,
             last_committed_object_bounds: None,
             bottom_tab: BottomTab::Outline,
@@ -615,6 +675,17 @@ impl DesktopApp {
         }
     }
 
+    fn finalize_guide_capture_with_object(
+        &mut self,
+        object_id: Option<pauseink_domain::GlyphObjectId>,
+    ) {
+        self.guide_capture_state.cancel();
+        self.guide_capture_armed = false;
+        if let Some(object_id) = object_id {
+            self.capture_guide_from_object(&object_id);
+        }
+    }
+
     fn advance_guide_to_next_character(&mut self) {
         let Some(guide_state) = &mut self.guide_state else {
             return;
@@ -629,13 +700,21 @@ impl DesktopApp {
         if modifier_active && !self.guide_modifier_was_down {
             self.guide_modifier_used_for_stroke = false;
         }
-        if !modifier_active
-            && self.guide_modifier_was_down
-            && !self.guide_modifier_used_for_stroke
-            && !ctx.egui_wants_keyboard_input()
-            && !self.template.placement_armed
-        {
-            self.advance_guide_to_next_character();
+        if !modifier_active && self.guide_modifier_was_down {
+            if self.guide_capture_state.in_progress {
+                let object_id = self
+                    .guide_capture_state
+                    .note_modifier_release(self.canvas_drag_active);
+                if !self.canvas_drag_active {
+                    self.finalize_guide_capture_with_object(object_id);
+                    self.guide_modifier_used_for_stroke = false;
+                }
+            } else if !self.guide_modifier_used_for_stroke
+                && !ctx.egui_wants_keyboard_input()
+                && !self.template.placement_armed
+            {
+                self.advance_guide_to_next_character();
+            }
         }
         self.guide_modifier_was_down = modifier_active;
     }
@@ -643,12 +722,16 @@ impl DesktopApp {
     fn perform_undo(&mut self) {
         if let Err(error) = self.session.undo() {
             self.push_log(format!("undo 失敗: {error:#}"));
+        } else {
+            self.guide_capture_state.cancel();
         }
     }
 
     fn perform_redo(&mut self) {
         if let Err(error) = self.session.redo() {
             self.push_log(format!("redo 失敗: {error:#}"));
+        } else {
+            self.guide_capture_state.cancel();
         }
     }
 
@@ -936,6 +1019,14 @@ impl DesktopApp {
                 session.active_style.stabilization_strength =
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
+                self.guide_capture_state.cancel();
+                self.guide_state = None;
+                self.guide_geometry = None;
+                self.last_committed_object_bounds = None;
+                self.template.placed_slots = None;
+                self.template.slot_object_ids.clear();
+                self.template.current_slot_index = 0;
+                self.template.placement_armed = false;
                 self.preview_key = None;
                 self.overlay_key = None;
                 self.push_log(format!("プロジェクトを読込: {}", path.display()));
@@ -1128,8 +1219,10 @@ impl DesktopApp {
         }
 
         if response.drag_started() {
-            self.guide_capture_armed = self.guide_modifier_active(ctx);
+            self.guide_capture_armed =
+                self.guide_modifier_active(ctx) && self.template.placed_slots.is_none();
             if self.guide_capture_armed {
+                self.guide_capture_state.start();
                 self.guide_modifier_used_for_stroke = true;
             }
             if let Some(pointer_position) = pointer_position {
@@ -1161,7 +1254,7 @@ impl DesktopApp {
 
             let pointer_down = ctx.input(|input| input.pointer.primary_down());
             if !pointer_down {
-                let target_object = self
+                let template_target_object = self
                     .template
                     .placed_slots
                     .as_ref()
@@ -1173,12 +1266,20 @@ impl DesktopApp {
                             .cloned()
                             .flatten()
                     });
+                let target_object = if self.guide_capture_state.in_progress
+                    && self.template.placed_slots.is_none()
+                {
+                    self.guide_capture_state.current_target_object_id()
+                } else {
+                    template_target_object
+                };
 
                 match self.session.commit_stroke_into_object(target_object) {
                     Ok(Some(object_id)) => {
                         self.last_committed_object_bounds = self.session.object_bounds(&object_id);
                         if self.guide_capture_armed {
-                            self.capture_guide_from_object(&object_id);
+                            self.guide_capture_state
+                                .record_committed_object(object_id.clone());
                         }
 
                         if self.template.placed_slots.is_some() {
@@ -1198,6 +1299,11 @@ impl DesktopApp {
                     }
                     Ok(None) => {}
                     Err(error) => self.push_log(format!("stroke 確定失敗: {error:#}")),
+                }
+                if self.guide_capture_state.finalize_pending {
+                    let object_id = self.guide_capture_state.take_if_pending_after_commit();
+                    self.finalize_guide_capture_with_object(object_id);
+                    self.guide_modifier_used_for_stroke = false;
                 }
                 self.canvas_drag_active = false;
                 self.guide_capture_armed = false;
@@ -2682,5 +2788,34 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("windows-x86_64")));
         assert!(lines.iter().any(|line| line.contains("ffmpeg.exe")));
         assert!(lines.iter().any(|line| line.contains("PATH")));
+    }
+
+    #[test]
+    fn guide_capture_state_keeps_same_object_until_modifier_release() {
+        let mut state = GuideCaptureState::default();
+        let object_id = pauseink_domain::GlyphObjectId::new("object-1");
+
+        state.start();
+        state.record_committed_object(object_id.clone());
+
+        assert_eq!(state.current_target_object_id(), Some(object_id.clone()));
+        assert_eq!(state.note_modifier_release(false), Some(object_id));
+        assert_eq!(state.current_target_object_id(), None);
+        assert!(!state.in_progress);
+    }
+
+    #[test]
+    fn guide_capture_state_defers_finalize_when_modifier_is_released_mid_drag() {
+        let mut state = GuideCaptureState::default();
+        let object_id = pauseink_domain::GlyphObjectId::new("object-2");
+
+        state.start();
+        state.record_committed_object(object_id.clone());
+
+        assert_eq!(state.note_modifier_release(true), None);
+        assert!(state.finalize_pending);
+        assert_eq!(state.current_target_object_id(), Some(object_id.clone()));
+        assert_eq!(state.take_if_pending_after_commit(), Some(object_id));
+        assert!(!state.in_progress);
     }
 }

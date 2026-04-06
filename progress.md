@@ -41,6 +41,7 @@
   - transport bar を上部直下へ追加し、再生 / 一時停止 / seek の導線を分離した
   - template font dropdown は読み込み済み family を列挙し、選択 family を egui へ lazy 登録する形で反映した
   - Ctrl タップでの次文字縦ガイド送りと、template 配置待ち中の stroke 抑止を実装した
+  - Ctrl guide capture は modifier 押下中の複数 stroke を同一 reference glyph に寄せ、modifier release で確定する挙動へ更新した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
   - `cargo test --workspace` を通過
