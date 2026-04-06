@@ -8,11 +8,13 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: 保存済み `.pauseink` を開いたときに media が再読込されない問題を、project open 時の runtime-only restore と project-relative path 解決で塞ぐ。
+- 現在の即時マイルストーン: 残タスク計画を保守し、guide の次文字字間スライダー要件を着手順を崩さず `V1-07` に織り込む。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
   - `develop` ブランチで作業継続
+  - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls / slot fit` へ更新し、guide の次文字字間スライダーを TODO へ追加した
+  - guide 字間 TODO について、困る具体例、着手前に決めるべきこと、保存先、単位、負値可否、テスト観点まで追記した
   - `.pauseink` lenient load / canonical save / unknown field 保持を実装
   - bounded undo/redo と history depth 設定を実装
   - portable settings、cache/autosave/runtime path、cache cleanup helper を実装

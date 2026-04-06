@@ -1122,6 +1122,18 @@
     - guide の次文字送りは「前回 guide 確定/送り以降に commit された文字全体」の union bounds を使うようになり、最後の 1 画だけに引きずられなくなった。
     - pending bounds は 1 回送ったら消費され、続けて送りたい場合だけ `cell_width` 分の fallback advance が働く。
 
+- 2026-04-07T00:31:00+09:00
+  - 直近マイルストーン: 残タスク計画へ、guide の次文字字間スライダー要件を task 順を壊さず追加する。
+  - 実施内容:
+    - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls / slot fit` へ拡張した。
+    - guide の次文字字間スライダーについて、利用者が困る具体例、設計方針、着手前に決めるべきこと、想定変更ファイル、必要テスト、完了条件を追記した。
+    - task ID は増やさず `V1-07` に吸収し、既存の着手おすすめ順はそのまま維持した。
+  - 変更ファイル: `.docs/16_remaining_tasks_plan.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 確認:
+    - `git diff --check`
+  - 結果:
+    - 次に `V1-07` を指定されたとき、guide 字間スライダーまで含めて実装着手できる計画になった。
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。

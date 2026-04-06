@@ -52,7 +52,7 @@
 4. clear effect の実装完了と clear / combo preset UI
 5. selection / multi-select / group / ungroup / z-order の編集導線
 6. object outline / page events panel の強化
-7. template advanced controls と slot fit
+7. template / guide advanced controls と slot fit
 8. portable FFmpeg sidecar packaging / provenance / notices
 9. GitHub Release への sidecar 統合
 10. Windows / macOS / Linux の最終検証
@@ -91,7 +91,7 @@
 | V1-04 | clear effect / clear preset / combo preset | V1-01 | clear kind / ordering / granularity を UI と renderer で完結させる |
 | V1-05 | selection / group / z-order foundation | なし | multi-select, group, ungroup, z-order の command と UI を入れる |
 | V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
-| V1-07 | template advanced controls / slot fit | なし | line height / script scale / underlay mode / fit option を UI に露出する |
+| V1-07 | template / guide advanced controls / slot fit | なし | line height / script scale / underlay mode / slot fit に加え、guide の次文字字間調整を UI に露出する |
 | PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
 | PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 3 OS build + release asset に sidecar / notices を載せる |
 | QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
@@ -105,6 +105,7 @@
 - selection は `selected_object_id: Option<GlyphObjectId>` の単一選択だけで、multi-select / group / ungroup / z-order 操作が未整備。
 - `オブジェクト一覧` は flat text list、`ページイベント` は flat list で、spec の tree / batch edit / alive highlight / auto-follow に未達。
 - template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足し、`slot fit` は未実装。
+- guide では `slope` しか編集できず、次文字用の縦線セットを直前文字からどれだけ離すかを調整する editor parameter がない。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 
 ## 4. 着手前に確認する既存 docs / test
@@ -534,32 +535,38 @@
 - page events tab から clear を編集しやすい
 - batch edit と auto-follow が spec に沿う
 
-### V1-07: template advanced controls と slot fit
+### V1-07: template / guide advanced controls と slot fit
 
 **優先度:** P1
 **依存:** なし
 
-**目的:** spec 4.3 / 7 の template settings を UI へ露出し、slot fit を v1.0 範囲で入れる。
+**目的:** spec 4.3 / 7 の template settings を UI へ露出し、slot fit と guide の次文字字間調整を v1.0 範囲で入れる。
 
 **具体的に困る場面**
 
 - 利用者がかな/英字/句読点の混在したテンプレートを書いても、現状は advanced controls が無いため「英字だけ少し小さく」「行間を狭く」といった実運用上の調整ができない。
 - slot fit が無いので、template を薄い下書きとして使った後に位置だけ揃えたい場合も手で微調整するしかない。
+- guide を使って連続で文字を書くとき、文字の右端と次の縦線セットが近すぎたり遠すぎたりしても、今は gap を調整できない。たとえば横に寝た字形や払いの長い字の直後で、次のマスを少し右へ逃がしたい場面に対応できない。
 - 開発者が fit を後付けすると、transform を slot commit 時に掛けるのか、後から再配置でも掛け直すのかで手戻りが出やすい。
+- 開発者が guide gap を後付けすると、`cell_width` 由来の固定幅・`next_cell_origin_x` の送り方・project/settings 保存のどこに属する値かが後からずれやすい。
 
 **現状の問題**
 
 - `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` は内部 state にあるが UI に出ていない。
 - `slot fit` の `Off / Move only / Weak uniform scale` が未実装。
+- guide の次文字送りは直前文字全体の union bounds までは実装済みだが、その右端からさらに空ける `gap` を持っていない。
 
 **設計**
 
 - template editor は左ペインのまま維持し、advanced section を `詳細` collapsible にまとめる。
+- guide の詳細設定も左ペインへまとめ、`ガイド傾き` の直下に `次文字字間` スライダーを置く。
 - slot fit は object capture 後の幾何補正ではなく、slot commit 時の object transform として適用する。
   - `Off`: 現状維持
   - `MoveOnly`: slot center へ平行移動だけ
   - `WeakUniformScale`: bounding box 比から `1.0..=1.15` 程度の弱い uniform scale を掛ける
 - stroke の最終表示はユーザー手書き主体を守るため、非一様スケールや強制歪みは入れない。
+- guide gap は `next_cell_origin_x = previous_character_max_x + gap` の形で適用し、縦線セット幅そのものは変えない。
+- gap の見た目は slope と independent に保存し、傾けても「文字間の横方向余白」を調整するための値として扱う。
 
 **着手前に決めるべきこと**
 
@@ -567,6 +574,9 @@
 - `WeakUniformScale` の上限値と下限値をどこに置くか。後から cap を変えると既存 project の見た目が変わる。
 - advanced controls を左ペイン常設にするか、折りたたみ詳細に寄せるか。UI の占有幅に効く。
 - mixed-script line height の基準を font size 基準に固定するか、最大 glyph height 基準にするか。slot 生成式の根本になる。
+- guide gap の単位を `canvas px` にするか `cell_width 比` にするか。後から変えると save 値の意味と UI 体感が変わる。
+- guide gap を負値まで許すか、`0` 以上へ clamp するか。後から変えると既存 project で文字が重なる/重ならないの意味が変わる。
+- gap を `project` に保存するか `workspace/settings` に保存するか。後から移すと reopen / relaunch の復元位置がずれる。
 
 **変更ファイル**
 
@@ -574,24 +584,29 @@
 - Modify: `crates/app/src/main.rs`
 - Modify: `crates/app/src/lib.rs`
 - Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
 
 **実装ステップ**
 
 1. 左ペイン template section に advanced controls を追加する。
 2. `UnderlayMode` の dropdown を追加する。
-3. slot fit mode を editor state と project/settings restore に追加する。
-4. slot commit 時に `MoveOnly / WeakUniformScale` を object transform へ適用する。
-5. preview と export が同じ transform を使うことを確認する。
+3. 左ペイン guide section に `次文字字間` スライダーを追加し、guide geometry 生成式へ接続する。
+4. slot fit mode を editor state と project/settings restore に追加する。
+5. slot commit 時に `MoveOnly / WeakUniformScale` を object transform へ適用する。
+6. preview と export が同じ transform を使うこと、guide gap が save/reopen で戻ることを確認する。
 
 **必要テスト**
 
 - `template_layout`: script scale / line height / underlay mode の UI 値が slot 計算へ反映される
+- `app` / `guide`: gap を変えると次文字縦線の開始 x だけが変わり、縦線セット幅は変わらない
 - `app`: save/reopen で advanced template settings と fit mode が戻る
+- `app`: save/reopen または settings relaunch で guide gap が戻る
 - `renderer/app`: `WeakUniformScale` が上限を超えず、stroke 形状を過度に歪めない
 
 **完了条件**
 
 - template advanced settings が GUI から編集できる
+- guide の次文字字間が GUI から編集できる
 - slot fit が spec の 3 モードで動く
 - 手書き主体の見た目を壊さない
 
@@ -788,8 +803,8 @@
 
 1. `V1-01` preset 境界正規化
    - 以後の effect / clear / combo の保存境界をここで固定しないと schema の手戻りが大きい。
-2. `V1-07` template advanced controls / slot fit
-   - 独立性が高く、既存 UI を壊しにくい。早めに片付けると mixed-script/template 周りの残差が減る。
+2. `V1-07` template / guide advanced controls / slot fit
+   - 独立性が高く、既存 UI を壊しにくい。早めに片付けると mixed-script/template と guide 運用上の細かなストレスを同時に減らせる。
 3. `V1-02` reveal-head effect
    - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
 4. `V1-04` clear / clear preset / combo preset
