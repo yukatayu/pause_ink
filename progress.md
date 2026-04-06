@@ -70,6 +70,9 @@
   - `cargo test -p pauseink-renderer fixed_duration_speed_scalar_changes_reveal_progress -- --nocapture`、`cargo test -p pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture`、`cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture` を通過
   - `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - `.docs/11_implementation_plan.md` を再確認し、Phase 14 の残 gap は reveal-head effect、post-action chain、clear/combo preset 専用 UI であることを棚卸しした
+  - 動画 export の 92% 固定は ffmpeg 実行中の progress 未更新が原因だったため、`-progress pipe:1` を使って encode 中も進捗が進むように修正した
+  - hardware fallback で encode 経路が切り替わっても progress bar が逆走しないよう、pending progress は単調増加で保持するようにした
+  - `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を再通過
   - guide の次文字縦線は、直前文字の幅で再スケールせず、位置だけ直前文字の右端へ送るように修正した
   - `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` を consume した release では guide の次文字送りが発火しないよう、modifier tap 抑止を追加した
   - `cargo test -p pauseink-app guide_overlay_state_keeps_vertical_width_constant_and_anchors_to_previous_right_edge -- --nocapture`、`cargo test -p pauseink-app guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin -- --nocapture`、`cargo test -p pauseink-template-layout guide_geometry_can_move_only_the_next_character_vertical_set -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過

@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 
 use image::{ImageBuffer, Rgba};
 use pauseink_domain::{AnnotationProject, MediaDuration, MediaTime, TimeBase};
@@ -335,6 +337,7 @@ pub fn execute_export_with_settings_with_progress(
                 settings,
                 &frames_dir,
                 &request.output_path,
+                &mut report_progress,
             )?;
             false
         }
@@ -351,6 +354,7 @@ pub fn execute_export_with_settings_with_progress(
                 &frames_dir,
                 &request.output_path,
                 request.prefer_hardware,
+                &mut report_progress,
             )?
         }
     };
@@ -442,6 +446,7 @@ fn export_transparent_video(
     settings: &ConcreteExportSettings,
     frames_dir: &Path,
     output_path: &Path,
+    report_progress: &mut impl FnMut(ExportProgressUpdate),
 ) -> Result<(), ExportExecutionError> {
     let mut command = Command::new(&runtime.ffmpeg_path);
     command.args([
@@ -452,6 +457,7 @@ fn export_transparent_video(
         &format_fps(snapshot.frame_rate),
         "-i",
     ]);
+    configure_ffmpeg_progress_reporting(&mut command);
     command.arg(frames_dir.join("frame_%06d.png"));
     command.args(["-c:v", primary_video_encoder(settings)?]);
     apply_video_settings(&mut command, settings, snapshot.frame_rate, true);
@@ -459,7 +465,14 @@ fn export_transparent_video(
         command.args(["-an"]);
     }
     command.arg(output_path);
-    run_ffmpeg_command(command)
+    run_ffmpeg_command_with_progress(
+        command,
+        media_duration_seconds(snapshot.duration),
+        0.92,
+        0.99,
+        "透過動画を書き出し中",
+        report_progress,
+    )
 }
 
 fn export_composite_video(
@@ -470,6 +483,7 @@ fn export_composite_video(
     frames_dir: &Path,
     output_path: &Path,
     prefer_hardware: bool,
+    report_progress: &mut impl FnMut(ExportProgressUpdate),
 ) -> Result<bool, ExportExecutionError> {
     let source_media_path = snapshot
         .source_media_path
@@ -478,29 +492,47 @@ fn export_composite_video(
     let try_hardware = should_try_hardware_decode(prefer_hardware, capabilities);
 
     if try_hardware {
-        let hardware_result = run_ffmpeg_command(build_composite_command(
+        let hardware_result = run_ffmpeg_command_with_progress(
+            build_composite_command(
+                runtime,
+                source_media_path,
+                snapshot,
+                settings,
+                frames_dir,
+                output_path,
+                true,
+            ),
+            media_duration_seconds(snapshot.duration),
+            0.92,
+            0.99,
+            "合成動画を書き出し中",
+            report_progress,
+        );
+        if hardware_result.is_ok() {
+            return Ok(false);
+        }
+        report_progress(ExportProgressUpdate {
+            fraction: 0.92,
+            stage_label: "ハードウェア経路に失敗したためソフトウェアへ切り替え中".to_owned(),
+        });
+    }
+
+    run_ffmpeg_command_with_progress(
+        build_composite_command(
             runtime,
             source_media_path,
             snapshot,
             settings,
             frames_dir,
             output_path,
-            true,
-        ));
-        if hardware_result.is_ok() {
-            return Ok(false);
-        }
-    }
-
-    run_ffmpeg_command(build_composite_command(
-        runtime,
-        source_media_path,
-        snapshot,
-        settings,
-        frames_dir,
-        output_path,
-        false,
-    ))?;
+            false,
+        ),
+        media_duration_seconds(snapshot.duration),
+        0.92,
+        0.99,
+        "合成動画を書き出し中",
+        report_progress,
+    )?;
     Ok(try_hardware)
 }
 
@@ -515,6 +547,7 @@ fn build_composite_command(
 ) -> Command {
     let mut command = Command::new(&runtime.ffmpeg_path);
     command.arg("-y").args(["-loglevel", "error"]);
+    configure_ffmpeg_progress_reporting(&mut command);
     if try_hardware {
         command.args(["-hwaccel", "auto"]);
     }
@@ -616,15 +649,124 @@ fn primary_audio_encoder(settings: &ConcreteExportSettings) -> Result<&str, Expo
         .ok_or(ExportExecutionError::InvalidOutputPath)
 }
 
-fn run_ffmpeg_command(mut command: Command) -> Result<(), ExportExecutionError> {
-    let output = command.output()?;
-    if output.status.success() {
+fn run_ffmpeg_command_with_progress(
+    mut command: Command,
+    total_duration_seconds: f64,
+    stage_start: f32,
+    stage_end: f32,
+    stage_label: &str,
+    report_progress: &mut impl FnMut(ExportProgressUpdate),
+) -> Result<(), ExportExecutionError> {
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("ffmpeg stdout pipe unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("ffmpeg stderr pipe unavailable"))?;
+    let stderr_reader = thread::spawn(move || -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let _ = BufReader::new(stderr).read_to_end(&mut bytes);
+        bytes
+    });
+
+    let mut saw_progress_end = false;
+    for line in BufReader::new(stdout).lines() {
+        let line = line?;
+        if let Some(update) = ffmpeg_progress_update_from_line(
+            &line,
+            total_duration_seconds,
+            stage_start,
+            stage_end,
+            stage_label,
+        ) {
+            if line == "progress=end" {
+                saw_progress_end = true;
+            }
+            report_progress(update);
+        }
+    }
+
+    let status = child.wait()?;
+    let stderr_bytes = stderr_reader.join().unwrap_or_default();
+    if status.success() {
+        if !saw_progress_end {
+            report_progress(ExportProgressUpdate {
+                fraction: stage_end,
+                stage_label: format!("{stage_label} (100%)"),
+            });
+        }
         Ok(())
     } else {
         Err(ExportExecutionError::CommandFailed(
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            String::from_utf8_lossy(&stderr_bytes).trim().to_owned(),
         ))
     }
+}
+
+fn ffmpeg_progress_update_from_line(
+    line: &str,
+    total_duration_seconds: f64,
+    stage_start: f32,
+    stage_end: f32,
+    stage_label: &str,
+) -> Option<ExportProgressUpdate> {
+    if line == "progress=end" {
+        return Some(ExportProgressUpdate {
+            fraction: stage_end,
+            stage_label: format!("{stage_label} (100%)"),
+        });
+    }
+
+    let elapsed_seconds = line
+        .strip_prefix("out_time=")
+        .and_then(parse_ffmpeg_out_time_seconds)
+        .or_else(|| {
+            line.strip_prefix("out_time_us=")
+                .and_then(|value| value.parse::<f64>().ok())
+                .map(|micros| micros / 1_000_000.0)
+        })
+        .or_else(|| {
+            line.strip_prefix("out_time_ms=")
+                .and_then(|value| value.parse::<f64>().ok())
+                .map(|micros| micros / 1_000_000.0)
+        })?;
+
+    let normalized = if total_duration_seconds <= f64::EPSILON {
+        1.0
+    } else {
+        (elapsed_seconds / total_duration_seconds).clamp(0.0, 1.0)
+    };
+    let percent = (normalized * 100.0).round() as u32;
+    Some(ExportProgressUpdate {
+        fraction: stage_start + (stage_end - stage_start) * normalized as f32,
+        stage_label: format!("{stage_label} ({percent}%)"),
+    })
+}
+
+fn configure_ffmpeg_progress_reporting(command: &mut Command) {
+    command.args(["-progress", "pipe:1", "-stats_period", "0.25", "-nostats"]);
+}
+
+fn parse_ffmpeg_out_time_seconds(value: &str) -> Option<f64> {
+    let mut parts = value.split(':');
+    let hours = parts.next()?.parse::<f64>().ok()?;
+    let minutes = parts.next()?.parse::<f64>().ok()?;
+    let seconds = parts.next()?.parse::<f64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+fn media_duration_seconds(duration: MediaDuration) -> f64 {
+    duration.ticks as f64 * duration.time_base.numerator as f64
+        / duration.time_base.denominator as f64
 }
 
 fn estimated_frame_count(duration: MediaDuration, frame_rate: f64) -> usize {
@@ -983,5 +1125,112 @@ mod tests {
             true,
             &RuntimeCapabilities::default()
         ));
+    }
+
+    #[test]
+    fn ffmpeg_progress_lines_advance_fraction_beyond_mux_start() {
+        let update = ffmpeg_progress_update_from_line(
+            "out_time=00:00:04.500000",
+            10.0,
+            0.92,
+            0.99,
+            "合成動画を書き出し中",
+        )
+        .expect("progress update should parse");
+
+        assert!(update.fraction > 0.92);
+        assert!(update.fraction < 0.99);
+        assert!(update.stage_label.contains("45"));
+    }
+
+    #[test]
+    fn ffmpeg_progress_end_clamps_to_stage_end() {
+        let update = ffmpeg_progress_update_from_line(
+            "progress=end",
+            10.0,
+            0.92,
+            0.99,
+            "透過動画を書き出し中",
+        )
+        .expect("end update should parse");
+
+        assert!((update.fraction - 0.99).abs() < f32::EPSILON);
+        assert!(update.stage_label.contains("100"));
+    }
+
+    #[test]
+    fn composite_avi_export_reports_intermediate_progress_if_host_runtime_exists() {
+        let runtime = match discover_system_runtime() {
+            Ok(runtime) => runtime,
+            Err(_) => return,
+        };
+        let provider = FfprobeMediaProvider::new(runtime.clone());
+        let capabilities = match provider.capabilities() {
+            Ok(capabilities) => capabilities,
+            Err(_) => return,
+        };
+        let temp_dir = tempdir().expect("temp dir");
+        let source_path = temp_dir.path().join("source.avi");
+        let fixture = Command::new(&runtime.ffmpeg_path)
+            .args([
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=320x180:d=1:r=10",
+                "-an",
+                "-c:v",
+                "mjpeg",
+            ])
+            .arg(&source_path)
+            .output()
+            .expect("fixture command should run");
+
+        assert!(
+            fixture.status.success(),
+            "fixture creation should succeed: {}",
+            String::from_utf8_lossy(&fixture.stderr)
+        );
+
+        let catalog = load_catalog();
+        let settings = plan_export(
+            &catalog,
+            &ExportRequest {
+                family_id: "avi_mjpeg_pcm".into(),
+                profile_id: "low".into(),
+                width: 320,
+                height: 180,
+                frame_rate: 10.0,
+                has_audio: false,
+                requires_alpha: false,
+            },
+            Some(&capabilities),
+        )
+        .expect("plan should resolve");
+
+        let mut fractions = Vec::new();
+        execute_export_with_settings_with_progress(
+            &runtime,
+            &capabilities,
+            &sample_snapshot(Some(source_path), false),
+            &settings,
+            &ExportOutputRequest {
+                output_path: temp_dir.path().join("composite_progress.avi"),
+                transparent: false,
+                working_directory: temp_dir.path().join("work_progress"),
+                prefer_hardware: false,
+            },
+            |update| fractions.push(update.fraction),
+        )
+        .expect("composite export should succeed");
+
+        assert!(
+            fractions
+                .iter()
+                .any(|fraction| *fraction > 0.92 && *fraction < 1.0),
+            "expected intermediate ffmpeg progress beyond 92%, got {fractions:?}"
+        );
     }
 }

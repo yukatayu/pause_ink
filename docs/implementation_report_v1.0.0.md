@@ -838,6 +838,13 @@
 - 2026-04-06T12:40:00+09:00
   - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を今回の UI/UX 差分に合わせて更新した。
   - 結果: template 再配置、下部パネル固定化、export progress、opacity 一本化、出現速度 UI 未実装を docs と同期した。
+- 2026-04-06T16:58:41+09:00
+  - 事象: user から「動画の書き出しが 92% で止まる。エンコード種別によらず同じ」と報告が来た。
+  - root cause: `crates/export/src/lib.rs` の動画 export は frame 生成を 0.0..0.9、ffmpeg 起動後を固定 0.92 にして `Command::output()` で終了待ちしており、encode 中の進捗を一切 UI へ返していなかった。さらに hardware fallback が走ると再試行側の進捗で UI が逆走し得た。
+  - 実施内容: export 実行を `-progress pipe:1 -nostats` 付き `spawn` に切り替え、`out_time` / `out_time_us` / `out_time_ms` / `progress=end` から 0.92..0.99 の stage 内進捗へ写像する helper を追加した。app 側は pending export の fraction を単調増加で保持するよう変更した。
+  - 変更ファイル: `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: red として `cargo test -p pauseink-export ffmpeg_progress_lines_advance_fraction_beyond_mux_start -- --nocapture` を実行し、helper 未定義で fail を確認した。続いて `cargo test -p pauseink-app pending_export_progress_does_not_move_backwards_on_retry -- --nocapture` を実行し、progress 逆走で fail を確認した。その後 `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。transparent/composite export smoke を含む export crate 10 tests、app crate 45 tests が通過し、動画 export 中も progress bar が 92% 以降で更新される経路を固定できた。`Panel::*` 系 deprecation warning は継続。
 
 ## 8.11 2026-04-06 stroke 初点欠落の再修正
 

@@ -1498,7 +1498,9 @@ impl DesktopApp {
             match message {
                 Ok(ExportThreadMessage::Progress(update)) => {
                     if let Some(pending) = self.pending_export.as_mut() {
-                        pending.progress_fraction = update.fraction.clamp(0.0, 1.0);
+                        pending.progress_fraction = pending
+                            .progress_fraction
+                            .max(update.fraction.clamp(0.0, 1.0));
                         pending.progress_label = update.stage_label;
                     }
                 }
@@ -4924,6 +4926,38 @@ mod tests {
         assert!(app.pending_export.is_none());
         assert_eq!(app.export.jobs.len(), 1);
         assert!(app.export.jobs[0].status.contains("失敗"));
+    }
+
+    #[test]
+    fn pending_export_progress_does_not_move_backwards_on_retry() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        app.pending_export = Some(PendingExportJob {
+            receiver,
+            summary: "テスト export".to_owned(),
+            output_path: PathBuf::from("/tmp/out.webm"),
+            progress_fraction: 0.96,
+            progress_label: "合成動画を書き出し中 (57%)".to_owned(),
+        });
+
+        sender
+            .send(ExportThreadMessage::Progress(ExportProgressUpdate {
+                fraction: 0.93,
+                stage_label: "合成動画を書き出し中 (14%)".to_owned(),
+            }))
+            .expect("progress message should send");
+        app.poll_pending_export();
+
+        let pending = app
+            .pending_export
+            .as_ref()
+            .expect("pending export should remain");
+        assert!((pending.progress_fraction - 0.96).abs() < 0.001);
+        assert_eq!(pending.progress_label, "合成動画を書き出し中 (14%)");
     }
 
     #[test]

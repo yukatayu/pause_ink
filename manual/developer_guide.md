@@ -203,6 +203,8 @@ UI 回帰メモ:
 - 下部パネルは `bottom_panel_content_width` を state に持ち、`ScrollArea::both().auto_shrink([false, false])` で固定高さのまま内容だけを scroll させる
 - object list や log の件数増加で bottom panel 自体の高さを揺らさない
 - export 実行中は `PendingExportJob` が progress fraction と stage label を保持し、右ペインと `書き出しキュー` の両方で progress bar を描く
+- ffmpeg 実行系は `-progress pipe:1 -nostats` を付け、`out_time` / `progress=end` から 0.92..0.99 の stage 内進捗へ写像する
+- hardware fallback で encode 経路が切り替わっても、UI 側の pending progress は逆走しないよう max で保持する
 
 ## 11. CI / Release workflow
 
