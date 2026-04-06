@@ -561,6 +561,23 @@ enum ExportThreadMessage {
     Finished(Result<pauseink_export::ExportExecutionResult, String>),
 }
 
+fn export_progress_hint(progress_label: &str) -> &'static str {
+    if progress_label.contains("一時ファイルを整理中") {
+        "書き出し自体は終わっており、作業用の一時ファイルを削除しています。"
+    } else if progress_label.contains("最終処理中") {
+        "ffmpeg がコンテナの最終化を行っています。完了までもう少し待ってください。"
+    } else if progress_label.contains("フレーム生成中") || progress_label.contains("フレームを準備中")
+    {
+        "各フレーム用の透明オーバーレイ画像を生成しています。動画が長いほど時間がかかります。"
+    } else if progress_label.contains("書き出し中") {
+        "ffmpeg が動画をエンコードしています。出力形式や解像度によって時間が変わります。"
+    } else if progress_label.contains("PNG 連番") {
+        "生成済みフレームを連番 PNG として配置しています。"
+    } else {
+        "書き出し処理を進めています。"
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ExportState {
     catalog: Option<ExportCatalog>,
@@ -1606,6 +1623,12 @@ impl DesktopApp {
                 },
             )
             .map_err(|error| error.to_string());
+            if result.is_ok() {
+                let _ = sender.send(ExportThreadMessage::Progress(ExportProgressUpdate {
+                    fraction: 0.995,
+                    stage_label: "3/3 一時ファイルを整理中".to_owned(),
+                }));
+            }
             let _ = fs::remove_dir_all(&working_directory);
             let _ = sender.send(ExportThreadMessage::Finished(result));
         });
@@ -2708,6 +2731,7 @@ impl DesktopApp {
         if let Some(pending) = &self.pending_export {
             ui.label(format!("実行中: {}", pending.summary));
             ui.label(&pending.progress_label);
+            ui.small(export_progress_hint(&pending.progress_label));
             ui.add(
                 egui::ProgressBar::new(pending.progress_fraction)
                     .desired_width(ui.available_width().max(160.0))
@@ -2775,6 +2799,7 @@ impl DesktopApp {
 
         ui.label(format!("実行中: {}", pending.summary));
         ui.label(&pending.progress_label);
+        ui.small(export_progress_hint(&pending.progress_label));
         ui.add(
             egui::ProgressBar::new(pending.progress_fraction)
                 .desired_width(ui.available_width().max(160.0))
@@ -4958,6 +4983,18 @@ mod tests {
             .expect("pending export should remain");
         assert!((pending.progress_fraction - 0.96).abs() < 0.001);
         assert_eq!(pending.progress_label, "合成動画を書き出し中 (14%)");
+    }
+
+    #[test]
+    fn export_progress_hint_explains_finalizing_stages() {
+        assert!(
+            export_progress_hint("2/3 合成動画を書き出し中 (最終処理中)")
+                .contains("コンテナの最終化")
+        );
+        assert!(
+            export_progress_hint("3/3 一時ファイルを整理中")
+                .contains("一時ファイル")
+        );
     }
 
     #[test]

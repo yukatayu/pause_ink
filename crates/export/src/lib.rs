@@ -313,7 +313,7 @@ pub fn execute_export_with_settings_with_progress(
 
     report_progress(ExportProgressUpdate {
         fraction: 0.0,
-        stage_label: "フレームを準備中".to_owned(),
+        stage_label: "1/3 フレーム生成を準備中".to_owned(),
     });
     let frame_count = render_overlay_sequence(snapshot, &frames_dir, &mut report_progress)?;
     let software_fallback_used = match settings.family.id.as_str() {
@@ -329,7 +329,7 @@ pub fn execute_export_with_settings_with_progress(
         _ if request.transparent => {
             report_progress(ExportProgressUpdate {
                 fraction: 0.92,
-                stage_label: "透過動画を書き出し中".to_owned(),
+                stage_label: "2/3 透過動画を書き出し中".to_owned(),
             });
             export_transparent_video(
                 runtime,
@@ -344,7 +344,7 @@ pub fn execute_export_with_settings_with_progress(
         _ => {
             report_progress(ExportProgressUpdate {
                 fraction: 0.92,
-                stage_label: "合成動画を書き出し中".to_owned(),
+                stage_label: "2/3 合成動画を書き出し中".to_owned(),
             });
             export_composite_video(
                 runtime,
@@ -406,7 +406,7 @@ fn render_overlay_sequence(
         };
         report_progress(ExportProgressUpdate {
             fraction,
-            stage_label: format!("フレーム生成中 {}/{}", frame_index + 1, frame_count),
+            stage_label: format!("1/3 フレーム生成中 {}/{}", frame_index + 1, frame_count),
         });
     }
 
@@ -434,7 +434,7 @@ fn export_png_sequence(
         };
         report_progress(ExportProgressUpdate {
             fraction,
-            stage_label: format!("PNG 連番を書き出し中 {}/{}", frame_index + 1, frame_count),
+            stage_label: format!("2/3 PNG 連番を書き出し中 {}/{}", frame_index + 1, frame_count),
         });
     }
     Ok(())
@@ -470,7 +470,7 @@ fn export_transparent_video(
         media_duration_seconds(snapshot.duration),
         0.92,
         0.99,
-        "透過動画を書き出し中",
+        "2/3 透過動画を書き出し中",
         report_progress,
     )
 }
@@ -505,7 +505,7 @@ fn export_composite_video(
             media_duration_seconds(snapshot.duration),
             0.92,
             0.99,
-            "合成動画を書き出し中",
+            "2/3 合成動画を書き出し中",
             report_progress,
         );
         if hardware_result.is_ok() {
@@ -530,7 +530,7 @@ fn export_composite_video(
         media_duration_seconds(snapshot.duration),
         0.92,
         0.99,
-        "合成動画を書き出し中",
+        "2/3 合成動画を書き出し中",
         report_progress,
     )?;
     Ok(try_hardware)
@@ -719,7 +719,7 @@ fn ffmpeg_progress_update_from_line(
     if line == "progress=end" {
         return Some(ExportProgressUpdate {
             fraction: stage_end,
-            stage_label: format!("{stage_label} (100%)"),
+            stage_label: format!("{stage_label} (最終処理中)"),
         });
     }
 
@@ -1155,7 +1155,7 @@ mod tests {
         .expect("end update should parse");
 
         assert!((update.fraction - 0.99).abs() < f32::EPSILON);
-        assert!(update.stage_label.contains("100"));
+        assert!(update.stage_label.contains("最終処理"));
     }
 
     #[test]
