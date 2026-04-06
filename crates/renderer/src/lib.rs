@@ -260,12 +260,15 @@ fn evaluate_entrance(
         return VisibilityState::FULLY_VISIBLE;
     };
 
-    if time < object.created_at {
+    let effective_start_seconds = effective_entrance_start_seconds(project, object);
+    let current_seconds = media_time_seconds(time);
+    if current_seconds < effective_start_seconds {
         return VisibilityState::HIDDEN;
     }
 
     let duration_seconds = entrance_duration_seconds(project, object);
-    let progress = normalized_progress(object.created_at, time, duration_seconds);
+    let progress =
+        normalized_progress_from_seconds(effective_start_seconds, current_seconds, duration_seconds);
 
     match object.entrance.kind {
         pauseink_domain::EntranceKind::Instant => VisibilityState::FULLY_VISIBLE,
@@ -280,6 +283,43 @@ fn evaluate_entrance(
             path_fraction: 1.0,
         },
     }
+}
+
+fn effective_entrance_start_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
+    let object_page = object.page_index(&project.clear_events);
+    let mut ordered_objects = project
+        .glyph_objects
+        .iter()
+        .filter(|candidate| candidate.page_index(&project.clear_events) == object_page)
+        .collect::<Vec<_>>();
+    ordered_objects.sort_by(|left, right| {
+        left.ordering
+            .reveal_order
+            .cmp(&right.ordering.reveal_order)
+            .then(left.created_at.cmp(&right.created_at))
+            .then(left.id.0.cmp(&right.id.0))
+    });
+
+    let mut last_timed_end_seconds = 0.0;
+    for candidate in ordered_objects {
+        let created_seconds = media_time_seconds(candidate.created_at);
+        let candidate_uses_timed_queue =
+            !matches!(candidate.entrance.kind, pauseink_domain::EntranceKind::Instant);
+        let effective_start_seconds = if candidate_uses_timed_queue {
+            created_seconds.max(last_timed_end_seconds)
+        } else {
+            created_seconds
+        };
+        if candidate.id == object.id {
+            return effective_start_seconds;
+        }
+        if candidate_uses_timed_queue {
+            last_timed_end_seconds =
+                effective_start_seconds + entrance_duration_seconds(project, candidate);
+        }
+    }
+
+    media_time_seconds(object.created_at)
 }
 
 fn entrance_duration_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
@@ -386,11 +426,23 @@ fn evaluate_clear(
 }
 
 fn normalized_progress(start: MediaTime, current: MediaTime, duration_seconds: f64) -> f32 {
+    normalized_progress_from_seconds(
+        media_time_seconds(start),
+        media_time_seconds(current),
+        duration_seconds,
+    )
+}
+
+fn normalized_progress_from_seconds(
+    start_seconds: f64,
+    current_seconds: f64,
+    duration_seconds: f64,
+) -> f32 {
     if duration_seconds <= f64::EPSILON {
         return 1.0;
     }
 
-    let elapsed = (media_time_seconds(current) - media_time_seconds(start)).max(0.0);
+    let elapsed = (current_seconds - start_seconds).max(0.0);
     (elapsed / duration_seconds).clamp(0.0, 1.0) as f32
 }
 
@@ -708,6 +760,62 @@ mod tests {
         }
     }
 
+    fn line_stroke(
+        id: &str,
+        created_at_ms: i64,
+        start: Point2,
+        end: Point2,
+    ) -> Stroke {
+        Stroke {
+            id: StrokeId::new(id),
+            raw_samples: vec![
+                StrokeSample {
+                    position: start,
+                    at: MediaTime::from_millis(created_at_ms),
+                    pressure: None,
+                },
+                StrokeSample {
+                    position: end,
+                    at: MediaTime::from_millis(created_at_ms + 100),
+                    pressure: None,
+                },
+            ],
+            created_at: MediaTime::from_millis(created_at_ms),
+            ..Stroke::default()
+        }
+    }
+
+    fn entrance_object(
+        id: &str,
+        stroke_id: &str,
+        created_at_ms: i64,
+        reveal_order: u64,
+        entrance_kind: EntranceKind,
+        duration_ms: i64,
+    ) -> GlyphObject {
+        GlyphObject {
+            id: GlyphObjectId::new(id),
+            stroke_ids: vec![StrokeId::new(stroke_id)],
+            style: StyleSnapshot {
+                color: RgbaColor::new(255, 255, 255, 255),
+                thickness: 8.0,
+                ..StyleSnapshot::default()
+            },
+            entrance: EntranceBehavior {
+                kind: entrance_kind,
+                duration: MediaDuration::from_millis(duration_ms),
+                ..EntranceBehavior::default()
+            },
+            ordering: pauseink_domain::OrderingMetadata {
+                z_index: 0,
+                capture_order: reveal_order,
+                reveal_order,
+            },
+            created_at: MediaTime::from_millis(created_at_ms),
+            ..GlyphObject::default()
+        }
+    }
+
     fn alpha_at(image: &RenderedOverlay, x: usize, y: usize) -> u8 {
         image.rgba_pixels[(y * image.width as usize + x) * 4 + 3]
     }
@@ -864,6 +972,228 @@ mod tests {
             0,
             "speed_scalar を小さくすると同じ時刻ではまだ終端まで届かないべき"
         );
+    }
+
+    #[test]
+    fn timed_entrances_wait_for_prior_timed_reveals_but_instant_objects_stay_visible() {
+        let project = AnnotationProject {
+            strokes: vec![
+                line_stroke(
+                    "stroke-a",
+                    0,
+                    Point2 { x: 10.0, y: 12.0 },
+                    Point2 { x: 110.0, y: 12.0 },
+                ),
+                line_stroke(
+                    "stroke-b",
+                    100,
+                    Point2 { x: 20.0, y: 4.0 },
+                    Point2 { x: 20.0, y: 44.0 },
+                ),
+                line_stroke(
+                    "stroke-c",
+                    200,
+                    Point2 { x: 10.0, y: 36.0 },
+                    Point2 { x: 110.0, y: 36.0 },
+                ),
+            ],
+            glyph_objects: vec![
+                entrance_object("object-a", "stroke-a", 0, 1, EntranceKind::PathTrace, 1_000),
+                entrance_object("object-b", "stroke-b", 100, 2, EntranceKind::Instant, 1),
+                entrance_object("object-c", "stroke-c", 200, 3, EntranceKind::PathTrace, 1_000),
+            ],
+            ..AnnotationProject::default()
+        };
+
+        let midway = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("midway render");
+
+        assert!(alpha_at(&midway, 35, 12) > 0, "A は途中まで見えるべき");
+        assert_eq!(alpha_at(&midway, 95, 12), 0, "A はまだ終端まで届かないべき");
+        assert!(alpha_at(&midway, 20, 24) > 0, "Instant B はすでに表示されるべき");
+        assert_eq!(alpha_at(&midway, 25, 36), 0, "C は A 完了待ちでまだ始まらないべき");
+
+        let after_a = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(1_100),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("after A render");
+
+        assert!(alpha_at(&after_a, 95, 12) > 0, "A は完了しているべき");
+        assert!(alpha_at(&after_a, 20, 24) > 0, "Instant B は維持されるべき");
+        assert!(alpha_at(&after_a, 18, 36) > 0, "C は A 完了後に開始するべき");
+        assert_eq!(alpha_at(&after_a, 50, 36), 0, "C はまだ途中のはず");
+    }
+
+    #[test]
+    fn timed_entrance_queue_resets_after_clear_page_boundary() {
+        let project = AnnotationProject {
+            strokes: vec![
+                line_stroke(
+                    "stroke-a",
+                    0,
+                    Point2 { x: 10.0, y: 12.0 },
+                    Point2 { x: 110.0, y: 12.0 },
+                ),
+                line_stroke(
+                    "stroke-d",
+                    700,
+                    Point2 { x: 10.0, y: 36.0 },
+                    Point2 { x: 110.0, y: 36.0 },
+                ),
+            ],
+            glyph_objects: vec![
+                entrance_object("object-a", "stroke-a", 0, 1, EntranceKind::PathTrace, 1_000),
+                entrance_object("object-d", "stroke-d", 700, 2, EntranceKind::PathTrace, 1_000),
+            ],
+            clear_events: vec![ClearEvent {
+                id: ClearEventId::new("clear-1"),
+                time: MediaTime::from_millis(600),
+                kind: ClearKind::Instant,
+                ..ClearEvent::default()
+            }],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(800),
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("page 2 render");
+
+        assert_eq!(alpha_at(&image, 35, 12), 0, "page 1 の A は clear 後に消えているべき");
+        assert!(
+            alpha_at(&image, 18, 36) > 0,
+            "page 2 の timed entrance は page 1 完了待ちを引き継がず開始するべき"
+        );
+        assert_eq!(alpha_at(&image, 50, 36), 0, "page 2 の D はまだ途中のはず");
+    }
+
+    #[test]
+    fn timed_entrance_waits_for_previous_timed_reveal_even_with_instant_between() {
+        let mut object_a = demo_object("stroke-a", 0);
+        object_a.ordering.reveal_order = 1;
+        object_a.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+        let mut object_b = demo_object("stroke-b", 100);
+        object_b.ordering.reveal_order = 2;
+        object_b.entrance = EntranceBehavior {
+            kind: EntranceKind::Instant,
+            ..EntranceBehavior::default()
+        };
+        let mut object_c = demo_object("stroke-c", 200);
+        object_c.ordering.reveal_order = 3;
+        object_c.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+
+        let project = AnnotationProject {
+            strokes: vec![
+                demo_stroke("stroke-a", 0),
+                demo_stroke("stroke-b", 100),
+                demo_stroke("stroke-c", 200),
+            ],
+            glyph_objects: vec![object_a.clone(), object_b.clone(), object_c.clone()],
+            ..AnnotationProject::default()
+        };
+
+        let a_mid = evaluate_entrance(&project, Some(&object_a), MediaTime::from_millis(500));
+        let b_mid = evaluate_entrance(&project, Some(&object_b), MediaTime::from_millis(500));
+        let c_mid = evaluate_entrance(&project, Some(&object_c), MediaTime::from_millis(500));
+        let c_after_a = evaluate_entrance(&project, Some(&object_c), MediaTime::from_millis(1_200));
+
+        assert!(a_mid.path_fraction > 0.45 && a_mid.path_fraction < 0.55);
+        assert_eq!(b_mid, VisibilityState::FULLY_VISIBLE);
+        assert_eq!(c_mid, VisibilityState::HIDDEN);
+        assert!(c_after_a.path_fraction > 0.15 && c_after_a.path_fraction < 0.25);
+    }
+
+    #[test]
+    fn timed_entrance_on_next_page_does_not_wait_for_previous_page_reveal() {
+        let mut object_a = demo_object("stroke-a", 0);
+        object_a.ordering.reveal_order = 1;
+        object_a.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+        let mut object_c = demo_object("stroke-c", 200);
+        object_c.ordering.reveal_order = 1;
+        object_c.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-a", 0), demo_stroke("stroke-c", 200)],
+            glyph_objects: vec![object_a, object_c.clone()],
+            clear_events: vec![ClearEvent {
+                id: ClearEventId::new("clear-1"),
+                time: MediaTime::from_millis(150),
+                kind: ClearKind::Instant,
+                ..ClearEvent::default()
+            }],
+            ..AnnotationProject::default()
+        };
+
+        let c_page_two = evaluate_entrance(&project, Some(&object_c), MediaTime::from_millis(300));
+        assert!(c_page_two.path_fraction > 0.09 && c_page_two.path_fraction < 0.11);
+    }
+
+    #[test]
+    fn dissolve_entrance_waits_for_previous_path_trace_reveal() {
+        let mut object_a = demo_object("stroke-a", 0);
+        object_a.ordering.reveal_order = 1;
+        object_a.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+        let mut object_b = demo_object("stroke-b", 100);
+        object_b.ordering.reveal_order = 2;
+        object_b.entrance = EntranceBehavior {
+            kind: EntranceKind::Dissolve,
+            duration: MediaDuration::from_millis(1_000),
+            ..EntranceBehavior::default()
+        };
+
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-a", 0), demo_stroke("stroke-b", 100)],
+            glyph_objects: vec![object_a, object_b.clone()],
+            ..AnnotationProject::default()
+        };
+
+        let before_queue_release =
+            evaluate_entrance(&project, Some(&object_b), MediaTime::from_millis(500));
+        let after_queue_release =
+            evaluate_entrance(&project, Some(&object_b), MediaTime::from_millis(1_300));
+
+        assert_eq!(before_queue_release, VisibilityState::HIDDEN);
+        assert!(after_queue_release.alpha > 0.25 && after_queue_release.alpha < 0.35);
     }
 
     #[test]

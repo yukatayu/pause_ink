@@ -852,6 +852,13 @@
   - 変更ファイル: `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - テスト: `cargo test -p pauseink-export ffmpeg_progress_end_clamps_to_stage_end -- --nocapture`、`cargo test -p pauseink-app export_progress_hint_explains_finalizing_stages -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
   - 結果: すべて exit 0。`progress=end` が誤って「100% 完了」に見えないことと、cleanup を含む最終段階が UI 上で説明付きで見えることを固定できた。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T18:12:41+09:00
+  - 事象: user から「preview では A/B/C が見えているが、動画では `PathTrace A -> Instant B -> PathTrace C` のとき `B` は即表示、`A` はだんだん表示、`C` は `A` 完了後にだんだん表示してほしい」と追加要望が来た。
+  - root cause: `crates/renderer/src/lib.rs` の entrance 評価は object ごとに `created_at` 基準で独立しており、同じ page 内でも後続 timed entrance が前の timed entrance 完了を待たずに始まっていた。
+  - 実施内容: renderer に page 単位の effective entrance start 計算を追加し、`Instant` 以外の timed entrance を `ordering.reveal_order` 順に直列化するようにした。`Instant` object は従来どおり即表示のまま通し、次の timed entrance だけが直前 timed entrance の end に揃う。page 境界は `object.page_index(clear_events)` で分離した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - テスト: red として `cargo test -p pauseink-renderer timed_entrance_waits_for_previous_timed_reveal_even_with_instant_between -- --nocapture` を実行し、`C` が `A` 完了前に進んでしまう failure を確認した。その後 `cargo test -p pauseink-renderer timed_entrance_on_next_page_does_not_wait_for_previous_page_reveal -- --nocapture`、`cargo test -p pauseink-renderer dissolve_entrance_waits_for_previous_path_trace_reveal -- --nocapture`、`cargo test -p pauseink-renderer`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を実行した。
+  - 結果: すべて exit 0。`PathTrace/Wipe/Dissolve` の timed entrance が page 内で reveal 順に直列化され、`Instant` は引き続き即表示されることを regression で固定できた。`Panel::*` 系 deprecation warning は継続。
 
 ## 8.11 2026-04-06 stroke 初点欠落の再修正
 

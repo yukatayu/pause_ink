@@ -73,6 +73,8 @@
   - 動画 export の 92% 固定は ffmpeg 実行中の progress 未更新が原因だったため、`-progress pipe:1` を使って encode 中も進捗が進むように修正した
   - hardware fallback で encode 経路が切り替わっても progress bar が逆走しないよう、pending progress は単調増加で保持するようにした
   - `progress=end` は即「完了」扱いにせず「最終処理中」表示へ切り替え、`3/3 一時ファイルを整理中` と説明文を出すようにして、99% / 100% 表示のまま何待ちか分からない状態を解消した
+  - page 内の entrance sequencing を見直し、`Instant` は即表示のまま通しつつ、PathTrace / Wipe / Dissolve のような timed entrance は `reveal_order` 順に直列化するよう修正した
+  - `cargo test -p pauseink-renderer timed_entrance_waits_for_previous_timed_reveal_even_with_instant_between -- --nocapture`、`cargo test -p pauseink-renderer timed_entrance_on_next_page_does_not_wait_for_previous_page_reveal -- --nocapture`、`cargo test -p pauseink-renderer dissolve_entrance_waits_for_previous_path_trace_reveal -- --nocapture`、`cargo test -p pauseink-renderer`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - `cargo test -p pauseink-export -- --nocapture`、`cargo test -p pauseink-app --lib --bins`、`cargo check -p pauseink-app --all-targets` を再通過
   - guide の次文字縦線は、直前文字の幅で再スケールせず、位置だけ直前文字の右端へ送るように修正した
   - `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` を consume した release では guide の次文字送りが発火しないよう、modifier tap 抑止を追加した
