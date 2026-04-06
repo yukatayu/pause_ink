@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 97%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: Windows 配布 build で余計なコンソールが開く問題と、配布 archive で `style preset` / `書き出し` 欄が消える問題を、配布 asset 同梱と built-in asset 解決経路の修正で塞ぐ。
+- 現在の即時マイルストーン: Windows 配布 build で `ffmpeg` / `ffprobe` 子プロセスごとにコマンドプロンプトが点滅する問題を、Windows 専用 no-window spawn helper で塞ぎつつ、Linux/macOS 側では no-op のまま既存挙動を維持する。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -96,9 +96,11 @@
   - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample`、`same_frame_move_keeps_pointer_button_press_as_first_preview_point`、`horizontal_guide_line_extends_to_frame_edges`、`live_preview_width_matches_downscaled_overlay_scale` を追加した
   - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - Windows release build の binary は `windows_subsystem = "windows"` を宣言し、debug の `cargo run` を維持したまま配布 exe だけ余計なコンソールを開かない構成へ修正した
+  - 上記の副作用として、配布 exe から起動される `ffprobe` / `ffmpeg` が Windows で個別に console window を出す問題を確認し、media/export の production command を Windows 専用 no-window helper 経由へ統一した
+  - startup の runtime version / capability query、import / probe、preview 再生、書き出しの ffmpeg 実行がすべて同 helper を通るようにし、source 上でも `windows_media_commands_use_hidden_process_helper` / `windows_export_commands_use_hidden_process_helper` で固定した
   - app 側で built-in style preset / export profile の探索先を `current_exe()` の親ディレクトリ配下 `presets/` 優先、repo fallback ありに変更し、CI 配布 archive でも `style preset` と `書き出し` 欄が欠けないようにした
   - `scripts/package_release_asset.py` は `presets/` ツリーも release archive へ同梱するように更新し、`scripts/package_release_asset_test.py` で stage/zip 両方を回帰固定した
-  - 今回の確認として `cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した
+  - 今回の確認として `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`、`cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、production 側の child process spawn が helper へ集約され、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - live preview 追加後も `cargo fmt --all`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を通過
@@ -115,6 +117,7 @@
   - GitHub Release workflow が生成する成果物は現時点では app binary + `README.md` + `presets/` を含む archive までで、FFmpeg sidecar 同梱はまだ含まれない
   - Windows cross-build は `x86_64-pc-windows-gnu` target 未導入が blocker
   - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
+  - Windows 実機での console 点滅解消確認と macOS 実機での runtime 実行確認は、この Linux host では未実施
   - reveal-head effect と post-action chain は domain 型までで、renderer / inspector UI は未接続
   - clear / combo preset の専用 UI は未接続
   - headless host では GUI 実表示 smoke を実行できない

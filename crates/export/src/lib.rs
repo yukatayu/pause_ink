@@ -6,7 +6,7 @@ use std::thread;
 
 use image::{ImageBuffer, Rgba};
 use pauseink_domain::{AnnotationProject, MediaDuration, MediaTime, TimeBase};
-use pauseink_media::{MediaRuntime, RuntimeCapabilities};
+use pauseink_media::{command_without_console, MediaRuntime, RuntimeCapabilities};
 use pauseink_presets_core::{DistributionProfile, ExportCatalog, ExportFamily, ResolveError};
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use thiserror::Error;
@@ -453,7 +453,7 @@ fn export_transparent_video(
     output_path: &Path,
     report_progress: &mut impl FnMut(ExportProgressUpdate),
 ) -> Result<(), ExportExecutionError> {
-    let mut command = Command::new(&runtime.ffmpeg_path);
+    let mut command = command_without_console(&runtime.ffmpeg_path);
     command.args([
         "-y",
         "-loglevel",
@@ -550,7 +550,7 @@ fn build_composite_command(
     output_path: &Path,
     try_hardware: bool,
 ) -> Command {
-    let mut command = Command::new(&runtime.ffmpeg_path);
+    let mut command = command_without_console(&runtime.ffmpeg_path);
     command.arg("-y").args(["-loglevel", "error"]);
     configure_ffmpeg_progress_reporting(&mut command);
     if try_hardware {
@@ -1236,6 +1236,16 @@ mod tests {
                 .iter()
                 .any(|fraction| *fraction > 0.92 && *fraction < 1.0),
             "expected intermediate ffmpeg progress beyond 92%, got {fractions:?}"
+        );
+    }
+
+    #[test]
+    fn windows_export_commands_use_hidden_process_helper() {
+        let source = include_str!("lib.rs");
+
+        assert!(
+            source.matches("command_without_console(&runtime.ffmpeg_path)").count() >= 2,
+            "Windows 配布 build では export の ffmpeg 子プロセスも console window を出さない helper を通したい"
         );
     }
 }
