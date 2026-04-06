@@ -46,6 +46,10 @@ impl PortablePaths {
         self.config_dir.join("settings.json5")
     }
 
+    pub fn user_style_presets_dir(&self) -> PathBuf {
+        self.config_dir.join("style_presets")
+    }
+
     pub fn google_fonts_cache_dir(&self) -> PathBuf {
         self.cache_dir.join("google_fonts")
     }
@@ -72,6 +76,7 @@ impl PortablePaths {
 
     pub fn ensure_exists(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
+        std::fs::create_dir_all(&self.user_style_presets_dir())?;
         std::fs::create_dir_all(&self.logs_dir)?;
         std::fs::create_dir_all(&self.autosave_dir)?;
         std::fs::create_dir_all(&self.temp_dir)?;
@@ -291,6 +296,10 @@ mod tests {
             paths.autosave_file("recovery_latest"),
             Path::new("/tmp/demo/pauseink_data/autosave/recovery_latest.pauseink")
         );
+        assert_eq!(
+            paths.user_style_presets_dir(),
+            Path::new("/tmp/demo/pauseink_data/config/style_presets")
+        );
     }
 
     #[test]
@@ -304,6 +313,7 @@ mod tests {
 
         assert_eq!(loaded.history_depth, settings.history_depth);
         assert!(paths.thumbnail_cache_dir().is_dir());
+        assert!(paths.user_style_presets_dir().is_dir());
     }
 
     #[test]

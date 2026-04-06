@@ -86,6 +86,23 @@ pub struct BaseStylePreset {
     pub display_name: String,
     pub thickness: Option<f32>,
     pub color_rgba: Option<[u8; 4]>,
+    pub opacity: Option<f32>,
+    pub stabilization_strength: Option<f32>,
+    pub source: StylePresetSource,
+    pub file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StylePresetSource {
+    BuiltIn,
+    User,
+}
+
+impl Default for StylePresetSource {
+    fn default() -> Self {
+        Self::BuiltIn
+    }
 }
 
 impl DistributionProfile {
@@ -384,6 +401,36 @@ pub fn load_distribution_profile_from_path(
 pub fn load_base_style_presets_from_dir(
     preset_dir: &Path,
 ) -> Result<Vec<BaseStylePreset>, StylePresetLoadError> {
+    load_base_style_presets_overlay(preset_dir, None)
+}
+
+pub fn load_base_style_presets_overlay(
+    builtin_dir: &Path,
+    user_dir: Option<&Path>,
+) -> Result<Vec<BaseStylePreset>, StylePresetLoadError> {
+    let mut presets = BTreeMap::new();
+    for preset in load_base_style_presets_from_single_dir(builtin_dir, StylePresetSource::BuiltIn)?
+    {
+        presets.insert(preset.id.clone(), preset);
+    }
+
+    if let Some(user_dir) = user_dir {
+        if user_dir.exists() {
+            for preset in
+                load_base_style_presets_from_single_dir(user_dir, StylePresetSource::User)?
+            {
+                presets.insert(preset.id.clone(), preset);
+            }
+        }
+    }
+
+    Ok(presets.into_values().collect())
+}
+
+fn load_base_style_presets_from_single_dir(
+    preset_dir: &Path,
+    default_source: StylePresetSource,
+) -> Result<Vec<BaseStylePreset>, StylePresetLoadError> {
     let mut paths = fs::read_dir(preset_dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json5"))
@@ -392,7 +439,10 @@ pub fn load_base_style_presets_from_dir(
 
     let mut presets = Vec::new();
     for path in paths {
-        presets.push(load_base_style_preset_from_path(&path)?);
+        presets.push(load_base_style_preset_from_path_with_default_source(
+            &path,
+            default_source,
+        )?);
     }
     Ok(presets)
 }
@@ -400,13 +450,33 @@ pub fn load_base_style_presets_from_dir(
 pub fn load_base_style_preset_from_path(
     path: &Path,
 ) -> Result<BaseStylePreset, StylePresetLoadError> {
+    load_base_style_preset_from_path_with_default_source(path, StylePresetSource::BuiltIn)
+}
+
+fn load_base_style_preset_from_path_with_default_source(
+    path: &Path,
+    default_source: StylePresetSource,
+) -> Result<BaseStylePreset, StylePresetLoadError> {
     let raw = fs::read_to_string(path)?;
     let file: BaseStylePresetFile =
         json5::from_str(&raw).map_err(|source| StylePresetLoadError::Parse {
             path: path.to_path_buf(),
             source,
         })?;
-    Ok(file.into_preset())
+    Ok(file.into_preset(path, default_source))
+}
+
+pub fn save_base_style_preset_to_path(
+    path: &Path,
+    preset: &BaseStylePreset,
+) -> Result<(), StylePresetLoadError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let serialized = serde_json::to_string_pretty(&BaseStylePresetFile::from_preset(preset))
+        .expect("style preset should serialize");
+    fs::write(path, serialized)?;
+    Ok(())
 }
 
 pub fn load_distribution_profile_from_str(
@@ -450,30 +520,63 @@ struct DistributionProfileFile {
     audio: Option<LegacyAudioDefaults>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BaseStylePresetFile {
     id: String,
     display_name: String,
+    #[serde(default)]
+    source: StylePresetSource,
     #[serde(default)]
     base_style: BaseStylePresetStyleFile,
 }
 
 impl BaseStylePresetFile {
-    fn into_preset(self) -> BaseStylePreset {
+    fn into_preset(self, path: &Path, default_source: StylePresetSource) -> BaseStylePreset {
+        let (color_rgba, opacity) = normalize_style_preset_color_and_opacity(
+            self.base_style.color_rgba,
+            self.base_style.opacity,
+        );
         BaseStylePreset {
             id: self.id,
             display_name: self.display_name,
             thickness: self.base_style.thickness,
-            color_rgba: self.base_style.color_rgba.map(normalize_color_rgba),
+            color_rgba,
+            opacity,
+            stabilization_strength: self.base_style.stabilization_strength,
+            source: match self.source {
+                StylePresetSource::BuiltIn => default_source,
+                StylePresetSource::User => StylePresetSource::User,
+            },
+            file_path: Some(path.to_path_buf()),
+        }
+    }
+
+    fn from_preset(preset: &BaseStylePreset) -> Self {
+        Self {
+            id: preset.id.clone(),
+            display_name: preset.display_name.clone(),
+            source: preset.source,
+            base_style: BaseStylePresetStyleFile {
+                thickness: preset.thickness,
+                color_rgba: preset.color_rgba.map(|rgba| {
+                    let mut rgba = float_color_rgba(rgba);
+                    rgba[3] = preset.opacity.unwrap_or(rgba[3]).clamp(0.0, 1.0);
+                    rgba
+                }),
+                opacity: preset.opacity,
+                stabilization_strength: preset.stabilization_strength,
+            },
         }
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct BaseStylePresetStyleFile {
     thickness: Option<f32>,
     color_rgba: Option<[f32; 4]>,
+    opacity: Option<f32>,
+    stabilization_strength: Option<f32>,
 }
 
 impl DistributionProfileFile {
@@ -616,9 +719,29 @@ fn normalize_color_rgba(raw: [f32; 4]) -> [u8; 4] {
     raw.map(|component| (component.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+fn normalize_style_preset_color_and_opacity(
+    color_rgba: Option<[f32; 4]>,
+    opacity: Option<f32>,
+) -> (Option<[u8; 4]>, Option<f32>) {
+    let Some(mut rgba) = color_rgba.map(normalize_color_rgba) else {
+        return (None, opacity.map(|value| value.clamp(0.0, 1.0)));
+    };
+
+    let resolved_opacity = opacity.unwrap_or(rgba[3] as f32 / 255.0).clamp(0.0, 1.0);
+    rgba[3] = 255;
+    (Some(rgba), Some(resolved_opacity))
+}
+
+fn float_color_rgba(raw: [u8; 4]) -> [f32; 4] {
+    raw.map(|component| component as f32 / 255.0)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -876,5 +999,76 @@ mod tests {
             normalize_color_rgba([1.0, 0.5, 0.0, 0.25]),
             [255, 128, 0, 64]
         );
+    }
+
+    #[test]
+    fn user_style_presets_overlay_builtins_and_roundtrip_disk_edits() {
+        let temp_dir = tempdir().expect("temp dir");
+        let builtin_dir = temp_dir.path().join("builtin");
+        let user_dir = temp_dir.path().join("user");
+        fs::create_dir_all(&builtin_dir).expect("builtin dir");
+        fs::create_dir_all(&user_dir).expect("user dir");
+
+        fs::write(
+            builtin_dir.join("marker.json5"),
+            r#"
+            {
+              id: "marker_highlight",
+              display_name: "Built-in Marker",
+              base_style: { thickness: 12.0, color_rgba: [1.0, 1.0, 0.0, 0.30] },
+            }
+            "#,
+        )
+        .expect("builtin preset");
+        fs::write(
+            user_dir.join("marker.json5"),
+            r#"
+            {
+              id: "marker_highlight",
+              display_name: "User Marker",
+              base_style: {
+                thickness: 18.0,
+                color_rgba: [0.0, 0.5, 1.0, 0.60],
+                opacity: 0.60,
+                stabilization_strength: 0.8,
+              },
+            }
+            "#,
+        )
+        .expect("user preset");
+
+        let presets = load_base_style_presets_overlay(&builtin_dir, Some(&user_dir))
+            .expect("overlay preset load should succeed");
+        let marker = presets
+            .iter()
+            .find(|preset| preset.id == "marker_highlight")
+            .expect("merged marker preset");
+        assert_eq!(marker.display_name, "User Marker");
+        assert_eq!(marker.source, StylePresetSource::User);
+        assert_eq!(marker.thickness, Some(18.0));
+        assert_eq!(marker.opacity, Some(0.60));
+        assert_eq!(marker.stabilization_strength, Some(0.8));
+
+        let custom_path = user_dir.join("custom_soft_marker.json5");
+        let custom = BaseStylePreset {
+            id: "custom_soft_marker".to_owned(),
+            display_name: "Custom Soft Marker".to_owned(),
+            thickness: Some(9.5),
+            color_rgba: Some([32, 200, 255, 255]),
+            opacity: Some(0.35),
+            stabilization_strength: Some(0.8),
+            source: StylePresetSource::User,
+            file_path: None,
+        };
+        save_base_style_preset_to_path(&custom_path, &custom).expect("preset save should succeed");
+
+        let loaded =
+            load_base_style_preset_from_path(&custom_path).expect("saved preset should load");
+        assert_eq!(loaded.id, "custom_soft_marker");
+        assert_eq!(loaded.display_name, "Custom Soft Marker");
+        assert_eq!(loaded.thickness, Some(9.5));
+        assert_eq!(loaded.opacity, Some(0.35));
+        assert_eq!(loaded.stabilization_strength, Some(0.8));
+        assert_eq!(loaded.source, StylePresetSource::User);
     }
 }

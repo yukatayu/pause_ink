@@ -56,6 +56,7 @@ PauseInk は次の分離を守る前提で組んでいます。
 ```text
 pauseink_data/
   config/
+    style_presets/
   cache/
     google_fonts/
     font_index/
@@ -98,16 +99,21 @@ PauseInk は family と profile を分離しています。
 - `cargo test -p pauseink-presets-core`
 - `cargo test -p pauseink-export`
 
-## 6. built-in style preset
+## 6. style preset
 
-現実装では `presets/style_presets/*.json5` から base style preset を読み込みます。  
+現実装では built-in preset を `presets/style_presets/*.json5` から、user preset を `pauseink_data/config/style_presets/*.json5` から読み込みます。  
+読み込み順は built-in -> user overlay で、同じ `id` がある場合は user preset が優先されます。built-in は読み取り専用、user preset は GUI から追加保存 / 上書き保存 / 削除できます。  
+project には mutable preset file そのものではなく、`project.presets.base_style` に resolved snapshot と任意の preset ID を保存します。template / guide の project-specific UI state は `project.settings.pauseink_editor_ui` に保存します。
+
 現在 UI で適用しているのは次の項目です。
 
 - thickness
 - color_rgba
+- opacity
+- stabilization_strength
 
 entrance / clear / combo preset の宣言フィールドは将来拡張余地として保持していますが、v1.0 実装ではまだ active UI binding を絞っています。
-renderer 側には outline / drop shadow / glow の描画処理があり、同一 object 内では outer effect を先に、stroke 本体を後に描く multi-pass compositor にしてあります。これにより、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくくしています。いっぽうで inspector UI と preset loader はまだ thickness / color 中心で、effect パラメータを UI から細かく触る導線は未実装です。
+renderer 側には outline / drop shadow / glow の描画処理があり、同一 object 内では outer effect を先に、stroke 本体を後に描く multi-pass compositor にしてあります。これにより、後続 stroke の outline が先行 stroke 本体を不自然に覆いにくくしています。いっぽうで inspector UI と preset loader はまだ base style 中心で、effect パラメータを UI から細かく触る導線は未実装です。
 
 ## 7. FFmpeg runtime
 

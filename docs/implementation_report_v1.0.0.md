@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
@@ -888,6 +888,22 @@
 - 2026-04-06T14:30:00+09:00
   - 実施内容: `horizontal_guide_line_extends_to_frame_edges` を red -> green で追加し、`cargo test -p pauseink-app horizontal_guide_line_extends_to_frame_edges -- --nocapture` を実行した。
   - 結果: 旧実装では横線 start/end が cell 幅の範囲に留まり fail。修正後は frame 左右端へ延長され pass。
+- 2026-04-06T15:40:00+09:00
+  - 実施内容: project-specific UI state の保存位置を整理した。`project.settings.pauseink_editor_ui` に template text / font family / font size / tracking / line height / script scale / slope / underlay / current slot と guide 傾きを保存し、`project.presets.base_style` に resolved base style snapshot と任意の preset ID を保存する方針を採用した。
+  - 判断理由: `.docs/02_final_spec_v1.0.0.md` の「project には resolved snapshot と任意の preset ID を保存する」「user preset は portable root に保存する」に最も素直に沿う。`project_io` の generic JSON を活かせるため typed project schema を壊さず、unknown field preserve 方針とも両立する。
+  - 変更ファイル: `crates/app/src/main.rs`, `README.md`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`
+  - 結果: reopen / autosave recovery 後も、基本スタイル、選択 preset、template font/layout、guide 傾きが project 単位で戻るようになった。
+- 2026-04-06T15:55:00+09:00
+  - 実施内容: `crates/portable_fs/src/lib.rs` に `user_style_presets_dir()` を追加し、`pauseink_data/config/style_presets/` を portable な user preset 置き場として固定した。`crates/presets_core/src/lib.rs` では built-in / user overlay loader、disk save helper、preset source/file path/opacity/stabilization metadata を追加した。
+  - 変更ファイル: `crates/portable_fs/src/lib.rs`, `crates/presets_core/Cargo.toml`, `crates/presets_core/src/lib.rs`
+  - 結果: built-in preset は読み取り専用のまま、user preset を portable root 配下へ保存し、同じ `id` では overlay として扱えるようになった。
+- 2026-04-06T16:05:00+09:00
+  - 実施内容: inspector に user preset ID / 名、`追加保存` / `上書き保存` / `削除` を追加し、選択 preset と現在の base style を同期するようにした。preset 適用時は `opacity` と `stabilization_strength` も反映し、project-specific UI 変更では `session.dirty` を立てるようにした。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `README.md`, `progress.md`
+  - 結果: GUI から user preset の CRUD が完結し、保存対象だった style/template/guide state が autosave と明示保存の両方へ乗るようになった。
+- 2026-04-06T16:10:00+09:00
+  - 実施内容: `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture`
+  - 結果: すべて exit 0。project reopen での state 復元、portable user preset overlay、add / overwrite / delete の roundtrip を回帰テストで固定できた。
 
 ## 9. Export / profile メモ
 

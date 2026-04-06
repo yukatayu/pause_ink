@@ -24,17 +24,22 @@ use pauseink_portable_fs::{
     save_settings_to_file, PortablePaths, Settings,
 };
 use pauseink_presets_core::{
-    load_base_style_presets_from_dir, BaseStylePreset, ExportCatalog, OutputKind, RuntimeTier,
+    load_base_style_presets_overlay, save_base_style_preset_to_path, BaseStylePreset,
+    ExportCatalog, OutputKind, RuntimeTier, StylePresetSource,
 };
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
     build_guide_geometry, template_grapheme_scale, GuideGeometry, GuideLineKind, GuidePlacement,
     Point, TemplateSettings, UnderlayMode,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
 const SYSTEM_DEFAULT_FONT_FAMILY_LABEL: &str = "システム既定";
 const DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH: f32 = 1400.0;
+const PROJECT_EDITOR_UI_SETTINGS_KEY: &str = "pauseink_editor_ui";
+const PROJECT_BASE_STYLE_PRESET_KEY: &str = "base_style";
 
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
@@ -242,6 +247,95 @@ impl Default for TemplatePreviewState {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProjectEditorUiState {
+    template: StoredTemplateUiState,
+    guide_slope_degrees: f32,
+}
+
+impl ProjectEditorUiState {
+    fn capture(app: &DesktopApp) -> Self {
+        Self {
+            template: StoredTemplateUiState::capture(&app.template),
+            guide_slope_degrees: app.settings.guide_slope_degrees,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredTemplateUiState {
+    text: String,
+    font_family: String,
+    current_slot_index: usize,
+    font_size: f32,
+    tracking: f32,
+    line_height: f32,
+    kana_scale: f32,
+    latin_scale: f32,
+    punctuation_scale: f32,
+    slope_degrees: f32,
+    underlay_mode: String,
+}
+
+impl StoredTemplateUiState {
+    fn capture(template: &TemplatePreviewState) -> Self {
+        Self {
+            text: template.text.clone(),
+            font_family: template.font_family.clone(),
+            current_slot_index: template.current_slot_index,
+            font_size: template.settings.font_size,
+            tracking: template.settings.tracking,
+            line_height: template.settings.line_height,
+            kana_scale: template.settings.kana_scale,
+            latin_scale: template.settings.latin_scale,
+            punctuation_scale: template.settings.punctuation_scale,
+            slope_degrees: template.settings.slope_degrees,
+            underlay_mode: underlay_mode_key(template.settings.underlay_mode).to_owned(),
+        }
+    }
+
+    fn apply_to(self, template: &mut TemplatePreviewState) {
+        template.text = self.text;
+        template.font_family = self.font_family;
+        template.current_slot_index = self.current_slot_index;
+        template.settings.font_size = self.font_size;
+        template.settings.tracking = self.tracking;
+        template.settings.line_height = self.line_height;
+        template.settings.kana_scale = self.kana_scale;
+        template.settings.latin_scale = self.latin_scale;
+        template.settings.punctuation_scale = self.punctuation_scale;
+        template.settings.slope_degrees = self.slope_degrees;
+        template.settings.underlay_mode = parse_underlay_mode(&self.underlay_mode);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedBaseStylePresetState {
+    preset_id: Option<String>,
+    source: Option<StylePresetSource>,
+    display_name: Option<String>,
+    resolved_snapshot: pauseink_domain::StyleSnapshot,
+}
+
+impl SavedBaseStylePresetState {
+    fn capture(app: &DesktopApp) -> Self {
+        let selected = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == app.selected_style_preset_id);
+        Self {
+            preset_id: if app.selected_style_preset_id.is_empty() {
+                None
+            } else {
+                Some(app.selected_style_preset_id.clone())
+            },
+            source: selected.map(|preset| preset.source),
+            display_name: selected.map(|preset| preset.display_name.clone()),
+            resolved_snapshot: app.session.active_style.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct GuideOverlayState {
     horizontal_origin: Point,
@@ -417,6 +511,8 @@ struct DesktopApp {
     local_font_families: Vec<String>,
     style_presets: Vec<BaseStylePreset>,
     selected_style_preset_id: String,
+    preset_editor_id: String,
+    preset_editor_name: String,
     template: TemplatePreviewState,
     export: ExportState,
     guide_state: Option<GuideOverlayState>,
@@ -463,10 +559,7 @@ impl DesktopApp {
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/export_profiles"),
         )
         .ok();
-        let style_presets = load_base_style_presets_from_dir(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/style_presets"),
-        )
-        .unwrap_or_default();
+        let style_presets = load_style_presets(&portable_paths).unwrap_or_default();
         let mut session = AppSession::with_history_limit(settings.history_depth);
         session.active_style.stabilization_strength =
             (settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
@@ -475,6 +568,13 @@ impl DesktopApp {
             ..ExportState::default()
         };
         initialize_export_selection(&mut export);
+
+        let selected_style_preset_id = style_presets
+            .first()
+            .map(|preset| preset.id.clone())
+            .unwrap_or_default();
+        let (preset_editor_id, preset_editor_name) =
+            preset_editor_fields_from_selection(&style_presets, &selected_style_preset_id);
 
         Self {
             session,
@@ -488,10 +588,9 @@ impl DesktopApp {
             logs: Vec::new(),
             bottom_panel_content_width: DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH,
             local_font_families,
-            selected_style_preset_id: style_presets
-                .first()
-                .map(|preset| preset.id.clone())
-                .unwrap_or_default(),
+            selected_style_preset_id,
+            preset_editor_id,
+            preset_editor_name,
             style_presets,
             template: TemplatePreviewState::default(),
             export,
@@ -526,6 +625,234 @@ impl DesktopApp {
             let overflow = self.logs.len() - 200;
             self.logs.drain(0..overflow);
         }
+    }
+
+    fn mark_project_ui_dirty(&mut self) {
+        self.session.dirty = true;
+    }
+
+    fn selected_style_preset(&self) -> Option<&BaseStylePreset> {
+        self.style_presets
+            .iter()
+            .find(|preset| preset.id == self.selected_style_preset_id)
+    }
+
+    fn selected_style_preset_label(&self) -> String {
+        self.selected_style_preset()
+            .map(|preset| preset.display_name.clone())
+            .or_else(|| {
+                (!self.selected_style_preset_id.is_empty())
+                    .then(|| format!("保存済み: {}", self.selected_style_preset_id))
+            })
+            .unwrap_or_else(|| "未選択".to_owned())
+    }
+
+    fn sync_preset_editor_fields_from_selection(&mut self) {
+        let (preset_id, preset_name) = preset_editor_fields_from_selection(
+            &self.style_presets,
+            &self.selected_style_preset_id,
+        );
+        self.preset_editor_id = preset_id;
+        self.preset_editor_name = preset_name;
+    }
+
+    fn reload_style_presets(&mut self) {
+        let previous_selection = self.selected_style_preset_id.clone();
+        match load_style_presets(&self.portable_paths) {
+            Ok(style_presets) => {
+                self.style_presets = style_presets;
+                if self.selected_style_preset_id.is_empty() {
+                    self.selected_style_preset_id = self
+                        .style_presets
+                        .first()
+                        .map(|preset| preset.id.clone())
+                        .unwrap_or_default();
+                } else if !self
+                    .style_presets
+                    .iter()
+                    .any(|preset| preset.id == self.selected_style_preset_id)
+                {
+                    self.selected_style_preset_id = self
+                        .style_presets
+                        .iter()
+                        .find(|preset| preset.id == previous_selection)
+                        .or_else(|| self.style_presets.first())
+                        .map(|preset| preset.id.clone())
+                        .unwrap_or_default();
+                }
+                self.sync_preset_editor_fields_from_selection();
+            }
+            Err(error) => self.push_log(format!("preset 再読込失敗: {error}")),
+        }
+    }
+
+    fn save_user_style_preset(&mut self, overwrite_selected: bool) {
+        let selected_user_preset = self
+            .selected_style_preset()
+            .filter(|preset| preset.source == StylePresetSource::User)
+            .cloned();
+        let raw_id = if overwrite_selected {
+            selected_user_preset
+                .as_ref()
+                .map(|preset| preset.id.clone())
+                .unwrap_or_else(|| self.preset_editor_id.clone())
+        } else {
+            self.preset_editor_id.clone()
+        };
+        let preset_id = sanitize_style_preset_id(&raw_id);
+        if preset_id.is_empty() {
+            self.push_log("preset 保存失敗: preset ID が空です。");
+            return;
+        }
+
+        let display_name = if overwrite_selected {
+            if self.preset_editor_name.trim().is_empty() {
+                selected_user_preset
+                    .as_ref()
+                    .map(|preset| preset.display_name.clone())
+                    .unwrap_or_else(|| preset_id.clone())
+            } else {
+                self.preset_editor_name.trim().to_owned()
+            }
+        } else if self.preset_editor_name.trim().is_empty() {
+            preset_id.clone()
+        } else {
+            self.preset_editor_name.trim().to_owned()
+        };
+
+        let preset = BaseStylePreset {
+            id: preset_id.clone(),
+            display_name: display_name.clone(),
+            thickness: Some(self.session.active_style.thickness),
+            color_rgba: Some([
+                self.session.active_style.color.r,
+                self.session.active_style.color.g,
+                self.session.active_style.color.b,
+                255,
+            ]),
+            opacity: Some(self.session.active_style.opacity),
+            stabilization_strength: Some(self.session.active_style.stabilization_strength),
+            source: StylePresetSource::User,
+            file_path: None,
+        };
+        let preset_path = if overwrite_selected {
+            selected_user_preset
+                .as_ref()
+                .and_then(|preset| preset.file_path.clone())
+                .unwrap_or_else(|| {
+                    self.portable_paths
+                        .user_style_presets_dir()
+                        .join(format!("{preset_id}.json5"))
+                })
+        } else {
+            self.portable_paths
+                .user_style_presets_dir()
+                .join(format!("{preset_id}.json5"))
+        };
+
+        if !overwrite_selected && preset_path.exists() {
+            self.push_log(format!(
+                "user preset 保存失敗: `{preset_id}` は既に存在します。上書き保存を使ってください。"
+            ));
+            return;
+        }
+
+        match save_base_style_preset_to_path(&preset_path, &preset) {
+            Ok(()) => {
+                self.selected_style_preset_id = preset_id;
+                self.preset_editor_name = display_name.clone();
+                self.reload_style_presets();
+                self.mark_project_ui_dirty();
+                self.push_log(format!("user preset 保存: {display_name}"));
+            }
+            Err(error) => self.push_log(format!("user preset 保存失敗: {error}")),
+        }
+    }
+
+    fn delete_selected_user_style_preset(&mut self) {
+        let Some(preset) = self.selected_style_preset().cloned() else {
+            self.push_log("preset 削除失敗: 選択中の preset がありません。");
+            return;
+        };
+        if preset.source != StylePresetSource::User {
+            self.push_log("preset 削除失敗: built-in preset は削除できません。");
+            return;
+        }
+
+        let path = preset.file_path.clone().unwrap_or_else(|| {
+            self.portable_paths
+                .user_style_presets_dir()
+                .join(format!("{}.json5", sanitize_style_preset_id(&preset.id)))
+        });
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                self.reload_style_presets();
+                if self
+                    .style_presets
+                    .iter()
+                    .any(|candidate| candidate.id == preset.id)
+                {
+                    self.selected_style_preset_id = preset.id.clone();
+                } else {
+                    self.selected_style_preset_id = self
+                        .style_presets
+                        .first()
+                        .map(|candidate| candidate.id.clone())
+                        .unwrap_or_default();
+                }
+                self.sync_preset_editor_fields_from_selection();
+                self.mark_project_ui_dirty();
+                self.push_log(format!("user preset 削除: {}", preset.display_name));
+            }
+            Err(error) => self.push_log(format!("user preset 削除失敗: {error}")),
+        }
+    }
+
+    fn persist_project_ui_state_into_document(&mut self) {
+        let editor_state = serde_json::to_value(ProjectEditorUiState::capture(self))
+            .expect("project editor ui state should serialize");
+        let base_style_state = serde_json::to_value(SavedBaseStylePresetState::capture(self))
+            .expect("base style preset state should serialize");
+        let settings = ensure_object_value(&mut self.session.document.project.settings);
+        settings.insert(PROJECT_EDITOR_UI_SETTINGS_KEY.to_owned(), editor_state);
+
+        let presets = ensure_object_value(&mut self.session.document.project.presets);
+        presets.insert(PROJECT_BASE_STYLE_PRESET_KEY.to_owned(), base_style_state);
+    }
+
+    fn restore_project_ui_state_from_document(&mut self) {
+        if let Some(editor_state) = self
+            .session
+            .document
+            .project
+            .settings
+            .get(PROJECT_EDITOR_UI_SETTINGS_KEY)
+            .cloned()
+            .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
+        {
+            editor_state.template.apply_to(&mut self.template);
+            self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
+        }
+
+        if let Some(base_style_state) = self
+            .session
+            .document
+            .project
+            .presets
+            .get(PROJECT_BASE_STYLE_PRESET_KEY)
+            .cloned()
+            .and_then(|value| serde_json::from_value::<SavedBaseStylePresetState>(value).ok())
+        {
+            self.session.active_style = base_style_state.resolved_snapshot;
+            if let Some(preset_id) = base_style_state.preset_id {
+                self.selected_style_preset_id = preset_id;
+            }
+        }
+
+        self.font_config_dirty = true;
+        self.reset_template_slots();
+        self.refresh_guide_geometry();
+        self.sync_preset_editor_fields_from_selection();
     }
 
     fn rebuild_local_font_families(&mut self) {
@@ -732,8 +1059,12 @@ impl DesktopApp {
 
     fn move_template_slot(&mut self, delta: isize) {
         let slot_len = self.template.placed_slots.as_ref().map_or(0, Vec::len);
-        self.template.current_slot_index =
+        let next_index =
             step_template_slot_index(self.template.current_slot_index, slot_len, delta);
+        if next_index != self.template.current_slot_index {
+            self.template.current_slot_index = next_index;
+            self.mark_project_ui_dirty();
+        }
     }
 
     fn reset_template_slots(&mut self) {
@@ -869,10 +1200,18 @@ impl DesktopApp {
         }
         if let Some(color) = preset.color_rgba {
             self.session.active_style.color =
-                pauseink_domain::RgbaColor::new(color[0], color[1], color[2], color[3]);
-            self.session.active_style.opacity = 1.0;
+                pauseink_domain::RgbaColor::new(color[0], color[1], color[2], 255);
+        }
+        if let Some(opacity) = preset.opacity {
+            self.session.active_style.opacity = opacity;
+        } else if let Some(color) = preset.color_rgba {
+            self.session.active_style.opacity = color[3] as f32 / 255.0;
+        }
+        if let Some(stabilization_strength) = preset.stabilization_strength {
+            self.session.active_style.stabilization_strength = stabilization_strength;
         }
         self.sync_active_style_to_current_object();
+        self.mark_project_ui_dirty();
         self.push_log(format!("style preset 適用: {}", preset.display_name));
     }
 
@@ -1175,7 +1514,7 @@ impl DesktopApp {
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
                 self.clear_guide_state();
-                self.reset_template_slots();
+                self.restore_project_ui_state_from_document();
                 self.template.placement_armed = false;
                 self.preview_key = None;
                 self.overlay_key = None;
@@ -1186,6 +1525,7 @@ impl DesktopApp {
     }
 
     fn save_project(&mut self, path: PathBuf) {
+        self.persist_project_ui_state_into_document();
         match self.session.save_project_to_path(&path) {
             Ok(()) => {
                 let autosave_path = self.portable_paths.autosave_file("recovery_latest");
@@ -1371,8 +1711,8 @@ impl DesktopApp {
         }
 
         let pointer_down = ctx.input(|input| input.pointer.primary_down());
-        let press_started_on_canvas = primary_press_position
-            .is_some_and(|position| response.rect.contains(position));
+        let press_started_on_canvas =
+            primary_press_position.is_some_and(|position| response.rect.contains(position));
         let mut started_stroke_this_frame = false;
 
         if !self.canvas_drag_active && press_started_on_canvas {
@@ -1577,7 +1917,8 @@ impl DesktopApp {
         };
 
         for line in &guide.horizontal_lines {
-            let (line_start, line_end) = extend_horizontal_guide_line_to_frame_width(line, frame_width);
+            let (line_start, line_end) =
+                extend_horizontal_guide_line_to_frame_width(line, frame_width);
             let stroke = match line.kind {
                 GuideLineKind::Main => {
                     EguiStroke::new(1.5, Color32::from_rgba_unmultiplied(120, 200, 255, 180))
@@ -1697,6 +2038,7 @@ impl DesktopApp {
             return;
         }
 
+        self.persist_project_ui_state_into_document();
         match self.session.save_project_to_string() {
             Ok(serialized) => {
                 let autosave_path = self.portable_paths.autosave_file("recovery_latest");
@@ -1723,6 +2065,7 @@ impl DesktopApp {
                 session.active_style.stabilization_strength =
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
+                self.restore_project_ui_state_from_document();
                 self.preview_key = None;
                 self.overlay_key = None;
                 self.recovery_prompt_open = false;
@@ -1791,6 +2134,7 @@ impl DesktopApp {
                     )
                     .changed()
                 {
+                    self.mark_project_ui_dirty();
                     self.refresh_guide_geometry();
                 }
                 ui.checkbox(
@@ -2557,6 +2901,7 @@ impl eframe::App for DesktopApp {
                         .text("傾き"))
                     .changed();
                 if template_layout_changed {
+                    self.mark_project_ui_dirty();
                     self.refresh_placed_template_slots(ui.ctx());
                 }
                 ui.horizontal(|ui| {
@@ -2623,14 +2968,9 @@ impl eframe::App for DesktopApp {
                 ui.separator();
                 if !self.style_presets.is_empty() {
                     ui.label("style preset");
+                    let previous_style_preset_id = self.selected_style_preset_id.clone();
                     egui::ComboBox::from_label("組み込み preset")
-                        .selected_text(
-                            self.style_presets
-                                .iter()
-                                .find(|preset| preset.id == self.selected_style_preset_id)
-                                .map(|preset| preset.display_name.clone())
-                                .unwrap_or_else(|| "未選択".to_owned()),
-                        )
+                        .selected_text(self.selected_style_preset_label())
                         .show_ui(ui, |ui| {
                             for preset in &self.style_presets {
                                 ui.selectable_value(
@@ -2640,9 +2980,38 @@ impl eframe::App for DesktopApp {
                                 );
                             }
                         });
+                    if self.selected_style_preset_id != previous_style_preset_id {
+                        self.sync_preset_editor_fields_from_selection();
+                        self.mark_project_ui_dirty();
+                    }
                     if ui.button("preset を適用").clicked() {
                         self.apply_selected_style_preset();
                     }
+                    ui.horizontal(|ui| {
+                        ui.label("user preset ID");
+                        ui.text_edit_singleline(&mut self.preset_editor_id);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("user preset 名");
+                        ui.text_edit_singleline(&mut self.preset_editor_name);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("追加保存").clicked() {
+                            self.save_user_style_preset(false);
+                        }
+                        if ui.button("上書き保存").clicked() {
+                            self.save_user_style_preset(true);
+                        }
+                        let selected_is_user = self
+                            .selected_style_preset()
+                            .is_some_and(|preset| preset.source == StylePresetSource::User);
+                        if ui
+                            .add_enabled(selected_is_user, egui::Button::new("削除"))
+                            .clicked()
+                        {
+                            self.delete_selected_user_style_preset();
+                        }
+                    });
                     ui.separator();
                 }
                 ui.label("基本スタイル");
@@ -2660,6 +3029,7 @@ impl eframe::App for DesktopApp {
                         self.session.active_style.color.a,
                     );
                     self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
                 }
                 if ui
                     .add(
@@ -2669,6 +3039,7 @@ impl eframe::App for DesktopApp {
                     .changed()
                 {
                     self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
                 }
                 if ui
                     .add(
@@ -2678,14 +3049,20 @@ impl eframe::App for DesktopApp {
                     .changed()
                 {
                     self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
                 }
-                ui.add(
-                    egui::Slider::new(
-                        &mut self.session.active_style.stabilization_strength,
-                        0.0..=1.0,
+                if ui
+                    .add(
+                        egui::Slider::new(
+                            &mut self.session.active_style.stabilization_strength,
+                            0.0..=1.0,
+                        )
+                        .text("手ブレ補正"),
                     )
-                    .text("手ブレ補正"),
-                );
+                    .changed()
+                {
+                    self.mark_project_ui_dirty();
+                }
                 ui.small("出現速度や entrance の細かい調整 UI は現時点では未実装です。");
                 ui.separator();
                 ui.label("ガイド");
@@ -2696,6 +3073,7 @@ impl eframe::App for DesktopApp {
                     )
                     .changed()
                 {
+                    self.mark_project_ui_dirty();
                     self.refresh_guide_geometry();
                 }
                 if ui.button("ガイド解除").clicked() {
@@ -3009,8 +3387,100 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
     )
 }
 
+fn repository_style_preset_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../presets/style_presets")
+}
+
+fn load_style_presets(
+    portable_paths: &PortablePaths,
+) -> std::result::Result<Vec<BaseStylePreset>, String> {
+    load_base_style_presets_overlay(
+        &repository_style_preset_dir(),
+        Some(&portable_paths.user_style_presets_dir()),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn preset_editor_fields_from_selection(
+    style_presets: &[BaseStylePreset],
+    selected_style_preset_id: &str,
+) -> (String, String) {
+    style_presets
+        .iter()
+        .find(|preset| preset.id == selected_style_preset_id)
+        .map(|preset| (preset.id.clone(), preset.display_name.clone()))
+        .unwrap_or_else(|| {
+            (
+                selected_style_preset_id.to_owned(),
+                if selected_style_preset_id.is_empty() {
+                    String::new()
+                } else {
+                    selected_style_preset_id.to_owned()
+                },
+            )
+        })
+}
+
+fn sanitize_style_preset_id(raw: &str) -> String {
+    let mut sanitized = String::new();
+    let mut previous_was_separator = false;
+
+    for ch in raw.trim().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if matches!(ch, '_' | '-' | ' ' | '　') {
+            Some('_')
+        } else {
+            None
+        };
+
+        let Some(mapped) = mapped else {
+            continue;
+        };
+        if mapped == '_' {
+            if previous_was_separator || sanitized.is_empty() {
+                continue;
+            }
+            previous_was_separator = true;
+            sanitized.push(mapped);
+        } else {
+            previous_was_separator = false;
+            sanitized.push(mapped);
+        }
+    }
+
+    sanitized.trim_matches('_').to_owned()
+}
+
 fn clamp_bottom_panel_content_width(width: f32) -> f32 {
     width.clamp(320.0, 8_192.0)
+}
+
+fn ensure_object_value(value: &mut Value) -> &mut Map<String, Value> {
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value
+        .as_object_mut()
+        .expect("value was converted into an object above")
+}
+
+fn underlay_mode_key(mode: UnderlayMode) -> &'static str {
+    match mode {
+        UnderlayMode::Outline => "outline",
+        UnderlayMode::FaintFill => "faint_fill",
+        UnderlayMode::SlotBoxOnly => "slot_box_only",
+        UnderlayMode::OutlineAndSlotBox => "outline_and_slot_box",
+    }
+}
+
+fn parse_underlay_mode(raw: &str) -> UnderlayMode {
+    match raw {
+        "faint_fill" => UnderlayMode::FaintFill,
+        "slot_box_only" => UnderlayMode::SlotBoxOnly,
+        "outline_and_slot_box" => UnderlayMode::OutlineAndSlotBox,
+        _ => UnderlayMode::Outline,
+    }
 }
 
 fn current_frame_primary_press_position(ctx: &egui::Context) -> Option<Pos2> {
@@ -3030,7 +3500,10 @@ fn current_frame_primary_press_position(ctx: &egui::Context) -> Option<Pos2> {
 fn extend_horizontal_guide_line_to_frame_width(
     line: &pauseink_template_layout::GuideLine,
     frame_width: u32,
-) -> (pauseink_template_layout::Point, pauseink_template_layout::Point) {
+) -> (
+    pauseink_template_layout::Point,
+    pauseink_template_layout::Point,
+) {
     let frame_right = frame_width as f32;
     let dx = line.end.x - line.start.x;
     if dx.abs() <= f32::EPSILON {
@@ -3038,10 +3511,8 @@ fn extend_horizontal_guide_line_to_frame_width(
     }
 
     let slope = (line.end.y - line.start.y) / dx;
-    let start = pauseink_template_layout::Point::new(
-        0.0,
-        line.start.y + (0.0 - line.start.x) * slope,
-    );
+    let start =
+        pauseink_template_layout::Point::new(0.0, line.start.y + (0.0 - line.start.x) * slope);
     let end = pauseink_template_layout::Point::new(
         frame_right,
         line.start.y + (frame_right - line.start.x) * slope,
@@ -3183,6 +3654,188 @@ mod tests {
                 .filter(|family| family.as_str() == "BIZ UDPGothic")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn save_and_reopen_project_restores_style_template_and_guide_state() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let path = temp_dir.path().join("stateful-project.pauseink");
+
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
+        app.session.active_style.thickness = 13.0;
+        app.session.active_style.opacity = 0.42;
+        app.session.active_style.stabilization_strength = 0.77;
+        app.template.text = "保存対象".to_owned();
+        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.settings.font_size = 128.0;
+        app.template.settings.tracking = 12.0;
+        app.template.settings.slope_degrees = 9.5;
+        app.template.settings.underlay_mode = UnderlayMode::FaintFill;
+        app.settings.guide_slope_degrees = -6.0;
+
+        app.save_project(path.clone());
+
+        let mut reopened = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        reopened.open_project(path);
+
+        assert_eq!(reopened.selected_style_preset_id, "marker_highlight");
+        assert_eq!(reopened.session.active_style.thickness, 13.0);
+        assert!((reopened.session.active_style.opacity - 0.42).abs() < 0.001);
+        assert!((reopened.session.active_style.stabilization_strength - 0.77).abs() < 0.001);
+        assert_eq!(
+            reopened.session.active_style.color,
+            pauseink_domain::RgbaColor::new(240, 32, 64, 255)
+        );
+        assert_eq!(reopened.template.text, "保存対象");
+        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
+        assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
+        assert!((reopened.template.settings.slope_degrees - 9.5).abs() < 0.01);
+        assert_eq!(
+            reopened.template.settings.underlay_mode,
+            UnderlayMode::FaintFill
+        );
+        assert!((reopened.settings.guide_slope_degrees - -6.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let user_preset_dir = portable_paths.config_dir.join("style_presets");
+        std::fs::create_dir_all(&user_preset_dir).expect("user preset dir");
+        std::fs::write(
+            user_preset_dir.join("marker_highlight.json5"),
+            r#"
+            {
+              id: "marker_highlight",
+              display_name: "ユーザー上書きマーカー",
+              base_style: {
+                thickness: 22.0,
+                opacity: 0.35,
+                color_rgba: [0.2, 0.8, 1.0, 0.35],
+              },
+            }
+            "#,
+        )
+        .expect("user preset file");
+
+        let app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let preset = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == "marker_highlight")
+            .expect("marker_highlight should exist");
+
+        assert_eq!(preset.display_name, "ユーザー上書きマーカー");
+        assert_eq!(preset.thickness, Some(22.0));
+        assert_eq!(preset.opacity, Some(0.35));
+    }
+
+    #[test]
+    fn user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        let preset_path = portable_paths
+            .user_style_presets_dir()
+            .join("custom_soft_marker.json5");
+
+        app.preset_editor_id = "custom_soft_marker".to_owned();
+        app.preset_editor_name = "Custom Soft Marker".to_owned();
+        app.session.active_style.thickness = 9.0;
+        app.session.active_style.opacity = 0.4;
+        app.save_user_style_preset(false);
+
+        assert!(preset_path.exists());
+        let saved = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == "custom_soft_marker")
+            .expect("saved preset should appear in catalog");
+        assert_eq!(saved.source, StylePresetSource::User);
+        assert_eq!(saved.thickness, Some(9.0));
+        assert_eq!(saved.opacity, Some(0.4));
+
+        app.selected_style_preset_id = "custom_soft_marker".to_owned();
+        app.session.active_style.thickness = 14.0;
+        app.session.active_style.opacity = 0.2;
+        app.save_user_style_preset(true);
+
+        let overwritten = load_base_style_presets_overlay(
+            &repository_style_preset_dir(),
+            Some(&portable_paths.user_style_presets_dir()),
+        )
+        .expect("overlay preset load");
+        let overwritten = overwritten
+            .iter()
+            .find(|preset| preset.id == "custom_soft_marker")
+            .expect("overwritten preset should remain");
+        assert_eq!(overwritten.thickness, Some(14.0));
+        assert_eq!(overwritten.opacity, Some(0.2));
+
+        app.delete_selected_user_style_preset();
+        assert!(!preset_path.exists());
+        assert!(app
+            .style_presets
+            .iter()
+            .all(|preset| preset.id != "custom_soft_marker"));
+    }
+
+    #[test]
+    fn desktop_app_can_add_overwrite_and_delete_user_style_presets() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let preset_path = portable_paths
+            .user_style_presets_dir()
+            .join("custom_marker.json5");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.preset_editor_id = "custom_marker".to_owned();
+        app.preset_editor_name = "Custom Marker".to_owned();
+        app.session.active_style.thickness = 11.0;
+        app.session.active_style.opacity = 0.28;
+        app.session.active_style.stabilization_strength = 0.66;
+        app.save_user_style_preset(false);
+
+        assert!(preset_path.exists(), "追加保存で user preset file が必要");
+        let saved = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == "custom_marker")
+            .expect("saved preset");
+        assert_eq!(saved.source, StylePresetSource::User);
+        assert_eq!(saved.thickness, Some(11.0));
+        assert_eq!(saved.opacity, Some(0.28));
+
+        app.selected_style_preset_id = "custom_marker".to_owned();
+        app.session.active_style.thickness = 19.0;
+        app.session.active_style.opacity = 0.51;
+        app.save_user_style_preset(true);
+
+        let overwritten = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == "custom_marker")
+            .expect("overwritten preset");
+        assert_eq!(overwritten.thickness, Some(19.0));
+        assert_eq!(overwritten.opacity, Some(0.51));
+
+        app.delete_selected_user_style_preset();
+        assert!(!preset_path.exists(), "削除で file も消したい");
+        assert!(
+            !app.style_presets
+                .iter()
+                .any(|preset| preset.id == "custom_marker"
+                    && preset.source == StylePresetSource::User)
         );
     }
 
@@ -3353,13 +4006,9 @@ mod tests {
                 },
             ],
         );
-        let expected_press_origin = pointer_position_to_frame_point(
-            press,
-            press_snapshot,
-            1280,
-            720,
-        )
-        .expect("press should be inside frame rect");
+        let expected_press_origin =
+            pointer_position_to_frame_point(press, press_snapshot, 1280, 720)
+                .expect("press should be inside frame rect");
         run_canvas_input_frame(&mut app, &ctx, vec![Event::PointerMoved(drag)]);
         assert!(
             app.session

@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/template/guide 状態保存、portable user preset CRUD まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
-- 現在の即時マイルストーン: 今回の修正バッチは反映済み。次回の実機確認では template 再配置、下部パネル固定高さ、stroke 初動、export progress、opacity 統一を重点確認する
+- 現在の即時マイルストーン: 今回の修正バッチは反映済み。次回の実機確認では project reopen 時の style/template/guide 復元、user preset の追加/上書き/削除、template 再配置、stroke 初動を重点確認する
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -58,12 +58,16 @@
   - press frame の duplicate sample を抑止し、1 点目が zero-length line になって消えるケースを防いだ
   - guide の横線は current frame の左右端まで伸ばして描くようにし、表示領域いっぱいで基準線を見られるようにした
   - live preview の線幅は renderer と同じ downscale 比率へ合わせ、ペンを離す前だけ不自然に太く見える差を減らした
+  - `project.settings.pauseink_editor_ui` と `project.presets.base_style` に、template text/font/layout、guide 傾き、resolved base style snapshot、選択 preset ID を保存するようにした
+  - built-in preset に加えて `pauseink_data/config/style_presets/*.json5` の user preset overlay を読み込むようにし、GUI から追加保存 / 上書き保存 / 削除できるようにした
+  - user preset は built-in と同じ `id` を使うと overlay として優先され、削除すると built-in 側へ自然に戻る
   - 下部タブは `内容幅` を持つ固定高さ scroll region に整理し、object list / logs が増えても panel 自体の縦サイズが揺れないようにした
   - export 実行中は `実行中:` の下と `書き出しキュー` の両方に stage 名付き progress bar を表示するようにした
   - 基本スタイルの色 picker は RGB のみに絞り、不透明度は単一の `不透明度` スライダーへ統一した
   - 出現速度や entrance の細かい調整 UI は未実装であることを inspector と manual に明記した
   - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
   - `cargo test -p pauseink-export`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
+  - preset/save-state 追加後も `cargo test -p pauseink-presets-core user_style_presets_overlay_builtins_and_roundtrip_disk_edits -- --nocapture`、`cargo test -p pauseink-portable-fs -- --nocapture`、`cargo test -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -p pauseink-app desktop_app_loads_user_style_presets_from_portable_root_and_overrides_builtin_ids -- --nocapture`、`cargo test -p pauseink-app user_style_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture` を通過
   - 追加の regression test として `stroke_starts_on_pointer_press_before_drag_threshold`、`committed_stroke_keeps_press_origin_as_first_raw_sample`、`same_frame_move_keeps_pointer_button_press_as_first_preview_point`、`horizontal_guide_line_extends_to_frame_edges`、`live_preview_width_matches_downscaled_overlay_scale` を追加した
   - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した

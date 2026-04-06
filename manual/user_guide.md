@@ -31,7 +31,7 @@ v1.0 の前提:
   - Google Fonts の cache 状態
 - 右ペイン
   - タイトル
-  - built-in style preset 適用
+  - built-in / user style preset の適用と管理
   - 基本スタイル
   - ガイド
   - 書き出し
@@ -65,6 +65,7 @@ v1.0 の前提:
 - 色、太さ、不透明度、手ブレ補正は右ペイン `基本スタイル` で調整します
 - 色 picker は色相変更用で、透明度は `不透明度` スライダー 1 つに統一されています
 - 同じテンプレート slot や guide 参照文字へ stroke を継ぎ足す場合も、次に確定する stroke から最新の `基本スタイル` が反映されます
+- 右ペインでは built-in preset を選んで適用できます。現在の基本スタイルは `追加保存` / `上書き保存` / `削除` で user preset として管理できます
 
 ### 3.3 ガイド capture
 
@@ -100,6 +101,7 @@ v1.0 の前提:
 
 - プロジェクト形式は `.pauseink`
 - load は lenient、save は normalized
+- project ごとに、現在の基本スタイル snapshot、選択 preset ID、テンプレート文字列 / font / font size / 字間 / 傾き / underlay、ガイド傾きが保存されます
 - autosave は既定で 10 秒ごとです
 - 前回の autosave が残っていると起動直後に `復旧` ウィンドウが開きます
 - `復旧する` で最新 autosave を読み込み、`破棄する` で削除します
@@ -167,15 +169,20 @@ PauseInk は既定で executable 直下に `pauseink_data/` を作ります。
 主な中身:
 
 - `config/settings.json5`
+- `config/style_presets/`
 - `cache/google_fonts/`
 - `autosave/`
 - `runtime/`
 - `temp/`
 
+`config/settings.json5` はアプリ全体の設定です。  
+project ごとに再現したい style / template / font / guide 状態は `.pauseink` 側へ保存されます。  
+右ペインから保存した user preset は `config/style_presets/` に置かれます。
+
 ## 10. 現時点の既知制約
 
 - template 字詰めは実 font shaping と kerning を使いますが、scale が切り替わる run 境界では font engine 上の自然な区切りに従います
-- built-in style preset は base style の厚みと色の適用が中心です
+- style preset は現在、厚み / 色 / 不透明度 / 手ブレ補正の保存と適用が中心です
 - group / ungroup / multi-select / z-order UI はまだ最小です
 - Windows と macOS はこの Linux ホスト上で実行確認しておらず、runtime 探索ロジックは unit test で検証しています
 - GUI の `eframe` deprecation warning が残っていますが、現 build/test は通っています
