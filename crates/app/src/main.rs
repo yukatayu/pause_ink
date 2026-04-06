@@ -7,8 +7,8 @@ use anyhow::Result;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke as EguiStroke, Vec2};
 use pauseink_app::AppSession;
 use pauseink_export::{
-    execute_export_with_settings, plan_export, ConcreteExportSettings, ExportOutputRequest,
-    ExportRequest,
+    execute_export_with_settings_with_progress, plan_export, ConcreteExportSettings,
+    ExportOutputRequest, ExportProgressUpdate, ExportRequest,
 };
 use pauseink_fonts::{
     discover_local_font_families, fetch_google_font_to_cache, google_font_cache_file,
@@ -34,6 +34,7 @@ use pauseink_template_layout::{
 use unicode_segmentation::UnicodeSegmentation;
 
 const SYSTEM_DEFAULT_FONT_FAMILY_LABEL: &str = "システム既定";
+const DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH: f32 = 1400.0;
 
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
@@ -211,6 +212,7 @@ struct TemplatePreviewState {
     settings: TemplateSettings,
     font_family: String,
     placement_armed: bool,
+    placed_origin: Option<Point>,
     placed_slots: Option<Vec<pauseink_template_layout::TemplateSlot>>,
     current_slot_index: usize,
     slot_object_ids: Vec<Option<pauseink_domain::GlyphObjectId>>,
@@ -232,6 +234,7 @@ impl Default for TemplatePreviewState {
             },
             font_family: SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned(),
             placement_armed: false,
+            placed_origin: None,
             placed_slots: None,
             current_slot_index: 0,
             slot_object_ids: Vec::new(),
@@ -365,9 +368,16 @@ struct ExportJobRecord {
 }
 
 struct PendingExportJob {
-    receiver: Receiver<Result<pauseink_export::ExportExecutionResult, String>>,
+    receiver: Receiver<ExportThreadMessage>,
     summary: String,
     output_path: PathBuf,
+    progress_fraction: f32,
+    progress_label: String,
+}
+
+enum ExportThreadMessage {
+    Progress(ExportProgressUpdate),
+    Finished(Result<pauseink_export::ExportExecutionResult, String>),
 }
 
 #[derive(Debug, Clone)]
@@ -403,6 +413,7 @@ struct DesktopApp {
     runtime_status: String,
     last_runtime_error: Option<String>,
     logs: Vec<String>,
+    bottom_panel_content_width: f32,
     local_font_families: Vec<String>,
     style_presets: Vec<BaseStylePreset>,
     selected_style_preset_id: String,
@@ -475,6 +486,7 @@ impl DesktopApp {
             runtime_status,
             last_runtime_error: runtime_error,
             logs: Vec::new(),
+            bottom_panel_content_width: DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH,
             local_font_families,
             selected_style_preset_id: style_presets
                 .first()
@@ -724,6 +736,30 @@ impl DesktopApp {
             step_template_slot_index(self.template.current_slot_index, slot_len, delta);
     }
 
+    fn reset_template_slots(&mut self) {
+        self.template.placed_origin = None;
+        self.template.placed_slots = None;
+        self.template.slot_object_ids.clear();
+        self.template.current_slot_index = 0;
+    }
+
+    fn refresh_placed_template_slots(&mut self, ctx: &egui::Context) {
+        let Some(origin) = self.template.placed_origin else {
+            return;
+        };
+
+        let slots = self.template_slots_at_origin(ctx, origin);
+        self.template.slot_object_ids.resize(slots.len(), None);
+        self.template.current_slot_index = if slots.is_empty() {
+            0
+        } else {
+            self.template
+                .current_slot_index
+                .min(slots.len().saturating_sub(1))
+        };
+        self.template.placed_slots = Some(slots);
+    }
+
     fn current_style_target_object_id(&self) -> Option<pauseink_domain::GlyphObjectId> {
         if self.template.placed_slots.is_some() {
             return self
@@ -961,44 +997,62 @@ impl DesktopApp {
     }
 
     fn poll_pending_export(&mut self) {
-        let Some(pending) = self.pending_export.as_ref() else {
+        let Some(_) = self.pending_export.as_ref() else {
             return;
         };
 
-        match pending.receiver.try_recv() {
-            Ok(result) => {
-                let summary = pending.summary.clone();
-                let output_path = pending.output_path.clone();
-                let record = match result {
-                    Ok(result) => {
-                        self.push_log(format!("export 完了: {}", output_path.display()));
-                        ExportJobRecord {
-                            summary,
-                            output_path,
-                            status: "完了".to_owned(),
-                            software_fallback_used: result.software_fallback_used,
-                        }
+        loop {
+            let message = {
+                let pending = self.pending_export.as_ref().expect("checked above");
+                pending.receiver.try_recv()
+            };
+
+            match message {
+                Ok(ExportThreadMessage::Progress(update)) => {
+                    if let Some(pending) = self.pending_export.as_mut() {
+                        pending.progress_fraction = update.fraction.clamp(0.0, 1.0);
+                        pending.progress_label = update.stage_label;
                     }
-                    Err(error) => {
-                        self.push_log(format!("export 失敗: {error}"));
-                        ExportJobRecord {
-                            summary,
-                            output_path,
-                            status: format!("失敗: {error}"),
-                            software_fallback_used: false,
-                        }
-                    }
-                };
-                self.export.jobs.insert(0, record);
-                if self.export.jobs.len() > 20 {
-                    self.export.jobs.truncate(20);
                 }
-                self.pending_export = None;
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.push_log("export worker が切断されました。");
-                self.pending_export = None;
+                Ok(ExportThreadMessage::Finished(result)) => {
+                    let pending = self
+                        .pending_export
+                        .take()
+                        .expect("pending export should exist");
+                    let summary = pending.summary;
+                    let output_path = pending.output_path;
+                    let record = match result {
+                        Ok(result) => {
+                            self.push_log(format!("export 完了: {}", output_path.display()));
+                            ExportJobRecord {
+                                summary,
+                                output_path,
+                                status: "完了".to_owned(),
+                                software_fallback_used: result.software_fallback_used,
+                            }
+                        }
+                        Err(error) => {
+                            self.push_log(format!("export 失敗: {error}"));
+                            ExportJobRecord {
+                                summary,
+                                output_path,
+                                status: format!("失敗: {error}"),
+                                software_fallback_used: false,
+                            }
+                        }
+                    };
+                    self.export.jobs.insert(0, record);
+                    if self.export.jobs.len() > 20 {
+                        self.export.jobs.truncate(20);
+                    }
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.push_log("export worker が切断されました。");
+                    self.pending_export = None;
+                    break;
+                }
             }
         }
     }
@@ -1050,16 +1104,20 @@ impl DesktopApp {
         let (sender, receiver) = mpsc::channel();
 
         std::thread::spawn(move || {
-            let result = execute_export_with_settings(
+            let progress_sender = sender.clone();
+            let result = execute_export_with_settings_with_progress(
                 &runtime,
                 &capabilities,
                 &snapshot,
                 &settings,
                 &request,
+                move |progress| {
+                    let _ = progress_sender.send(ExportThreadMessage::Progress(progress));
+                },
             )
             .map_err(|error| error.to_string());
             let _ = fs::remove_dir_all(&working_directory);
-            let _ = sender.send(result);
+            let _ = sender.send(ExportThreadMessage::Finished(result));
         });
 
         self.push_log(format!("export 開始: {}", output_path.display()));
@@ -1067,6 +1125,8 @@ impl DesktopApp {
             receiver,
             summary,
             output_path,
+            progress_fraction: 0.0,
+            progress_label: "開始待ち".to_owned(),
         });
         self.bottom_tab = BottomTab::ExportQueue;
     }
@@ -1115,9 +1175,7 @@ impl DesktopApp {
                     (self.settings.stroke_stabilization_default as f32 / 100.0).clamp(0.0, 1.0);
                 self.session = session;
                 self.clear_guide_state();
-                self.template.placed_slots = None;
-                self.template.slot_object_ids.clear();
-                self.template.current_slot_index = 0;
+                self.reset_template_slots();
                 self.template.placement_armed = false;
                 self.preview_key = None;
                 self.overlay_key = None;
@@ -1298,11 +1356,10 @@ impl DesktopApp {
                         pointer_position.x - frame_rect.left(),
                         pointer_position.y - frame_rect.top(),
                     );
-                    let slots =
-                        self.template_slots_at_origin(ctx, Point::new(relative.x, relative.y));
+                    self.template.placed_origin = Some(Point::new(relative.x, relative.y));
                     self.template.current_slot_index = 0;
-                    self.template.slot_object_ids = vec![None; slots.len()];
-                    self.template.placed_slots = Some(slots);
+                    self.template.slot_object_ids.clear();
+                    self.refresh_placed_template_slots(ctx);
                     self.template.placement_armed = false;
                     self.push_log("テンプレート配置を確定しました。");
                 }
@@ -2102,14 +2159,18 @@ impl DesktopApp {
             }
         }
 
-        if let Some(pending) = &self.pending_export {
-            ui.label(format!("実行中: {}", pending.summary));
-        }
+        self.draw_pending_export_progress(ui);
     }
 
     fn draw_export_queue_tab(&self, ui: &mut egui::Ui) {
         if let Some(pending) = &self.pending_export {
             ui.label(format!("実行中: {}", pending.summary));
+            ui.label(&pending.progress_label);
+            ui.add(
+                egui::ProgressBar::new(pending.progress_fraction)
+                    .desired_width(ui.available_width().max(160.0))
+                    .show_percentage(),
+            );
             ui.label(pending.output_path.display().to_string());
             ui.separator();
         }
@@ -2119,16 +2180,82 @@ impl DesktopApp {
             return;
         }
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for job in &self.export.jobs {
-                ui.label(format!("{} / {}", job.summary, job.status));
-                ui.label(job.output_path.display().to_string());
-                if job.software_fallback_used {
-                    ui.label("HW path 失敗後に software fallback で完了");
-                }
-                ui.separator();
+        for job in &self.export.jobs {
+            ui.label(format!("{} / {}", job.summary, job.status));
+            ui.label(job.output_path.display().to_string());
+            if job.software_fallback_used {
+                ui.label("HW path 失敗後に software fallback で完了");
             }
-        });
+            ui.separator();
+        }
+    }
+
+    fn draw_bottom_tab_contents(&self, ui: &mut egui::Ui) {
+        match self.bottom_tab {
+            BottomTab::Outline => {
+                for object in &self.session.project.glyph_objects {
+                    ui.label(format!(
+                        "{} / stroke:{} / page:{} / z:{}",
+                        object.id.0,
+                        object.stroke_ids.len(),
+                        object.page_index(&self.session.project.clear_events),
+                        object.ordering.z_index
+                    ));
+                }
+                if self.session.project.glyph_objects.is_empty() {
+                    ui.label("オブジェクトはまだありません。");
+                }
+            }
+            BottomTab::PageEvents => {
+                for clear in &self.session.project.clear_events {
+                    ui.label(format!(
+                        "{} / t={} / {:?}",
+                        clear.id.0, clear.time.ticks, clear.kind
+                    ));
+                }
+                if self.session.project.clear_events.is_empty() {
+                    ui.label("clear event はまだありません。");
+                }
+            }
+            BottomTab::ExportQueue => self.draw_export_queue_tab(ui),
+            BottomTab::Logs => {
+                for message in &self.logs {
+                    ui.label(message);
+                }
+            }
+        }
+    }
+
+    fn draw_pending_export_progress(&self, ui: &mut egui::Ui) {
+        let Some(pending) = &self.pending_export else {
+            return;
+        };
+
+        ui.label(format!("実行中: {}", pending.summary));
+        ui.label(&pending.progress_label);
+        ui.add(
+            egui::ProgressBar::new(pending.progress_fraction)
+                .desired_width(ui.available_width().max(160.0))
+                .show_percentage(),
+        );
+    }
+
+    fn draw_bottom_tab_scroll_region(&self, ui: &mut egui::Ui) {
+        let available_size = ui.available_size();
+        let content_width =
+            clamp_bottom_panel_content_width(self.bottom_panel_content_width).max(available_size.x);
+
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .max_width(available_size.x)
+            .max_height(available_size.y)
+            .show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.set_width(content_width);
+                ui.set_min_width(content_width);
+                ui.set_min_height(available_size.y);
+                self.draw_bottom_tab_contents(ui);
+            });
     }
 }
 
@@ -2345,7 +2472,8 @@ impl eframe::App for DesktopApp {
 
                 ui.separator();
                 ui.heading("テンプレート");
-                ui.text_edit_singleline(&mut self.template.text);
+                let mut template_layout_changed =
+                    ui.text_edit_singleline(&mut self.template.text).changed();
                 let mut selected_template_font = self.template.font_family.clone();
                 egui::ComboBox::from_label("テンプレート font")
                     .selected_text(&selected_template_font)
@@ -2363,24 +2491,31 @@ impl eframe::App for DesktopApp {
                 if selected_template_font != self.template.font_family {
                     self.template.font_family = selected_template_font;
                     self.font_config_dirty = true;
+                    self.maybe_apply_egui_fonts(ui.ctx());
+                    template_layout_changed = true;
                 }
-                ui.add(
+                template_layout_changed |= ui
+                    .add(
                     egui::Slider::new(&mut self.template.settings.font_size, 24.0..=180.0)
-                        .text("フォントサイズ"),
-                );
-                ui.add(
+                        .text("フォントサイズ"))
+                    .changed();
+                template_layout_changed |= ui
+                    .add(
                     egui::Slider::new(&mut self.template.settings.tracking, 0.0..=48.0)
-                        .text("字間"),
-                );
-                ui.add(
+                        .text("字間"))
+                    .changed();
+                template_layout_changed |= ui
+                    .add(
                     egui::Slider::new(&mut self.template.settings.slope_degrees, -20.0..=20.0)
-                        .text("傾き"),
-                );
+                        .text("傾き"))
+                    .changed();
+                if template_layout_changed {
+                    self.refresh_placed_template_slots(ui.ctx());
+                }
                 ui.horizontal(|ui| {
                     if ui.button("テンプレート配置").clicked() {
                         self.template.placement_armed = true;
-                        self.template.placed_slots = None;
-                        self.template.slot_object_ids.clear();
+                        self.reset_template_slots();
                     }
                     if ui.button("前スロット").clicked() {
                         self.move_template_slot(-1);
@@ -2390,9 +2525,7 @@ impl eframe::App for DesktopApp {
                     }
                     if ui.button("テンプレート解除").clicked() {
                         self.template.placement_armed = false;
-                        self.template.placed_slots = None;
-                        self.template.slot_object_ids.clear();
-                        self.template.current_slot_index = 0;
+                        self.reset_template_slots();
                     }
                 });
 
@@ -2467,15 +2600,18 @@ impl eframe::App for DesktopApp {
                 }
                 ui.label("基本スタイル");
 
-                let mut color = Color32::from_rgba_premultiplied(
+                let mut color = [
                     self.session.active_style.color.r,
                     self.session.active_style.color.g,
                     self.session.active_style.color.b,
-                    self.session.active_style.color.a,
-                );
-                if ui.color_edit_button_srgba(&mut color).changed() {
-                    self.session.active_style.color =
-                        pauseink_domain::RgbaColor::new(color.r(), color.g(), color.b(), color.a());
+                ];
+                if ui.color_edit_button_srgb(&mut color).changed() {
+                    self.session.active_style.color = pauseink_domain::RgbaColor::new(
+                        color[0],
+                        color[1],
+                        color[2],
+                        self.session.active_style.color.a,
+                    );
                     self.sync_active_style_to_current_object();
                 }
                 if ui
@@ -2503,6 +2639,7 @@ impl eframe::App for DesktopApp {
                     )
                     .text("手ブレ補正"),
                 );
+                ui.small("出現速度や entrance の細かい調整 UI は現時点では未実装です。");
                 ui.separator();
                 ui.label("ガイド");
                 if ui
@@ -2521,8 +2658,10 @@ impl eframe::App for DesktopApp {
                 self.draw_export_panel(ui);
             });
 
-        egui::Panel::bottom("bottom_tabs")
+        egui::TopBottomPanel::bottom("bottom_tabs")
             .default_height(180.0)
+            .min_height(120.0)
+            .max_height((ctx.content_rect().height() * 0.45).max(120.0))
             .resizable(true)
             .show(&ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -2536,50 +2675,17 @@ impl eframe::App for DesktopApp {
                             self.bottom_tab = tab;
                         }
                     }
+                    ui.separator();
+                    ui.label("内容幅");
+                    ui.add(
+                        egui::DragValue::new(&mut self.bottom_panel_content_width)
+                            .range(320.0..=8_192.0)
+                            .speed(16.0),
+                    );
                 });
                 ui.separator();
 
-                match self.bottom_tab {
-                    BottomTab::Outline => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for object in &self.session.project.glyph_objects {
-                                ui.label(format!(
-                                    "{} / stroke:{} / page:{} / z:{}",
-                                    object.id.0,
-                                    object.stroke_ids.len(),
-                                    object.page_index(&self.session.project.clear_events),
-                                    object.ordering.z_index
-                                ));
-                            }
-                            if self.session.project.glyph_objects.is_empty() {
-                                ui.label("オブジェクトはまだありません。");
-                            }
-                        });
-                    }
-                    BottomTab::PageEvents => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for clear in &self.session.project.clear_events {
-                                ui.label(format!(
-                                    "{} / t={} / {:?}",
-                                    clear.id.0, clear.time.ticks, clear.kind
-                                ));
-                            }
-                            if self.session.project.clear_events.is_empty() {
-                                ui.label("clear event はまだありません。");
-                            }
-                        });
-                    }
-                    BottomTab::ExportQueue => {
-                        self.draw_export_queue_tab(ui);
-                    }
-                    BottomTab::Logs => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for message in &self.logs {
-                                ui.label(message);
-                            }
-                        });
-                    }
-                }
+                self.draw_bottom_tab_scroll_region(ui);
             });
 
         egui::CentralPanel::default().show(&ctx, |ui| {
@@ -2601,6 +2707,8 @@ impl eframe::App for DesktopApp {
                 )
             })
             .unwrap_or(response.rect);
+
+            self.handle_canvas_input(&response, frame_rect, frame_width, frame_height, &ctx);
 
             painter.rect_filled(response.rect, 0.0, Color32::from_rgb(18, 22, 28));
             painter.rect_stroke(
@@ -2641,6 +2749,7 @@ impl eframe::App for DesktopApp {
                     Color32::from_rgb(180, 180, 180),
                 );
             }
+            self.draw_template_preview(&ctx, &painter, frame_rect, &response);
             if let Some(texture) = &self.overlay_texture {
                 painter.image(
                     texture.id(),
@@ -2651,7 +2760,6 @@ impl eframe::App for DesktopApp {
             }
 
             self.draw_live_stroke_preview(&painter, frame_rect, frame_width, frame_height);
-            self.draw_template_preview(&ctx, &painter, frame_rect, &response);
             self.draw_guide_overlay(&painter, frame_rect, frame_width, frame_height);
 
             if let Some(slots) = &self.template.placed_slots {
@@ -2670,8 +2778,6 @@ impl eframe::App for DesktopApp {
                     );
                 }
             }
-
-            self.handle_canvas_input(&response, frame_rect, frame_width, frame_height, &ctx);
 
             if self.canvas_drag_active {
                 if let Some(pointer_position) = response.interact_pointer_pos() {
@@ -2856,6 +2962,10 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
     )
 }
 
+fn clamp_bottom_panel_content_width(width: f32) -> f32 {
+    width.clamp(320.0, 8_192.0)
+}
+
 fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
     let alpha = ((style.color.a as f32) * style.opacity.clamp(0.0, 1.0)).round() as u8;
     Color32::from_rgba_unmultiplied(style.color.r, style.color.g, style.color.b, alpha)
@@ -2878,8 +2988,21 @@ fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::{Pos2, RawInput};
     use pauseink_portable_fs::{PortablePaths, Settings};
     use tempfile::tempdir;
+
+    fn initialized_test_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                ..Default::default()
+            },
+            |_ctx| {},
+        );
+        ctx
+    }
 
     #[test]
     fn preview_pointer_roundtrips_through_frame_space_mapping() {
@@ -3016,6 +3139,82 @@ mod tests {
     }
 
     #[test]
+    fn placed_template_slots_reflow_when_font_size_changes_after_placement() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let origin = Point::new(24.0, 36.0);
+        app.template.text = "AB".to_owned();
+        app.template.placed_origin = Some(origin);
+        app.refresh_placed_template_slots(&ctx);
+
+        let before = app
+            .template
+            .placed_slots
+            .clone()
+            .expect("slots should exist after placement");
+
+        app.template.settings.font_size = 160.0;
+        app.refresh_placed_template_slots(&ctx);
+
+        let after = app
+            .template
+            .placed_slots
+            .clone()
+            .expect("slots should still exist");
+
+        assert!(after[0].height > before[0].height);
+        assert!(after[1].origin.x > before[1].origin.x);
+    }
+
+    fn central_height_with_scrollable_bottom_tab(item_count: usize) -> f32 {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.bottom_tab = BottomTab::Logs;
+        app.logs = (0..item_count)
+            .map(|index| format!("object-{index:03} / stroke:1 / page:0 / z:0"))
+            .collect();
+        let ctx = initialized_test_context();
+        let mut central_height = 0.0;
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::TopBottomPanel::bottom("bottom-tab-test")
+                    .default_height(180.0)
+                    .min_height(120.0)
+                    .max_height(270.0)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("ログ");
+                        });
+                        ui.separator();
+                        app.draw_bottom_tab_scroll_region(ui);
+                    });
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    central_height = ui.max_rect().height();
+                });
+            },
+        );
+        central_height
+    }
+
+    #[test]
+    fn scrollable_bottom_tab_keeps_central_panel_height_stable_when_rows_increase() {
+        let small = central_height_with_scrollable_bottom_tab(1);
+        let large = central_height_with_scrollable_bottom_tab(400);
+
+        assert!((small - large).abs() < 1.0);
+    }
+
+    #[test]
     fn macos_runtime_help_mentions_homebrew() {
         let lines = ffmpeg_runtime_help(
             Path::new("/tmp/pauseink_data/runtime"),
@@ -3075,6 +3274,54 @@ mod tests {
         assert_eq!(step_template_slot_index(1, 3, -1), 0);
         assert_eq!(step_template_slot_index(1, 3, 1), 2);
         assert_eq!(step_template_slot_index(2, 3, 1), 2);
+    }
+
+    #[test]
+    fn bottom_panel_content_width_is_clamped_to_safe_range() {
+        assert_eq!(clamp_bottom_panel_content_width(120.0), 320.0);
+        assert_eq!(clamp_bottom_panel_content_width(960.0), 960.0);
+        assert_eq!(clamp_bottom_panel_content_width(20_000.0), 8_192.0);
+    }
+
+    #[test]
+    fn pending_export_progress_updates_and_completion_clears_worker_state() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        app.pending_export = Some(PendingExportJob {
+            receiver,
+            summary: "テスト export".to_owned(),
+            output_path: PathBuf::from("/tmp/out.webm"),
+            progress_fraction: 0.0,
+            progress_label: "開始待ち".to_owned(),
+        });
+
+        sender
+            .send(ExportThreadMessage::Progress(ExportProgressUpdate {
+                fraction: 0.45,
+                stage_label: "フレーム生成中".to_owned(),
+            }))
+            .expect("progress message should send");
+        app.poll_pending_export();
+
+        let pending = app
+            .pending_export
+            .as_ref()
+            .expect("pending export should remain");
+        assert!((pending.progress_fraction - 0.45).abs() < 0.001);
+        assert_eq!(pending.progress_label, "フレーム生成中");
+
+        sender
+            .send(ExportThreadMessage::Finished(Err("失敗".to_owned())))
+            .expect("final message should send");
+        app.poll_pending_export();
+
+        assert!(app.pending_export.is_none());
+        assert_eq!(app.export.jobs.len(), 1);
+        assert!(app.export.jobs[0].status.contains("失敗"));
     }
 
     #[test]

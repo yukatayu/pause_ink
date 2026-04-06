@@ -71,6 +71,12 @@ pub struct ExportExecutionResult {
     pub software_fallback_used: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportProgressUpdate {
+    pub fraction: f32,
+    pub stage_label: String,
+}
+
 #[derive(Debug, Error)]
 pub enum ExportPlanError {
     #[error("transparent output requested, but family does not support alpha: {family_id}")]
@@ -279,19 +285,50 @@ pub fn execute_export_with_settings(
     settings: &ConcreteExportSettings,
     request: &ExportOutputRequest,
 ) -> Result<ExportExecutionResult, ExportExecutionError> {
+    execute_export_with_settings_with_progress(
+        runtime,
+        capabilities,
+        snapshot,
+        settings,
+        request,
+        |_| {},
+    )
+}
+
+pub fn execute_export_with_settings_with_progress(
+    runtime: &MediaRuntime,
+    capabilities: &RuntimeCapabilities,
+    snapshot: &ExportSnapshot,
+    settings: &ConcreteExportSettings,
+    request: &ExportOutputRequest,
+    mut report_progress: impl FnMut(ExportProgressUpdate),
+) -> Result<ExportExecutionResult, ExportExecutionError> {
     let frames_dir = request.working_directory.join("frames");
     if frames_dir.exists() {
         fs::remove_dir_all(&frames_dir)?;
     }
     fs::create_dir_all(&frames_dir)?;
 
-    let frame_count = render_overlay_sequence(snapshot, &frames_dir)?;
+    report_progress(ExportProgressUpdate {
+        fraction: 0.0,
+        stage_label: "フレームを準備中".to_owned(),
+    });
+    let frame_count = render_overlay_sequence(snapshot, &frames_dir, &mut report_progress)?;
     let software_fallback_used = match settings.family.id.as_str() {
         "png_sequence_rgba" => {
-            export_png_sequence(&frames_dir, &request.output_path, frame_count)?;
+            export_png_sequence(
+                &frames_dir,
+                &request.output_path,
+                frame_count,
+                &mut report_progress,
+            )?;
             false
         }
         _ if request.transparent => {
+            report_progress(ExportProgressUpdate {
+                fraction: 0.92,
+                stage_label: "透過動画を書き出し中".to_owned(),
+            });
             export_transparent_video(
                 runtime,
                 snapshot,
@@ -301,16 +338,27 @@ pub fn execute_export_with_settings(
             )?;
             false
         }
-        _ => export_composite_video(
-            runtime,
-            capabilities,
-            snapshot,
-            settings,
-            &frames_dir,
-            &request.output_path,
-            request.prefer_hardware,
-        )?,
+        _ => {
+            report_progress(ExportProgressUpdate {
+                fraction: 0.92,
+                stage_label: "合成動画を書き出し中".to_owned(),
+            });
+            export_composite_video(
+                runtime,
+                capabilities,
+                snapshot,
+                settings,
+                &frames_dir,
+                &request.output_path,
+                request.prefer_hardware,
+            )?
+        }
     };
+
+    report_progress(ExportProgressUpdate {
+        fraction: 1.0,
+        stage_label: "書き出し完了".to_owned(),
+    });
 
     Ok(ExportExecutionResult {
         output_path: request.output_path.clone(),
@@ -323,6 +371,7 @@ pub fn execute_export_with_settings(
 fn render_overlay_sequence(
     snapshot: &ExportSnapshot,
     frames_dir: &Path,
+    report_progress: &mut impl FnMut(ExportProgressUpdate),
 ) -> Result<usize, ExportExecutionError> {
     let frame_count = estimated_frame_count(snapshot.duration, snapshot.frame_rate);
 
@@ -345,6 +394,16 @@ fn render_overlay_sequence(
         )
         .ok_or_else(|| ExportExecutionError::Render("overlay buffer shape mismatch".to_owned()))?;
         image.save(frames_dir.join(format!("frame_{frame_index:06}.png")))?;
+
+        let fraction = if frame_count == 0 {
+            0.9
+        } else {
+            ((frame_index + 1) as f32 / frame_count as f32) * 0.9
+        };
+        report_progress(ExportProgressUpdate {
+            fraction,
+            stage_label: format!("フレーム生成中 {}/{}", frame_index + 1, frame_count),
+        });
     }
 
     Ok(frame_count)
@@ -354,6 +413,7 @@ fn export_png_sequence(
     frames_dir: &Path,
     output_dir: &Path,
     frame_count: usize,
+    report_progress: &mut impl FnMut(ExportProgressUpdate),
 ) -> Result<(), ExportExecutionError> {
     if output_dir.as_os_str().is_empty() {
         return Err(ExportExecutionError::InvalidOutputPath);
@@ -363,6 +423,15 @@ fn export_png_sequence(
         let source = frames_dir.join(format!("frame_{frame_index:06}.png"));
         let target = output_dir.join(format!("frame_{frame_index:06}.png"));
         fs::copy(source, target)?;
+        let fraction = if frame_count == 0 {
+            1.0
+        } else {
+            0.9 + ((frame_index + 1) as f32 / frame_count as f32) * 0.1
+        };
+        report_progress(ExportProgressUpdate {
+            fraction,
+            stage_label: format!("PNG 連番を書き出し中 {}/{}", frame_index + 1, frame_count),
+        });
     }
     Ok(())
 }

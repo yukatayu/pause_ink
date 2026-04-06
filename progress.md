@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
-- 現在の即時マイルストーン: FFmpeg runtime 再検出と cross-platform 探索改善を report・manual・commit まで閉じる
+- 現在の即時マイルストーン: 今回の修正バッチは反映済み。次回の実機確認では template 再配置、下部パネル固定高さ、stroke 初動、export progress、opacity 統一を重点確認する
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -52,6 +52,14 @@
   - FFmpeg runtime 再検出を `機能情報更新` / `診断を再取得` に接続し、起動後に sidecar や host runtime を配置した場合でもその場で再 discovery できるようにした
   - runtime 未検出時の最後の discovery error を診断 UI に保持し、原因が見えなくなる問題を減らした
   - Windows の `WinGet Links` / `WinGet Packages` / `WindowsApps` / Scoop、macOS の Homebrew / MacPorts、Linux の system path / user bin / Linuxbrew を system runtime 探索対象に追加した
+  - 配置済み template は `placed_origin` を保持し、文字列 / フォント / フォントサイズ / 字間 / 傾きの変更時に slot box を再計算するようにした
+  - template underlay は committed stroke と live stroke の下へ回し、input を preview 描画より先に処理して描き始めのラグを減らした
+  - 下部タブは `内容幅` を持つ固定高さ scroll region に整理し、object list / logs が増えても panel 自体の縦サイズが揺れないようにした
+  - export 実行中は `実行中:` の下と `書き出しキュー` の両方に stage 名付き progress bar を表示するようにした
+  - 基本スタイルの色 picker は RGB のみに絞り、不透明度は単一の `不透明度` スライダーへ統一した
+  - 出現速度や entrance の細かい調整 UI は未実装であることを inspector と manual に明記した
+  - bottom panel 固定化の原因調査では sub-agent が `ScrollArea::both()` + `auto_shrink([false, false])` + 独立した内容幅 state を推奨し、その方針を採用した
+  - `cargo test -p pauseink-export`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - `cargo test -p pauseink-media`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過

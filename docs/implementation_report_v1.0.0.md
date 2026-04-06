@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
@@ -789,6 +789,55 @@
 - 2026-04-06T11:51:42+09:00
   - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`README.md`、`progress.md` を runtime 再検出と OS 別案内に合わせて更新した。
   - 結果: docs / 実装 / テストの runtime 挙動を再同期した。
+
+## 8.10 2026-04-06 template 再配置・下部パネル固定化・stroke 初動・export progress
+
+- 開始時点の即時マイルストーン:
+  - 配置済み template のフォントサイズ変更で slot box が追従しない問題を直す
+  - object list / logs 増加で bottom panel が揺れて canvas がガタつく問題を止める
+  - template underlay と stroke の前後関係、描き始めの初動ラグ、export progress 表示、opacity UI の重複を整理する
+- 根本原因の整理:
+  - placed template は click 時の slot box をそのまま保持しており、配置後の再 layout 経路がなかった
+  - bottom panel は tab ごとの内容に応じて必要サイズが変わり、wrap と shrink の都合で中心 canvas の高さへ影響が漏れていた
+  - pointer input を canvas 描画の後段で処理していたため、描き始めの 1 点目が次 frame まで見えにくかった
+  - export worker は progress を UI へ返しておらず、`実行中:` の下が空いたままだった
+  - 色 picker と opacity slider の両方が alpha へ触れており、source of truth が二重化していた
+- 採用した実装方針:
+  - `placed_origin` を保存し、template text / font / font size / tracking / slope が変わったら slot box を再計算する
+  - bottom panel は `bottom_panel_content_width` を独立 state に持ち、固定高さの `ScrollArea::both().auto_shrink([false, false])` へ寄せる
+  - input を preview 描画より先に処理し、template underlay は committed/live stroke の下へ移す
+  - export crate に progress callback 付き API を追加し、right panel と `書き出しキュー` の両方へ progress bar を出す
+  - 色 picker は RGB のみ編集し、alpha は単一の opacity slider に統一する
+- sub-agent findings:
+  - explorer sub-agent は、bottom panel の揺れは内容側の要求サイズと wrap/shrink の組み合わせが主因で、`ScrollArea::both()` + `auto_shrink([false, false])` + 独立 content width state が最小で安全と指摘した
+  - この提案を採用し、`内容幅` UI と固定高さ scroll region を実装した
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `crates/app/src/main.rs` に placed template 再 layout helper、bottom panel content width、fixed-height scroll region、template underlay の描画順変更、input 処理順変更、RGB-only color picker、export progress UI を追加した。
+  - 変更ファイル: `crates/app/src/main.rs`
+  - 結果: 配置済み template の slot box は設定変更へ追従し、bottom panel の行数増加では canvas の高さが揺れず、template underlay は stroke の下、live stroke は描き始めから見える構成になった。opacity は `不透明度` スライダーへ一本化された。
+  - 次の一手: export crate 側の progress callback、manual / progress 同期、workspace 回帰を行う。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `crates/export/src/lib.rs` に `ExportProgressUpdate` と `execute_export_with_settings_with_progress` を追加し、frame render / png sequence / ffmpeg launch 各段階の進捗を report するようにした。
+  - 変更ファイル: `crates/export/src/lib.rs`
+  - 結果: `実行中:` の下に stage label と progress bar を表示できるようになり、右ペインと `書き出しキュー` の両方で同じ pending 状態を見られるようになった。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo fmt --all`
+  - 結果: exit 0。format を適用。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test -p pauseink-export`
+  - 結果: exit 0。8 tests が通過し、progress callback 追加後も transparent/composite 系の export test が維持された。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`placed_template_slots_reflow_when_font_size_changes_after_placement`、`scrollable_bottom_tab_keeps_central_panel_height_stable_when_rows_increase`、`pending_export_progress_updates_and_completion_clears_worker_state`、`bottom_panel_content_width_is_clamped_to_safe_range` を含む app 回帰が通過した。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo test --workspace`
+  - 結果: exit 0。workspace 全体の回帰、export smoke、runtime/path/guide/template 既存テストを維持した。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。all targets compile を維持。`Panel::*` 系 deprecation warning は継続。
+- 2026-04-06T12:40:00+09:00
+  - 実施内容: `manual/user_guide.md`、`manual/developer_guide.md`、`progress.md` を今回の UI/UX 差分に合わせて更新した。
+  - 結果: template 再配置、下部パネル固定化、export progress、opacity 一本化、出現速度 UI 未実装を docs と同期した。
 
 ## 9. Export / profile メモ
 
