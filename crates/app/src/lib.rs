@@ -45,6 +45,12 @@ impl Default for GuideState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct StrokePreview {
+    pub points: Vec<Point2>,
+    pub style: StyleSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TemplateState {
     pub text: String,
     pub anchor: Option<Point2>,
@@ -258,6 +264,22 @@ impl AppSession {
 
     pub fn cancel_stroke(&mut self) {
         self.stroke_draft = None;
+    }
+
+    pub fn current_stroke_preview(&self) -> Option<StrokePreview> {
+        let draft = self.stroke_draft.as_ref()?;
+        let preview_samples = if draft.samples.len() >= 2 {
+            stabilize_samples(&draft.samples, self.active_style.stabilization_strength)
+        } else {
+            draft.samples.clone()
+        };
+        Some(StrokePreview {
+            points: preview_samples
+                .into_iter()
+                .map(|sample| sample.position)
+                .collect(),
+            style: self.active_style.clone(),
+        })
     }
 
     pub fn commit_stroke(&mut self, shift_group: bool) -> AnyhowResult<Option<GlyphObjectId>> {
@@ -1133,6 +1155,38 @@ mod tests {
         assert_eq!(reopened.project, expected_project);
         assert_eq!(reopened.project_title(), expected_title);
         assert_eq!(reopened.document_path.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn current_stroke_preview_uses_active_style_while_drawing() {
+        let mut session = AppSession::default();
+        session.active_style.thickness = 9.0;
+        session.begin_stroke(Point2 { x: 10.0, y: 20.0 }, MediaTime::from_millis(0));
+        session.append_stroke_point(Point2 { x: 40.0, y: 50.0 }, MediaTime::from_millis(10));
+
+        let preview = session.current_stroke_preview().expect("preview");
+
+        assert_eq!(preview.style.thickness, 9.0);
+        assert_eq!(preview.points.len(), 2);
+        assert_eq!(preview.points[0].x, 10.0);
+    }
+
+    #[test]
+    fn current_stroke_preview_is_cleared_after_commit_or_cancel() {
+        let mut session = AppSession::default();
+        session.begin_stroke(Point2 { x: 10.0, y: 20.0 }, MediaTime::from_millis(0));
+        session.append_stroke_point(Point2 { x: 40.0, y: 50.0 }, MediaTime::from_millis(10));
+        assert!(session.current_stroke_preview().is_some());
+
+        session.cancel_stroke();
+        assert!(session.current_stroke_preview().is_none());
+
+        session.begin_stroke(Point2 { x: 10.0, y: 20.0 }, MediaTime::from_millis(0));
+        session.append_stroke_point(Point2 { x: 40.0, y: 50.0 }, MediaTime::from_millis(10));
+        session
+            .commit_stroke_into_object(None)
+            .expect("commit should succeed");
+        assert!(session.current_stroke_preview().is_none());
     }
 
     #[test]

@@ -646,6 +646,17 @@
     - `fonts` から system / portable cache の候補 font を読み、`egui` 起動時に日本語 fallback を登録するようにした
   - 見送った提案:
     - 日本語 font を repository へ bundle する。理由: まずは system / portable cache 利用で重い同梱物を増やさずに解消できたため
+- Pass 5 — live stroke preview sanity review
+  - 目的: 描画中ストロークの表示を足す際、renderer/export 側の責務まで巻き込まずに editor-only の挙動として収められるか確認する。
+  - 要約:
+    - `stroke_draft` は既に `pauseink-app` lib の `AppSession` 内で保持されており、committed project data にだけ renderer が依存している
+    - live preview を renderer request へ混ぜると export/cache/render の責務境界が崩れやすい
+    - 最小で安全な修正は、draft を stabilized polyline として app 側で読み出し、`egui::Painter` overlay で描く方法
+  - 採用した変更:
+    - `AppSession::current_stroke_preview` を追加し、raw sample から現在の style 付き preview path を取り出せるようにした
+    - `main.rs` に live stroke painter overlay を追加し、committed overlay texture の上、template / guide overlay の下に描くようにした
+  - 見送った提案:
+    - renderer の `RenderRequest` へ live draft を混ぜる。理由: editor-only の一時状態を export/preview の共通描画責務へ押し込む必要が無く、保守範囲を広げるだけだったため
 
 ## 8.5 2026-04-06 追加修正バッチ開始メモ
 
@@ -680,6 +691,34 @@
   - font dropdown は「システム既定 + 読み込み済み family」を候補にし、選択 family だけを egui に lazy 登録する
   - guide の次文字縦線は horizontal guide を据えたまま、直前 object 幅に基づいて next-cell origin だけ送る
   - Ctrl guide capture は pen-up 即確定ではなく、modifier 押下中の複数 stroke を同一 reference object に寄せ、modifier release で確定する
+
+## 8.6 2026-04-06 live stroke preview 修正メモ
+
+- 開始時点の即時マイルストーン:
+  - free ink 中の未確定 stroke を、その場で確認できるようにする
+  - stabilization 後に commit された stroke と大きく乖離しない preview path を使う
+  - renderer/export の責務境界は崩さず、editor-only の修正で閉じる
+- ユーザー観測の要点:
+  - 描画中は白い追従点しか出ず、stroke の線そのものは commit 後まで見えない
+  - 手ブレ補正が入る都合上、描き終わりで微妙に形が変わること自体は許容される
+- 今回の実装方針:
+  - `stroke_draft` から stabilized points を引いて `StrokePreview` を生成し、現在の `StyleSnapshot` をそのまま適用する
+  - live preview は editor-only overlay として `egui::Painter` で描き、renderer の `RenderRequest` には混ぜない
+  - draw order は committed overlay の上、template / guide overlay の下へ置く
+
+## 8.7 2026-04-06 live stroke preview 検証ログ
+
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `AppSession` に current draft preview accessor を追加し、`main.rs` で live stroke painter overlay を接続した。合わせて preview style と clear/cancel 挙動の unit test を追加した。
+  - 変更ファイル: `crates/app/src/lib.rs`, `crates/app/src/main.rs`
+  - 結果: 描画中も未確定 stroke がその場で表示され、commit / cancel 後は draft preview が消える構成になった。
+  - 次の一手: workspace 全体の回帰、manual / progress の同期、commit / push を行う。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 13 tests、bin 8 tests が通過。`current_stroke_preview` の style 反映と commit/cancel 時の clear を unit test で固定した。
+- 2026-04-06T11:16:14+09:00
+  - 実施内容: `cargo fmt --all && cargo test --workspace && cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。`pauseink-app` 13 + 8、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。`pauseink-app` all targets の compile も維持。`Panel::*` 系の deprecation warning は継続。
 
 ## 9. Export / profile メモ
 

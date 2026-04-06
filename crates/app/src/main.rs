@@ -1456,6 +1456,36 @@ impl DesktopApp {
         }
     }
 
+    fn draw_live_stroke_preview(
+        &self,
+        painter: &egui::Painter,
+        frame_rect: Rect,
+        frame_width: u32,
+        frame_height: u32,
+    ) {
+        let Some(preview) = self.session.current_stroke_preview() else {
+            return;
+        };
+
+        let color = draft_preview_color(&preview.style);
+        let stroke = EguiStroke::new(preview.style.thickness.max(1.0), color);
+        let points = preview
+            .points
+            .into_iter()
+            .filter_map(|point| {
+                frame_point_to_screen_position(point, frame_rect, frame_width, frame_height)
+            })
+            .collect::<Vec<_>>();
+
+        if points.len() >= 2 {
+            for window in points.windows(2) {
+                painter.line_segment([window[0], window[1]], stroke);
+            }
+        } else if let Some(point) = points.first() {
+            painter.circle_filled(*point, (preview.style.thickness * 0.5).max(2.0), color);
+        }
+    }
+
     fn save_settings(&mut self) {
         match save_settings_to_file(&self.portable_paths, &self.settings) {
             Ok(()) => {}
@@ -2512,6 +2542,7 @@ impl eframe::App for DesktopApp {
                 );
             }
 
+            self.draw_live_stroke_preview(&painter, frame_rect, frame_width, frame_height);
             self.draw_template_preview(&ctx, &painter, frame_rect, &response);
             self.draw_guide_overlay(&painter, frame_rect, frame_width, frame_height);
 
@@ -2689,6 +2720,11 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
         [frame.width as usize, frame.height as usize],
         &frame.rgba_pixels,
     )
+}
+
+fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
+    let alpha = ((style.color.a as f32) * style.opacity.clamp(0.0, 1.0)).round() as u8;
+    Color32::from_rgba_unmultiplied(style.color.r, style.color.g, style.color.b, alpha)
 }
 
 #[cfg(test)]
