@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期まで完了した。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期に加え、preview 座標ずれと UI 日本語文字化けの修正まで反映済み。
 - 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を満たした。
-- 現在の即時マイルストーン: commit / push のための最終整理のみ
+- 現在の即時マイルストーン: preview / UI bugfix の記録反映、commit、push
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -30,8 +30,13 @@
   - `.github/workflows/ci.yml` を追加し、`main` push と `pull_request` で `cargo check` / `cargo test --workspace` を走らせる構成を追加
   - `.github/workflows/release.yml` を追加し、tag push または tag 付き commit の `main` 流入時に Linux / macOS / Windows build を作って GitHub Release へ添付する構成を追加
   - `scripts/package_release_asset.py` を追加し、release asset の archive 化を workflow から再利用できる形にした
+  - preview overlay を source frame 座標から target texture 座標へ縮尺して描くよう修正し、マウス描画時の見かけの大きな位置ずれを解消
+  - canvas pointer helper の roundtrip / letterbox test を追加し、preview 座標変換の再発防止を強化
+  - `egui` 起動時に system / portable font から日本語 UI fallback font を登録し、Windows 環境での豆腐化を回避する構成にした
+  - bugfix sanity review sub-agent でも、preview の source/target 座標不一致と `egui` 日本語 font 未登録が主因であることを再確認した
   - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
   - `cargo test --workspace` を通過
+  - `cargo check -p pauseink-app --all-targets` を通過
   - `cargo build -p pauseink-app` を通過
   - `cargo build --release -p pauseink-app` を通過
   - `cargo check --workspace --target x86_64-pc-windows-gnu` は target 未導入で失敗し、blocker を記録

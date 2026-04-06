@@ -12,12 +12,12 @@ use pauseink_export::{
 };
 use pauseink_fonts::{
     discover_local_font_families, fetch_google_font_to_cache, google_font_cache_file,
-    google_font_is_cached,
+    google_font_is_cached, load_ui_font_candidates,
 };
 use pauseink_media::{
     canvas_point_to_frame, default_platform_id, discover_runtime, fit_frame_to_canvas,
-    frame_point_to_canvas, CanvasSize, FfprobeMediaProvider, MediaProvider, MediaRuntime,
-    PreviewFrame, RuntimeCapabilities,
+    frame_point_to_canvas, CanvasRect, CanvasSize, FfprobeMediaProvider, MediaProvider,
+    MediaRuntime, PreviewFrame, RuntimeCapabilities,
 };
 use pauseink_portable_fs::{
     clear_directory_contents, directory_size, load_settings_or_default, portable_root_from_env,
@@ -44,10 +44,95 @@ fn main() -> Result<()> {
 
     let runtime = discover_runtime(&portable_paths.runtime_dir, &default_platform_id(), true).ok();
     let options = eframe::NativeOptions::default();
-    let app = DesktopApp::new(portable_paths, settings, runtime);
+    let portable_paths_for_app = portable_paths.clone();
+    let settings_for_app = settings.clone();
+    let runtime_for_app = runtime.clone();
 
-    eframe::run_native("PauseInk", options, Box::new(|_cc| Ok(Box::new(app))))?;
+    eframe::run_native(
+        "PauseInk",
+        options,
+        Box::new(move |cc| {
+            configure_egui_fonts(&cc.egui_ctx, &portable_paths_for_app, &settings_for_app);
+            Ok(Box::new(DesktopApp::new(
+                portable_paths_for_app.clone(),
+                settings_for_app.clone(),
+                runtime_for_app.clone(),
+            )))
+        }),
+    )?;
     Ok(())
+}
+
+fn configure_egui_fonts(ctx: &egui::Context, portable_paths: &PortablePaths, settings: &Settings) {
+    let mut font_dirs = vec![portable_paths.google_fonts_cache_dir()];
+    font_dirs.extend(settings.local_font_dirs.clone());
+
+    let Some(ui_font) = load_ui_font_candidates(&font_dirs, &settings.google_fonts.families, 1)
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+
+    let mut definitions = egui::FontDefinitions::default();
+    let font_name = format!("pauseink-ui-{}", ui_font.family_name);
+    definitions.font_data.insert(
+        font_name.clone(),
+        egui::FontData::from_owned(ui_font.bytes).into(),
+    );
+
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(entries) = definitions.families.get_mut(&family) {
+            entries.retain(|entry| entry != &font_name);
+            entries.insert(0, font_name.clone());
+        }
+    }
+
+    ctx.set_fonts(definitions);
+}
+
+fn frame_canvas_rect(frame_rect: Rect) -> CanvasRect {
+    CanvasRect {
+        x: 0.0,
+        y: 0.0,
+        width: frame_rect.width(),
+        height: frame_rect.height(),
+    }
+}
+
+fn pointer_position_to_frame_point(
+    pointer_position: Pos2,
+    frame_rect: Rect,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<pauseink_domain::Point2> {
+    canvas_point_to_frame(
+        pauseink_domain::Point2 {
+            x: pointer_position.x - frame_rect.left(),
+            y: pointer_position.y - frame_rect.top(),
+        },
+        frame_canvas_rect(frame_rect),
+        frame_width,
+        frame_height,
+    )
+}
+
+fn frame_point_to_screen_position(
+    frame_point: pauseink_domain::Point2,
+    frame_rect: Rect,
+    frame_width: u32,
+    frame_height: u32,
+) -> Option<Pos2> {
+    let local = frame_point_to_canvas(
+        frame_point,
+        frame_canvas_rect(frame_rect),
+        frame_width,
+        frame_height,
+    )?;
+    Some(Pos2::new(
+        frame_rect.left() + local.x,
+        frame_rect.top() + local.y,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +239,7 @@ struct DesktopApp {
     preview_texture: Option<egui::TextureHandle>,
     preview_key: Option<(PathBuf, i64, u32, u32)>,
     overlay_texture: Option<egui::TextureHandle>,
-    overlay_key: Option<(i64, usize, usize, u32, u32)>,
+    overlay_key: Option<(i64, usize, usize, u32, u32, u32, u32)>,
     canvas_drag_active: bool,
     guide_capture_armed: bool,
     recovery_prompt_open: bool,
@@ -637,6 +722,8 @@ impl DesktopApp {
         ctx: &egui::Context,
         target_width: u32,
         target_height: u32,
+        source_width: u32,
+        source_height: u32,
     ) {
         let key = (
             self.session.current_time().ticks,
@@ -644,6 +731,8 @@ impl DesktopApp {
             self.session.project.clear_events.len(),
             target_width,
             target_height,
+            source_width,
+            source_height,
         );
         if self.overlay_key.as_ref() == Some(&key) {
             return;
@@ -654,6 +743,8 @@ impl DesktopApp {
             time: self.session.current_time(),
             width: target_width.max(1),
             height: target_height.max(1),
+            source_width: source_width.max(1),
+            source_height: source_height.max(1),
             background: pauseink_domain::RgbaColor::new(0, 0, 0, 0),
         }) {
             Ok(overlay) => {
@@ -709,18 +800,9 @@ impl DesktopApp {
         if response.drag_started() {
             self.guide_capture_armed = self.guide_modifier_active(ctx);
             if let Some(pointer_position) = pointer_position {
-                let local = pauseink_domain::Point2 {
-                    x: pointer_position.x - response.rect.left(),
-                    y: pointer_position.y - response.rect.top(),
-                };
-                if let Some(frame_point) = canvas_point_to_frame(
-                    local,
-                    pauseink_media::CanvasRect {
-                        x: frame_rect.left() - response.rect.left(),
-                        y: frame_rect.top() - response.rect.top(),
-                        width: frame_rect.width(),
-                        height: frame_rect.height(),
-                    },
+                if let Some(frame_point) = pointer_position_to_frame_point(
+                    pointer_position,
+                    frame_rect,
                     frame_width,
                     frame_height,
                 ) {
@@ -733,18 +815,9 @@ impl DesktopApp {
 
         if self.canvas_drag_active {
             if let Some(pointer_position) = pointer_position {
-                let local = pauseink_domain::Point2 {
-                    x: pointer_position.x - response.rect.left(),
-                    y: pointer_position.y - response.rect.top(),
-                };
-                if let Some(frame_point) = canvas_point_to_frame(
-                    local,
-                    pauseink_media::CanvasRect {
-                        x: frame_rect.left() - response.rect.left(),
-                        y: frame_rect.top() - response.rect.top(),
-                        width: frame_rect.width(),
-                        height: frame_rect.height(),
-                    },
+                if let Some(frame_point) = pointer_position_to_frame_point(
+                    pointer_position,
+                    frame_rect,
                     frame_width,
                     frame_height,
                 ) {
@@ -884,7 +957,13 @@ impl DesktopApp {
         }
     }
 
-    fn draw_guide_overlay(&self, painter: &egui::Painter, frame_rect: Rect) {
+    fn draw_guide_overlay(
+        &self,
+        painter: &egui::Painter,
+        frame_rect: Rect,
+        frame_width: u32,
+        frame_height: u32,
+    ) {
         let Some(guide) = &self.guide_geometry else {
             return;
         };
@@ -902,19 +981,29 @@ impl DesktopApp {
                     EguiStroke::new(1.0, Color32::from_rgba_unmultiplied(120, 200, 255, 80))
                 }
             };
-            painter.line_segment(
-                [
-                    Pos2::new(
-                        frame_rect.left() + line.start.x,
-                        frame_rect.top() + line.start.y,
-                    ),
-                    Pos2::new(
-                        frame_rect.left() + line.end.x,
-                        frame_rect.top() + line.end.y,
-                    ),
-                ],
-                stroke,
-            );
+            let Some(start) = frame_point_to_screen_position(
+                pauseink_domain::Point2 {
+                    x: line.start.x,
+                    y: line.start.y,
+                },
+                frame_rect,
+                frame_width,
+                frame_height,
+            ) else {
+                continue;
+            };
+            let Some(end) = frame_point_to_screen_position(
+                pauseink_domain::Point2 {
+                    x: line.end.x,
+                    y: line.end.y,
+                },
+                frame_rect,
+                frame_width,
+                frame_height,
+            ) else {
+                continue;
+            };
+            painter.line_segment([start, end], stroke);
         }
     }
 
@@ -1882,6 +1971,8 @@ impl eframe::App for DesktopApp {
                 &ctx,
                 frame_rect.width().round().max(1.0) as u32,
                 frame_rect.height().round().max(1.0) as u32,
+                frame_width,
+                frame_height,
             );
 
             if self.settings.gpu_preview_enabled {
@@ -1912,7 +2003,7 @@ impl eframe::App for DesktopApp {
             }
 
             self.draw_template_preview(&painter, frame_rect, &response);
-            self.draw_guide_overlay(&painter, frame_rect);
+            self.draw_guide_overlay(&painter, frame_rect, frame_width, frame_height);
 
             if let Some(slots) = &self.template.placed_slots {
                 if let Some(slot) = slots.get(self.template.current_slot_index) {
@@ -1935,26 +2026,9 @@ impl eframe::App for DesktopApp {
 
             if self.canvas_drag_active {
                 if let Some(pointer_position) = response.interact_pointer_pos() {
-                    let local = pauseink_domain::Point2 {
-                        x: pointer_position.x - frame_rect.left(),
-                        y: pointer_position.y - frame_rect.top(),
-                    };
-                    if let Some(frame_point) = frame_point_to_canvas(
-                        local,
-                        pauseink_media::CanvasRect {
-                            x: 0.0,
-                            y: 0.0,
-                            width: frame_rect.width(),
-                            height: frame_rect.height(),
-                        },
-                        frame_width,
-                        frame_height,
-                    ) {
+                    if frame_rect.contains(pointer_position) {
                         painter.circle_filled(
-                            Pos2::new(
-                                frame_rect.left() + frame_point.x,
-                                frame_rect.top() + frame_point.y,
-                            ),
+                            pointer_position,
                             3.0,
                             Color32::from_rgb(255, 255, 255),
                         );
@@ -2075,4 +2149,47 @@ fn preview_frame_to_color_image(frame: &PreviewFrame) -> egui::ColorImage {
         [frame.width as usize, frame.height as usize],
         &frame.rgba_pixels,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_pointer_roundtrips_through_frame_space_mapping() {
+        let frame_rect = Rect::from_min_size(Pos2::new(50.0, 75.0), Vec2::new(640.0, 360.0));
+        let pointer = Pos2::new(210.0, 165.0);
+
+        let frame_point =
+            pointer_position_to_frame_point(pointer, frame_rect, 1920, 1080).expect("in frame");
+        let roundtrip = frame_point_to_screen_position(frame_point, frame_rect, 1920, 1080)
+            .expect("frame point should map back");
+
+        assert!((roundtrip.x - pointer.x).abs() < 0.01);
+        assert!((roundtrip.y - pointer.y).abs() < 0.01);
+    }
+
+    #[test]
+    fn preview_pointer_mapping_rejects_letterbox_area() {
+        let frame_rect = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(400.0, 300.0));
+        let pointer = Pos2::new(80.0, 140.0);
+
+        assert!(pointer_position_to_frame_point(pointer, frame_rect, 1280, 720).is_none());
+    }
+
+    #[test]
+    fn pointer_and_frame_coordinate_helpers_roundtrip_with_offset_frame_rect() {
+        let frame_rect = Rect::from_min_size(Pos2::new(120.0, 48.0), Vec2::new(400.0, 225.0));
+        let pointer = Pos2::new(320.0, 160.5);
+
+        let frame_point =
+            pointer_position_to_frame_point(pointer, frame_rect, 1920, 1080).expect("frame point");
+        let roundtrip = frame_point_to_screen_position(frame_point, frame_rect, 1920, 1080)
+            .expect("screen point");
+
+        assert!((frame_point.x - 960.0).abs() < 0.01);
+        assert!((frame_point.y - 540.0).abs() < 0.01);
+        assert!((roundtrip.x - pointer.x).abs() < 0.01);
+        assert!((roundtrip.y - pointer.y).abs() < 0.01);
+    }
 }

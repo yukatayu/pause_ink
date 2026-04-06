@@ -4,7 +4,7 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader、`export` の concrete settings 計算 / 実行 / HW fallback、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in style preset 適用、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
 - 現在のフェーズ: Phase 18 完了。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo build -p pauseink-app`
@@ -326,6 +326,11 @@
   - 変更ファイル: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/package_release_asset.py`, `manual/developer_guide.md`, `progress.md`
   - 結果: `main` の全 commit と PR に対する test 導線、および Linux / macOS / Windows release build を GitHub Release へ添付する導線が repository に入った。現 release asset は binary archive までで、FFmpeg sidecar bundling は別タスクとして残る。
   - 次の一手: workflow 構文とローカル packaging を検証し、実装レポートへ記録する。
+- 2026-04-06T16:10:00+09:00
+  - 実施内容: preview 上でのマウス書き込み位置ずれと、Windows 環境での UI 日本語文字化けを調査し、renderer / app / fonts を横断して修正した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `crates/fonts/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: preview overlay は source media 座標から target texture 座標へ正しく縮尺され、pointer helper の roundtrip / letterbox rejection test を追加した。`egui` 起動時には system / portable cache から日本語 UI fallback font を明示登録するようにした。
+  - 次の一手: headless 制約を記録しつつ、report / progress の反映後に commit / push する。
 
 ## 6. 検証ログ
 
@@ -522,6 +527,14 @@
   - 結果: exit 0。archive 内に `README.md` と `pauseink-app` が入っていることを確認。
 - `python3 - <<'PY' ... zipfile.ZipFile('/tmp/pauseink-ci-packaging/pauseink-release-test-windows-x86_64.zip') ... PY`
   - 結果: exit 0。zip archive 内に `README.md` と `pauseink-app` が入っていることを確認。これは Linux 上で packager の zip 出力を検証したもので、Windows binary 自体は GitHub Actions matrix build に委ねる。
+- `cargo test -p pauseink-fonts -p pauseink-renderer -p pauseink-app`
+  - 結果: exit 0。`pauseink-fonts` 8 tests、`pauseink-renderer` 6 tests、`pauseink-app` lib 11 tests + bin 3 tests が通過。preview 縮尺、pointer roundtrip、letterbox rejection、日本語 UI fallback family 優先順の固定を確認。
+- `cargo test --workspace`
+  - 結果: exit 0。bugfix 反映後も workspace 全体の回帰は維持。`pauseink-app` 11 + 3、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 3、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。bugfix 反映後の app compile を確認。`eframe::egui::Panel::*` 系 deprecation warning 8 件は継続。
+- `printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\n' \"$DISPLAY\" \"$WAYLAND_DISPLAY\"`
+  - 結果: `DISPLAY=`、`WAYLAND_DISPLAY=`。このホストでは GUI の目視起動確認は引き続き不可。
 
 ## 7. 失敗と修正
 
@@ -537,6 +550,10 @@
   - 事象: final QA/docs review で、`progress.md` と本レポートの done/not-done 不整合、`portable_root_override` の doc/code mismatch、古い `.pauseink` sample、integration smoke / tutorial validation / Google Fonts 証跡不足が指摘された。
   - 影響: `AGENTS.md` の完了条件に対して「done と言い切れない」状態だった。
   - 対応: settings から `portable_root_override` を除去して env override のみに統一し、sample と `.docs/05` を現行 schema へ更新、必要な smoke test と tutorial validation を追加、`progress.md` / report / `.docs/` を同期した。
+- 2026-04-06T16:10:00+09:00
+  - 事象: preview では stroke を source media 座標のまま小さい texture へ rasterize しており、マウス位置と描画位置が大きくずれて見えていた。加えて `egui` に日本語 font を登録していなかったため、Windows で UI が tofu 化していた。
+  - 影響: free ink の見かけ位置が信用できず、日本語 UI が読めない状態だった。
+  - 対応: `RenderRequest` に `source_width` / `source_height` を追加して preview/export の縮尺経路を明示し、preview pointer helper を `frame_rect` 基準に一本化、`egui` 起動時に system / portable cache font から日本語 fallback を先頭登録するよう修正した。
 
 ## 8. Sub-agent メモ
 
@@ -594,6 +611,18 @@
     - `.docs/` を日本語へ統一し、`progress.md` と本レポートを最終状態へ同期
   - 見送った提案:
     - settings file 起動時 override を新規実装する。理由: 起動順序を複雑化させるより、env override のみへ揃える方が portable-state ルールと実装実態に対して安全だった
+- Pass 4 — bugfix sanity review
+  - 目的: preview 座標ずれと UI 文字化けの根本原因が、局所パッチではなく設計上の不一致に由来していないか確認する。
+  - 要約:
+    - 描画位置ずれの主因は、preview で source media 座標の stroke を target texture へ縮尺せず rasterize していたこと
+    - 白い追従点も preview の保存座標系と揃っておらず、見かけのずれを増幅していたこと
+    - 文字化けの主因は、`egui` に日本語 font を登録しておらず Windows 既定 font だけでは CJK glyph を満たせなかったこと
+  - 採用した変更:
+    - `renderer` に source/target 縮尺を追加し、preview と export の render path を同じ `RenderRequest` で扱うようにした
+    - `app` に pointer / frame 座標 helper を追加して `frame_rect` 基準へ統一した
+    - `fonts` から system / portable cache の候補 font を読み、`egui` 起動時に日本語 fallback を登録するようにした
+  - 見送った提案:
+    - 日本語 font を repository へ bundle する。理由: まずは system / portable cache 利用で重い同梱物を増やさずに解消できたため
 
 ## 9. Export / profile メモ
 

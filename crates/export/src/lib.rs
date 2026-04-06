@@ -333,6 +333,8 @@ fn render_overlay_sequence(
             time,
             width: snapshot.width,
             height: snapshot.height,
+            source_width: snapshot.width,
+            source_height: snapshot.height,
             background: pauseink_domain::RgbaColor::new(0, 0, 0, 0),
         })
         .map_err(|error| ExportExecutionError::Render(error.to_string()))?;

@@ -14,6 +14,8 @@ pub struct RenderRequest<'a> {
     pub time: MediaTime,
     pub width: u32,
     pub height: u32,
+    pub source_width: u32,
+    pub source_height: u32,
     pub background: RgbaColor,
 }
 
@@ -28,6 +30,13 @@ pub struct RenderedOverlay {
 struct VisibilityState {
     alpha: f32,
     path_fraction: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderScale {
+    x: f32,
+    y: f32,
+    stroke: f32,
 }
 
 impl VisibilityState {
@@ -110,9 +119,19 @@ pub fn derive_stroke_layers(
 }
 
 pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverlay, RenderError> {
-    if request.width == 0 || request.height == 0 {
+    if request.width == 0
+        || request.height == 0
+        || request.source_width == 0
+        || request.source_height == 0
+    {
         return Err(RenderError::InvalidCanvasSize);
     }
+    let render_scale = RenderScale {
+        x: request.width as f32 / request.source_width as f32,
+        y: request.height as f32 / request.source_height as f32,
+        stroke: (request.width as f32 / request.source_width as f32)
+            .min(request.height as f32 / request.source_height as f32),
+    };
 
     let mut pixmap =
         Pixmap::new(request.width, request.height).ok_or(RenderError::InvalidCanvasSize)?;
@@ -158,6 +177,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 &object.style,
                 &object.transform,
                 visibility,
+                render_scale,
             );
         }
     }
@@ -179,6 +199,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
             &stroke.style,
             &GeometryTransform::default(),
             visibility,
+            render_scale,
         );
     }
 
@@ -322,8 +343,15 @@ fn render_stroke(
     style: &StyleSnapshot,
     transform: &GeometryTransform,
     visibility: VisibilityState,
+    render_scale: RenderScale,
 ) {
-    let points = transformed_visible_points(stroke, transform, visibility.path_fraction);
+    let points = transformed_visible_points(stroke, transform, visibility.path_fraction)
+        .into_iter()
+        .map(|point| Point2 {
+            x: point.x * render_scale.x,
+            y: point.y * render_scale.y,
+        })
+        .collect::<Vec<_>>();
     if points.len() < 2 {
         return;
     }
@@ -335,14 +363,14 @@ fn render_stroke(
     if style.drop_shadow.enabled {
         let mut shadow_points = points.clone();
         for point in &mut shadow_points {
-            point.x += style.drop_shadow.offset_x;
-            point.y += style.drop_shadow.offset_y;
+            point.x += style.drop_shadow.offset_x * render_scale.x;
+            point.y += style.drop_shadow.offset_y * render_scale.y;
         }
         if let Some(shadow_path) = build_polyline_path(&shadow_points) {
             draw_stroked_path(
                 pixmap,
                 &shadow_path,
-                style.thickness + style.drop_shadow.blur_radius.max(0.0),
+                (style.thickness + style.drop_shadow.blur_radius.max(0.0)) * render_scale.stroke,
                 style.drop_shadow.color,
                 style.opacity * 0.45 * visibility.alpha,
                 style.blend_mode,
@@ -354,7 +382,7 @@ fn render_stroke(
         draw_stroked_path(
             pixmap,
             &path,
-            style.thickness + style.glow.blur_radius.max(0.0) * 1.8,
+            (style.thickness + style.glow.blur_radius.max(0.0) * 1.8) * render_scale.stroke,
             style.glow.color,
             style.opacity * 0.35 * visibility.alpha,
             BlendMode::Screen,
@@ -365,7 +393,7 @@ fn render_stroke(
         draw_stroked_path(
             pixmap,
             &path,
-            style.thickness + style.outline.width * 2.0,
+            (style.thickness + style.outline.width * 2.0) * render_scale.stroke,
             style.outline.color,
             style.opacity * visibility.alpha,
             style.blend_mode,
@@ -375,7 +403,7 @@ fn render_stroke(
     draw_stroked_path(
         pixmap,
         &path,
-        style.thickness.max(1.0),
+        (style.thickness * render_scale.stroke).max(1.0),
         style.color,
         style.opacity * visibility.alpha,
         style.blend_mode,
@@ -615,6 +643,8 @@ mod tests {
             time: MediaTime::from_millis(100),
             width: 128,
             height: 48,
+            source_width: 128,
+            source_height: 48,
             background: RgbaColor::new(0, 0, 0, 0),
         })
         .expect("render should succeed");
@@ -676,6 +706,8 @@ mod tests {
             time: MediaTime::from_millis(500),
             width: 128,
             height: 48,
+            source_width: 128,
+            source_height: 48,
             background: RgbaColor::new(0, 0, 0, 0),
         })
         .expect("render should succeed");
@@ -703,6 +735,8 @@ mod tests {
             time: MediaTime::from_millis(900),
             width: 128,
             height: 48,
+            source_width: 128,
+            source_height: 48,
             background: RgbaColor::new(0, 0, 0, 0),
         })
         .expect("render should succeed");
@@ -730,6 +764,8 @@ mod tests {
             time: MediaTime::from_millis(1_200),
             width: 128,
             height: 48,
+            source_width: 128,
+            source_height: 48,
             background: RgbaColor::new(0, 0, 0, 0),
         })
         .expect("render should succeed");
@@ -737,5 +773,29 @@ mod tests {
         let alpha = alpha_at(&image, 20, 20);
         assert!(alpha > 0);
         assert!(alpha < 255);
+    }
+
+    #[test]
+    fn render_request_scales_project_coordinates_into_preview_canvas() {
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-1", 0)],
+            glyph_objects: vec![demo_object("stroke-1", 0)],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(100),
+            width: 64,
+            height: 24,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("scaled preview render should succeed");
+
+        assert!(alpha_at(&image, 6, 10) > 0);
+        assert!(alpha_at(&image, 54, 10) > 0);
+        assert_eq!(alpha_at(&image, image.width as usize - 1, 10), 0);
     }
 }
