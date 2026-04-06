@@ -4,7 +4,7 @@
 プロジェクト拡張子: **`.pauseink`**
 
 この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
-現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理まで接続されています。
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown まで接続されています。
 
 ## PauseInk とは
 
@@ -26,8 +26,10 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - bounded undo/redo
 - free ink capture と shift grouping
 - manual clear event による screen-wide clear
-- guide capture と template slot preview
+- guide capture と Ctrl タップによる次文字縦ガイド送り
+- template slot preview、読み込み済み font dropdown、実 font shaping ベースの字幅/字詰め
 - single-window GUI
+- transport bar と seek slider
 - autosave cadence と recovery prompt
 - portable root (`pauseink_data/`) 配下への状態集約
 - local font discovery
@@ -93,7 +95,8 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 4. `全消去` で page 境界を追加する
 5. 必要なら右ペインの built-in style preset を適用する
 6. `保存` で `.pauseink` を保存する
-7. 右ペインの `書き出し` から family / profile を選び、transparent または composite export を実行する
+7. 上部直下の transport bar で再生 / 一時停止とシークを行う
+8. 右ペインの `書き出し` から family / profile を選び、transparent または composite export を実行する
 
 ## build / test
 

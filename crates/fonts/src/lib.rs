@@ -107,6 +107,24 @@ pub fn load_ui_font_candidates(
     configured_families: &[String],
     max_fonts: usize,
 ) -> Vec<LoadedUiFont> {
+    load_font_candidates_by_family_names(
+        extra_dirs,
+        &preferred_ui_font_families(configured_families),
+        max_fonts,
+    )
+}
+
+pub fn load_font_family(extra_dirs: &[PathBuf], family_name: &str) -> Option<LoadedUiFont> {
+    load_font_candidates_by_family_names(extra_dirs, &[family_name.to_owned()], 1)
+        .into_iter()
+        .next()
+}
+
+fn load_font_candidates_by_family_names(
+    extra_dirs: &[PathBuf],
+    family_names: &[String],
+    max_fonts: usize,
+) -> Vec<LoadedUiFont> {
     if max_fonts == 0 {
         return Vec::new();
     }
@@ -121,8 +139,16 @@ pub fn load_ui_font_candidates(
     }
 
     let mut loaded = Vec::new();
-    for family_name in preferred_ui_font_families(configured_families) {
-        let query_families = [Family::Name(family_name.as_str())];
+    let mut seen = HashSet::new();
+    for family_name in family_names
+        .iter()
+        .map(|family| family.trim())
+        .filter(|family| !family.is_empty())
+    {
+        if !seen.insert(family_name.to_owned()) {
+            continue;
+        }
+        let query_families = [Family::Name(family_name)];
         let query = Query {
             families: &query_families,
             weight: Weight::NORMAL,
@@ -136,7 +162,10 @@ pub fn load_ui_font_candidates(
             continue;
         };
 
-        loaded.push(LoadedUiFont { family_name, bytes });
+        loaded.push(LoadedUiFont {
+            family_name: family_name.to_owned(),
+            bytes,
+        });
         if loaded.len() >= max_fonts {
             break;
         }

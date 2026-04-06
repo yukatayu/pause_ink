@@ -58,7 +58,7 @@ pub fn create_template_slots(
             continue;
         }
 
-        let scale = slot_scale_for_grapheme(grapheme, settings);
+        let scale = template_grapheme_scale(grapheme, settings);
         let width = settings.font_size * scale;
         let slope_offset_y = -((cursor_x - origin.x) * slope);
 
@@ -81,6 +81,7 @@ pub struct GuidePlacement {
     pub cell_width: f32,
     pub cell_height: f32,
     pub slope_degrees: f32,
+    pub next_cell_origin_x: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +126,9 @@ pub fn build_guide_geometry(origin: Point, placement: GuidePlacement) -> GuideGe
         })
         .collect();
 
-    let next_cell_origin_x = origin.x + placement.cell_width;
+    let next_cell_origin_x = placement
+        .next_cell_origin_x
+        .unwrap_or(origin.x + placement.cell_width);
     let vertical_offsets = [
         (0.0, GuideLineKind::Main),
         (placement.cell_width * 0.25, GuideLineKind::Helper),
@@ -154,7 +157,7 @@ pub fn build_guide_geometry(origin: Point, placement: GuidePlacement) -> GuideGe
     }
 }
 
-fn slot_scale_for_grapheme(grapheme: &str, settings: &TemplateSettings) -> f32 {
+pub fn template_grapheme_scale(grapheme: &str, settings: &TemplateSettings) -> f32 {
     let mut chars = grapheme.chars();
     let Some(first) = chars.next() else {
         return 1.0;
@@ -237,6 +240,7 @@ mod tests {
                 cell_width: 80.0,
                 cell_height: 100.0,
                 slope_degrees: 8.0,
+                next_cell_origin_x: None,
             },
         );
 
@@ -258,5 +262,48 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn template_grapheme_scale_matches_script_categories() {
+        let settings = TemplateSettings {
+            font_size: 96.0,
+            tracking: 0.0,
+            line_height: 1.0,
+            kana_scale: 1.2,
+            latin_scale: 0.8,
+            punctuation_scale: 0.6,
+            slope_degrees: 0.0,
+            underlay_mode: UnderlayMode::Outline,
+        };
+
+        assert_eq!(template_grapheme_scale("あ", &settings), 1.2);
+        assert_eq!(template_grapheme_scale("V", &settings), 0.8);
+        assert_eq!(template_grapheme_scale("。", &settings), 0.6);
+        assert_eq!(template_grapheme_scale("感", &settings), 1.0);
+    }
+
+    #[test]
+    fn guide_geometry_can_move_only_the_next_character_vertical_set() {
+        let geometry = build_guide_geometry(
+            Point::new(100.0, 200.0),
+            GuidePlacement {
+                cell_width: 80.0,
+                cell_height: 100.0,
+                slope_degrees: 10.0,
+                next_cell_origin_x: Some(260.0),
+            },
+        );
+
+        let first_vertical = geometry
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical");
+        let top_horizontal = geometry.horizontal_lines.first().expect("top horizontal");
+
+        assert!((first_vertical.start.x - 260.0).abs() < 0.01);
+        assert!((top_horizontal.start.x - 100.0).abs() < 0.01);
+        assert!((top_horizontal.start.y - 200.0).abs() < 0.01);
     }
 }

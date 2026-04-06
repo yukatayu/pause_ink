@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `prototype`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期に加え、preview 座標ずれと UI 日本語文字化けの修正まで反映済み。
-- 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を満たした。
-- 現在の即時マイルストーン: preview / UI bugfix の反映完了。ユーザー確認待ち
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` の完了条件に対して概算 100%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正に加え、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize の polish まで反映済み。
+- 完了判定: docs / code / tests / sample / tutorial の整合、host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review を再度満たした。
+- 現在の即時マイルストーン: 今回の template / guide / transport / shortcut 修正バッチを report・manual・commit まで閉じる
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -35,6 +35,13 @@
   - `egui` 起動時に system / portable font から日本語 UI fallback font を登録し、Windows 環境での豆腐化を回避する構成にした
   - bugfix sanity review sub-agent でも、preview の source/target 座標不一致と `egui` 日本語 font 未登録が主因であることを再確認した
   - bugfix 反映 commit `217d1ae` を `origin/prototype` へ push 済み
+  - 現在の追加修正バッチでは、template underlay の字幅/字詰め/傾き/フォント選択、object list と log の drag resize、transport bar の明示、Ctrl-Z / Ctrl-Shift-Z / Ctrl-Y、Ctrl タップでの次文字縦ガイド進行、template 配置中の stroke 抑止を進めている
+  - template 字詰めは単文字固定幅ではなく、実フォント shaping と kerning を使う形へ更新した
+  - architecture / UI 観点の sub-agent 2 件を回収済みで、panel resize・shortcut・runtime help・template slot 幅の根本原因を確認した
+  - transport bar を上部直下へ追加し、再生 / 一時停止 / seek の導線を分離した
+  - template font dropdown は読み込み済み family を列挙し、選択 family を egui へ lazy 登録する形で反映した
+  - Ctrl タップでの次文字縦ガイド送りと、template 配置待ち中の stroke 抑止を実装した
+  - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過
   - workflow YAML parse、packager `py_compile`、release archive 生成のローカル検証を通過
   - `cargo test --workspace` を通過
   - `cargo check -p pauseink-app --all-targets` を通過
@@ -70,11 +77,11 @@
 | Phase 14 | 完了 | 100% | style / entrance / clear effects | renderer built-in effect と base style preset 適用の v1.0 最小線を実装 |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
-| Phase 17 | 完了 | 100% | README / manuals / tutorials / polish | README/manual/tutorial/`.docs` を日本語で同期 |
-| Phase 18 | 完了 | 100% | 最終 build / test / export / Windows build 試行 | final QA/docs review 反映、検証ログを確定 |
+| Phase 17 | 完了 | 100% | README / manuals / tutorials / polish | template / guide / transport / shortcut UX 差分まで docs と同期 |
+| Phase 18 | 完了 | 100% | 最終 build / test / export / Windows build 試行 | 上記 polish 反映後の回帰と docs 同期を再完了 |
 
 ## 次の具体的な一手
 
-1. display server がある Linux または実機 Windows で GUI の目視 smoke を行う。
+1. display server がある Linux または実機 Windows で、template 字詰め・font dropdown・transport bar・guide 進行を目視確認する。
 2. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行する。
 3. release 用 portable sidecar runtime の bundling / provenance / notices を詰める。

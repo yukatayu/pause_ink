@@ -12,12 +12,12 @@ use pauseink_export::{
 };
 use pauseink_fonts::{
     discover_local_font_families, fetch_google_font_to_cache, google_font_cache_file,
-    google_font_is_cached, load_ui_font_candidates,
+    google_font_is_cached, load_font_family, load_ui_font_candidates,
 };
 use pauseink_media::{
     canvas_point_to_frame, default_platform_id, discover_runtime, fit_frame_to_canvas,
-    frame_point_to_canvas, CanvasRect, CanvasSize, FfprobeMediaProvider, MediaProvider,
-    MediaRuntime, PreviewFrame, RuntimeCapabilities,
+    frame_point_to_canvas, sidecar_runtime_dir, CanvasRect, CanvasSize, FfprobeMediaProvider,
+    MediaProvider, MediaRuntime, PreviewFrame, RuntimeCapabilities,
 };
 use pauseink_portable_fs::{
     clear_directory_contents, directory_size, load_settings_or_default, portable_root_from_env,
@@ -28,9 +28,12 @@ use pauseink_presets_core::{
 };
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
-    build_guide_geometry, create_template_slots, GuideGeometry, GuideLineKind, GuidePlacement,
+    build_guide_geometry, template_grapheme_scale, GuideGeometry, GuideLineKind, GuidePlacement,
     Point, TemplateSettings, UnderlayMode,
 };
+use unicode_segmentation::UnicodeSegmentation;
+
+const SYSTEM_DEFAULT_FONT_FAMILY_LABEL: &str = "システム既定";
 
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
@@ -52,7 +55,12 @@ fn main() -> Result<()> {
         "PauseInk",
         options,
         Box::new(move |cc| {
-            configure_egui_fonts(&cc.egui_ctx, &portable_paths_for_app, &settings_for_app);
+            configure_egui_fonts(
+                &cc.egui_ctx,
+                &portable_paths_for_app,
+                &settings_for_app,
+                None,
+            );
             Ok(Box::new(DesktopApp::new(
                 portable_paths_for_app.clone(),
                 settings_for_app.clone(),
@@ -63,28 +71,61 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn configure_egui_fonts(ctx: &egui::Context, portable_paths: &PortablePaths, settings: &Settings) {
+fn font_data_key(prefix: &str, family_name: &str) -> String {
+    let mut key = String::with_capacity(prefix.len() + family_name.len() + 1);
+    key.push_str(prefix);
+    key.push('-');
+    for ch in family_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            key.push(ch.to_ascii_lowercase());
+        } else {
+            key.push('_');
+        }
+    }
+    key
+}
+
+fn configure_egui_fonts(
+    ctx: &egui::Context,
+    portable_paths: &PortablePaths,
+    settings: &Settings,
+    template_font_family: Option<&str>,
+) {
     let mut font_dirs = vec![portable_paths.google_fonts_cache_dir()];
     font_dirs.extend(settings.local_font_dirs.clone());
 
-    let Some(ui_font) = load_ui_font_candidates(&font_dirs, &settings.google_fonts.families, 1)
+    let mut definitions = egui::FontDefinitions::default();
+    if let Some(ui_font) = load_ui_font_candidates(&font_dirs, &settings.google_fonts.families, 1)
         .into_iter()
         .next()
-    else {
-        return;
-    };
+    {
+        let font_name = font_data_key("pauseink-ui", &ui_font.family_name);
+        definitions.font_data.insert(
+            font_name.clone(),
+            egui::FontData::from_owned(ui_font.bytes).into(),
+        );
 
-    let mut definitions = egui::FontDefinitions::default();
-    let font_name = format!("pauseink-ui-{}", ui_font.family_name);
-    definitions.font_data.insert(
-        font_name.clone(),
-        egui::FontData::from_owned(ui_font.bytes).into(),
-    );
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(entries) = definitions.families.get_mut(&family) {
+                entries.retain(|entry| entry != &font_name);
+                entries.insert(0, font_name.clone());
+            }
+        }
+    }
 
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        if let Some(entries) = definitions.families.get_mut(&family) {
-            entries.retain(|entry| entry != &font_name);
-            entries.insert(0, font_name.clone());
+    if let Some(template_family) = template_font_family
+        .filter(|family| !family.trim().is_empty() && *family != SYSTEM_DEFAULT_FONT_FAMILY_LABEL)
+    {
+        if let Some(loaded_font) = load_font_family(&font_dirs, template_family) {
+            let font_name = font_data_key("pauseink-template", &loaded_font.family_name);
+            definitions.font_data.insert(
+                font_name.clone(),
+                egui::FontData::from_owned(loaded_font.bytes).into(),
+            );
+            definitions.families.insert(
+                egui::FontFamily::Name(loaded_font.family_name.clone().into()),
+                vec![font_name],
+            );
         }
     }
 
@@ -168,13 +209,66 @@ impl Default for TemplatePreviewState {
                 slope_degrees: 0.0,
                 underlay_mode: UnderlayMode::OutlineAndSlotBox,
             },
-            font_family: "システム既定".to_owned(),
+            font_family: SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned(),
             placement_armed: false,
             placed_slots: None,
             current_slot_index: 0,
             slot_object_ids: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GuideOverlayState {
+    horizontal_origin: Point,
+    cell_width: f32,
+    cell_height: f32,
+    next_cell_origin_x: f32,
+}
+
+impl GuideOverlayState {
+    fn from_reference_bounds(min: pauseink_domain::Point2, max: pauseink_domain::Point2) -> Self {
+        let cell_width = (max.x - min.x).max(40.0);
+        let cell_height = (max.y - min.y).max(48.0);
+        Self {
+            horizontal_origin: Point::new(min.x, min.y),
+            cell_width,
+            cell_height,
+            next_cell_origin_x: min.x + cell_width,
+        }
+    }
+
+    fn build_geometry(&self, slope_degrees: f32) -> GuideGeometry {
+        build_guide_geometry(
+            self.horizontal_origin,
+            GuidePlacement {
+                cell_width: self.cell_width,
+                cell_height: self.cell_height,
+                slope_degrees,
+                next_cell_origin_x: Some(self.next_cell_origin_x),
+            },
+        )
+    }
+
+    fn advance_to_next_from_bounds(
+        &mut self,
+        bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
+    ) {
+        if let Some((min, max)) = bounds {
+            self.cell_width = (max.x - min.x).max(40.0);
+            self.next_cell_origin_x = min.x + self.cell_width;
+        } else {
+            self.next_cell_origin_x += self.cell_width;
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct TemplateGraphemeLayout {
+    grapheme: String,
+    natural_start_x: f32,
+    width: f32,
+    scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +328,9 @@ struct DesktopApp {
     selected_style_preset_id: String,
     template: TemplatePreviewState,
     export: ExportState,
+    guide_state: Option<GuideOverlayState>,
     guide_geometry: Option<GuideGeometry>,
+    last_committed_object_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     bottom_tab: BottomTab,
     preview_texture: Option<egui::TextureHandle>,
     preview_key: Option<(PathBuf, i64, u32, u32)>,
@@ -242,10 +338,13 @@ struct DesktopApp {
     overlay_key: Option<(i64, usize, usize, u32, u32, u32, u32)>,
     canvas_drag_active: bool,
     guide_capture_armed: bool,
+    guide_modifier_was_down: bool,
+    guide_modifier_used_for_stroke: bool,
     recovery_prompt_open: bool,
     preferences_open: bool,
     cache_manager_open: bool,
     runtime_diagnostics_open: bool,
+    font_config_dirty: bool,
     google_font_input: String,
     pending_export: Option<PendingExportJob>,
     last_update_at: Instant,
@@ -313,7 +412,9 @@ impl DesktopApp {
             style_presets,
             template: TemplatePreviewState::default(),
             export,
+            guide_state: None,
             guide_geometry: None,
+            last_committed_object_bounds: None,
             bottom_tab: BottomTab::Outline,
             preview_texture: None,
             preview_key: None,
@@ -321,10 +422,13 @@ impl DesktopApp {
             overlay_key: None,
             canvas_drag_active: false,
             guide_capture_armed: false,
+            guide_modifier_was_down: false,
+            guide_modifier_used_for_stroke: false,
             recovery_prompt_open,
             preferences_open: false,
             cache_manager_open: false,
             runtime_diagnostics_open: false,
+            font_config_dirty: true,
             google_font_input: String::new(),
             pending_export: None,
             last_update_at: Instant::now(),
@@ -341,9 +445,235 @@ impl DesktopApp {
     }
 
     fn rebuild_local_font_families(&mut self) {
+        let previous_selection = self.template.font_family.clone();
+        self.local_font_families = discover_local_font_families(&self.available_font_dirs());
+        if previous_selection != SYSTEM_DEFAULT_FONT_FAMILY_LABEL
+            && !self
+                .local_font_families
+                .iter()
+                .any(|family| family == &previous_selection)
+        {
+            self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
+            self.push_log(format!(
+                "選択中のテンプレート font `{previous_selection}` が見つからないため、システム既定へ戻しました。"
+            ));
+        }
+        self.font_config_dirty = true;
+    }
+
+    fn available_font_dirs(&self) -> Vec<PathBuf> {
         let mut font_dirs = vec![self.portable_paths.google_fonts_cache_dir()];
         font_dirs.extend(self.settings.local_font_dirs.clone());
-        self.local_font_families = discover_local_font_families(&font_dirs);
+        font_dirs
+    }
+
+    fn maybe_apply_egui_fonts(&mut self, ctx: &egui::Context) {
+        if !self.font_config_dirty {
+            return;
+        }
+        configure_egui_fonts(
+            ctx,
+            &self.portable_paths,
+            &self.settings,
+            Some(&self.template.font_family),
+        );
+        self.font_config_dirty = false;
+    }
+
+    fn template_font_id(&self, size: f32) -> egui::FontId {
+        if self.template.font_family == SYSTEM_DEFAULT_FONT_FAMILY_LABEL {
+            egui::FontId::proportional(size)
+        } else {
+            egui::FontId::new(
+                size,
+                egui::FontFamily::Name(self.template.font_family.clone().into()),
+            )
+        }
+    }
+
+    fn layout_template_line(&self, ctx: &egui::Context, line: &str) -> Vec<TemplateGraphemeLayout> {
+        let graphemes = line.graphemes(true).collect::<Vec<_>>();
+        if graphemes.is_empty() {
+            return Vec::new();
+        }
+
+        let mut job = egui::text::LayoutJob::default();
+        job.text = line.to_owned();
+        job.wrap.max_width = f32::INFINITY;
+        job.wrap.max_rows = 1;
+
+        let mut byte_offset = 0usize;
+        let mut run_start = 0usize;
+        while run_start < graphemes.len() {
+            let run_scale = template_grapheme_scale(graphemes[run_start], &self.template.settings);
+            let mut run_end = run_start + 1;
+            let mut run_bytes = graphemes[run_start].len();
+
+            while run_end < graphemes.len() {
+                let next_scale =
+                    template_grapheme_scale(graphemes[run_end], &self.template.settings);
+                if (next_scale - run_scale).abs() > f32::EPSILON {
+                    break;
+                }
+                run_bytes += graphemes[run_end].len();
+                run_end += 1;
+            }
+
+            job.sections.push(egui::text::LayoutSection {
+                leading_space: 0.0,
+                byte_range: byte_offset..(byte_offset + run_bytes),
+                format: egui::TextFormat {
+                    font_id: self.template_font_id(self.template.settings.font_size * run_scale),
+                    color: Color32::PLACEHOLDER,
+                    ..Default::default()
+                },
+            });
+            byte_offset += run_bytes;
+            run_start = run_end;
+        }
+
+        let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
+        let Some(row) = galley.rows.first() else {
+            return Vec::new();
+        };
+
+        let mut glyph_cursor = 0usize;
+        let mut layouts = Vec::with_capacity(graphemes.len());
+        for grapheme in graphemes {
+            let glyph_count = grapheme.chars().count();
+            if glyph_count == 0 || glyph_cursor >= row.glyphs.len() {
+                continue;
+            }
+            let glyph_end = (glyph_cursor + glyph_count).min(row.glyphs.len());
+            let glyphs = &row.glyphs[glyph_cursor..glyph_end];
+            if glyphs.is_empty() {
+                continue;
+            }
+            let start_x = glyphs.first().map(|glyph| glyph.pos.x).unwrap_or_default();
+            let end_x = glyphs
+                .iter()
+                .fold(start_x, |max_x, glyph| max_x.max(glyph.max_x()));
+            layouts.push(TemplateGraphemeLayout {
+                grapheme: grapheme.to_owned(),
+                natural_start_x: start_x,
+                width: (end_x - start_x).max(1.0),
+                scale: template_grapheme_scale(grapheme, &self.template.settings),
+            });
+            glyph_cursor = glyph_end;
+        }
+
+        if let Some(first_start_x) = layouts.first().map(|layout| layout.natural_start_x) {
+            for layout in &mut layouts {
+                layout.natural_start_x -= first_start_x;
+            }
+        }
+
+        layouts
+    }
+
+    fn template_slots_at_origin(
+        &self,
+        ctx: &egui::Context,
+        origin: Point,
+    ) -> Vec<pauseink_template_layout::TemplateSlot> {
+        let mut slots = Vec::new();
+        let slope = self.template.settings.slope_degrees.to_radians().tan();
+        let mut baseline_y = origin.y;
+
+        for line in self.template.text.split('\n') {
+            for (index, layout) in self.layout_template_line(ctx, line).into_iter().enumerate() {
+                let slot_origin_x = origin.x
+                    + layout.natural_start_x
+                    + self.template.settings.tracking * index as f32;
+                let slope_offset_y = -((slot_origin_x - origin.x) * slope);
+                slots.push(pauseink_template_layout::TemplateSlot {
+                    grapheme: layout.grapheme,
+                    origin: Point::new(slot_origin_x, baseline_y + slope_offset_y),
+                    width: layout.width.max(12.0),
+                    height: (self.template.settings.font_size * layout.scale).max(12.0),
+                    scale: layout.scale,
+                });
+            }
+            baseline_y += self.template.settings.font_size * self.template.settings.line_height;
+        }
+
+        slots
+    }
+
+    fn refresh_guide_geometry(&mut self) {
+        self.guide_geometry = self
+            .guide_state
+            .map(|guide_state| guide_state.build_geometry(self.settings.guide_slope_degrees));
+    }
+
+    fn capture_guide_from_object(&mut self, object_id: &pauseink_domain::GlyphObjectId) {
+        if let Some((min, max)) = self.session.object_bounds(object_id) {
+            self.last_committed_object_bounds = Some((min, max));
+            self.guide_state = Some(GuideOverlayState::from_reference_bounds(min, max));
+            self.refresh_guide_geometry();
+            self.push_log("ガイド基準を更新しました。");
+        }
+    }
+
+    fn advance_guide_to_next_character(&mut self) {
+        let Some(guide_state) = &mut self.guide_state else {
+            return;
+        };
+        guide_state.advance_to_next_from_bounds(self.last_committed_object_bounds);
+        self.refresh_guide_geometry();
+        self.push_log("ガイド縦線を次文字位置へ進めました。");
+    }
+
+    fn handle_guide_modifier_tap(&mut self, ctx: &egui::Context) {
+        let modifier_active = self.guide_modifier_active(ctx);
+        if modifier_active && !self.guide_modifier_was_down {
+            self.guide_modifier_used_for_stroke = false;
+        }
+        if !modifier_active
+            && self.guide_modifier_was_down
+            && !self.guide_modifier_used_for_stroke
+            && !ctx.egui_wants_keyboard_input()
+            && !self.template.placement_armed
+        {
+            self.advance_guide_to_next_character();
+        }
+        self.guide_modifier_was_down = modifier_active;
+    }
+
+    fn perform_undo(&mut self) {
+        if let Err(error) = self.session.undo() {
+            self.push_log(format!("undo 失敗: {error:#}"));
+        }
+    }
+
+    fn perform_redo(&mut self) {
+        if let Err(error) = self.session.redo() {
+            self.push_log(format!("redo 失敗: {error:#}"));
+        }
+    }
+
+    fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+        let redo_shift_shortcut = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Z,
+        );
+        let redo_y_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
+
+        let undo = ctx.input_mut(|input| input.consume_shortcut(&undo_shortcut));
+        let redo_shift = ctx.input_mut(|input| input.consume_shortcut(&redo_shift_shortcut));
+        let redo_y = ctx.input_mut(|input| input.consume_shortcut(&redo_y_shortcut));
+
+        if undo {
+            self.perform_undo();
+        }
+        if redo_shift || redo_y {
+            self.perform_redo();
+        }
     }
 
     fn apply_selected_style_preset(&mut self) {
@@ -585,6 +915,7 @@ impl DesktopApp {
     fn import_media(&mut self, path: PathBuf) {
         let Some(provider) = self.provider.as_ref() else {
             self.push_log("FFmpeg runtime が見つからないためメディアを読込できません。");
+            self.runtime_diagnostics_open = true;
             return;
         };
 
@@ -777,28 +1108,30 @@ impl DesktopApp {
     ) {
         let pointer_position = response.interact_pointer_pos();
 
-        if self.template.placement_armed && response.clicked() {
-            if let Some(pointer_position) = pointer_position {
-                let relative = Pos2::new(
-                    pointer_position.x - frame_rect.left(),
-                    pointer_position.y - frame_rect.top(),
-                );
-                let slots = create_template_slots(
-                    &self.template.text,
-                    Point::new(relative.x, relative.y),
-                    &self.template.settings,
-                );
-                self.template.current_slot_index = 0;
-                self.template.slot_object_ids = vec![None; slots.len()];
-                self.template.placed_slots = Some(slots);
-                self.template.placement_armed = false;
-                self.push_log("テンプレート配置を確定しました。");
+        if self.template.placement_armed {
+            if response.clicked() {
+                if let Some(pointer_position) = pointer_position {
+                    let relative = Pos2::new(
+                        pointer_position.x - frame_rect.left(),
+                        pointer_position.y - frame_rect.top(),
+                    );
+                    let slots =
+                        self.template_slots_at_origin(ctx, Point::new(relative.x, relative.y));
+                    self.template.current_slot_index = 0;
+                    self.template.slot_object_ids = vec![None; slots.len()];
+                    self.template.placed_slots = Some(slots);
+                    self.template.placement_armed = false;
+                    self.push_log("テンプレート配置を確定しました。");
+                }
             }
             return;
         }
 
         if response.drag_started() {
             self.guide_capture_armed = self.guide_modifier_active(ctx);
+            if self.guide_capture_armed {
+                self.guide_modifier_used_for_stroke = true;
+            }
             if let Some(pointer_position) = pointer_position {
                 if let Some(frame_point) = pointer_position_to_frame_point(
                     pointer_position,
@@ -843,18 +1176,9 @@ impl DesktopApp {
 
                 match self.session.commit_stroke_into_object(target_object) {
                     Ok(Some(object_id)) => {
+                        self.last_committed_object_bounds = self.session.object_bounds(&object_id);
                         if self.guide_capture_armed {
-                            if let Some((min, max)) = self.session.object_bounds(&object_id) {
-                                self.guide_geometry = Some(build_guide_geometry(
-                                    Point::new(min.x, min.y),
-                                    GuidePlacement {
-                                        cell_width: (max.x - min.x).max(40.0),
-                                        cell_height: (max.y - min.y).max(48.0),
-                                        slope_degrees: self.settings.guide_slope_degrees,
-                                    },
-                                ));
-                                self.push_log("ガイド基準を更新しました。");
-                            }
+                            self.capture_guide_from_object(&object_id);
                         }
 
                         if self.template.placed_slots.is_some() {
@@ -883,6 +1207,7 @@ impl DesktopApp {
 
     fn draw_template_preview(
         &self,
+        ctx: &egui::Context,
         painter: &egui::Painter,
         frame_rect: Rect,
         response: &egui::Response,
@@ -897,14 +1222,13 @@ impl DesktopApp {
         let slots = if let Some(slots) = &self.template.placed_slots {
             Some(slots.clone())
         } else if self.template.placement_armed {
-            hovered_origin.map(|origin| {
-                create_template_slots(&self.template.text, origin, &self.template.settings)
-            })
+            hovered_origin.map(|origin| self.template_slots_at_origin(ctx, origin))
         } else {
             None
         };
 
         if let Some(slots) = slots {
+            let angle = -self.template.settings.slope_degrees.to_radians();
             for (index, slot) in slots.iter().enumerate() {
                 let rect = Rect::from_min_size(
                     Pos2::new(
@@ -925,7 +1249,15 @@ impl DesktopApp {
                     self.template.settings.underlay_mode,
                     UnderlayMode::SlotBoxOnly | UnderlayMode::OutlineAndSlotBox
                 ) {
-                    painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Middle);
+                    painter.add(
+                        egui::epaint::RectShape::stroke(
+                            rect,
+                            0.0,
+                            stroke,
+                            egui::StrokeKind::Middle,
+                        )
+                        .with_angle_and_pivot(angle, rect.left_top()),
+                    );
                 }
                 if matches!(
                     self.template.settings.underlay_mode,
@@ -933,24 +1265,35 @@ impl DesktopApp {
                         | UnderlayMode::OutlineAndSlotBox
                         | UnderlayMode::FaintFill
                 ) {
-                    painter.text(
-                        rect.left_top(),
-                        egui::Align2::LEFT_TOP,
-                        &slot.grapheme,
-                        egui::FontId::proportional(
-                            (self.template.settings.font_size * 0.35).max(14.0),
-                        ),
-                        Color32::from_rgba_unmultiplied(220, 220, 240, 180),
+                    let galley = ctx.fonts_mut(|fonts| {
+                        fonts.layout_no_wrap(
+                            slot.grapheme.clone(),
+                            self.template_font_id(
+                                (self.template.settings.font_size * slot.scale).max(14.0),
+                            ),
+                            Color32::from_rgba_unmultiplied(220, 220, 240, 180),
+                        )
+                    });
+                    painter.add(
+                        egui::epaint::TextShape::new(
+                            rect.left_top(),
+                            galley,
+                            Color32::from_rgba_unmultiplied(220, 220, 240, 180),
+                        )
+                        .with_angle(angle),
                     );
                 }
                 if matches!(
                     self.template.settings.underlay_mode,
                     UnderlayMode::FaintFill
                 ) {
-                    painter.rect_filled(
-                        rect,
-                        0.0,
-                        Color32::from_rgba_unmultiplied(180, 200, 255, 32),
+                    painter.add(
+                        egui::epaint::RectShape::filled(
+                            rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(180, 200, 255, 32),
+                        )
+                        .with_angle_and_pivot(angle, rect.left_top()),
                     );
                 }
             }
@@ -1109,10 +1452,15 @@ impl DesktopApp {
                             "Shift",
                         );
                     });
-                ui.add(
-                    egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
-                        .text("ガイド傾き"),
-                );
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
+                            .text("ガイド傾き"),
+                    )
+                    .changed()
+                {
+                    self.refresh_guide_geometry();
+                }
                 ui.checkbox(
                     &mut self.settings.gpu_preview_enabled,
                     "プレビュー GPU を有効",
@@ -1340,6 +1688,12 @@ impl DesktopApp {
                 } else {
                     ui.label("capability 情報はまだありません。");
                 }
+
+                ui.separator();
+                ui.heading("Windows で runtime が見つからないとき");
+                for line in ffmpeg_runtime_windows_help(&self.portable_paths.runtime_dir) {
+                    ui.label(line);
+                }
             });
         self.runtime_diagnostics_open = open;
     }
@@ -1550,7 +1904,10 @@ impl eframe::App for DesktopApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.maybe_apply_egui_fonts(&ctx);
         self.advance_playback(&ctx);
+        self.handle_global_shortcuts(&ctx);
+        self.handle_guide_modifier_tap(&ctx);
         self.maybe_autosave();
         self.poll_pending_export();
 
@@ -1576,6 +1933,11 @@ impl eframe::App for DesktopApp {
         }
 
         egui::Panel::top("top_bar").show(&ctx, |ui| {
+            let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            let redo_shortcut = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            );
             ui.horizontal_wrapped(|ui| {
                 if ui.button("開く").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
@@ -1608,43 +1970,23 @@ impl eframe::App for DesktopApp {
                         self.import_media(path);
                     }
                 }
-                if ui.button("元に戻す").clicked() {
-                    if let Err(error) = self.session.undo() {
-                        self.push_log(format!("undo 失敗: {error:#}"));
-                    }
-                }
-                if ui.button("やり直す").clicked() {
-                    if let Err(error) = self.session.redo() {
-                        self.push_log(format!("redo 失敗: {error:#}"));
-                    }
-                }
                 if ui
-                    .button(
-                        if self
-                            .session
-                            .playback
-                            .as_ref()
-                            .map(|playback| playback.is_playing)
-                            .unwrap_or(false)
-                        {
-                            "一時停止"
-                        } else {
-                            "再生"
-                        },
+                    .add(
+                        egui::Button::new("元に戻す")
+                            .shortcut_text(ctx.format_shortcut(&undo_shortcut)),
                     )
                     .clicked()
                 {
-                    if self
-                        .session
-                        .playback
-                        .as_ref()
-                        .map(|playback| playback.is_playing)
-                        .unwrap_or(false)
-                    {
-                        self.session.pause();
-                    } else {
-                        self.session.play();
-                    }
+                    self.perform_undo();
+                }
+                if ui
+                    .add(
+                        egui::Button::new("やり直す")
+                            .shortcut_text(ctx.format_shortcut(&redo_shortcut)),
+                    )
+                    .clicked()
+                {
+                    self.perform_redo();
                 }
                 if ui.button("全消去").clicked() {
                     match self
@@ -1655,25 +1997,6 @@ impl eframe::App for DesktopApp {
                             self.push_log(format!("clear event を挿入: {}", clear_id.0))
                         }
                         Err(error) => self.push_log(format!("clear event 挿入失敗: {error:#}")),
-                    }
-                }
-
-                if let Some(duration) = self
-                    .session
-                    .playback
-                    .as_ref()
-                    .and_then(|playback| playback.media.duration())
-                {
-                    let mut current_ms = self.session.current_time().ticks as f64;
-                    let response = ui.add(
-                        egui::Slider::new(&mut current_ms, 0.0..=duration.ticks as f64)
-                            .text("現在位置 ms")
-                            .show_value(true),
-                    );
-                    if response.changed() {
-                        self.session.seek(pauseink_domain::MediaTime::from_millis(
-                            current_ms.round() as i64,
-                        ));
                     }
                 }
 
@@ -1700,15 +2023,71 @@ impl eframe::App for DesktopApp {
             });
         });
 
+        egui::Panel::top("transport_bar").show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                let playing = self
+                    .session
+                    .playback
+                    .as_ref()
+                    .map(|playback| playback.is_playing)
+                    .unwrap_or(false);
+                if ui
+                    .button(if playing {
+                        "再生中: 一時停止"
+                    } else {
+                        "停止中: 再生"
+                    })
+                    .clicked()
+                {
+                    if playing {
+                        self.session.pause();
+                    } else {
+                        self.session.play();
+                    }
+                }
+
+                if let Some(duration) = self
+                    .session
+                    .playback
+                    .as_ref()
+                    .and_then(|playback| playback.media.duration())
+                {
+                    let mut current_ms = self.session.current_time().ticks as f64;
+                    let response = ui.add_sized(
+                        [ui.available_width().max(240.0), 0.0],
+                        egui::Slider::new(&mut current_ms, 0.0..=duration.ticks as f64)
+                            .text("シーク")
+                            .show_value(false),
+                    );
+                    ui.label(format!(
+                        "{:.2} / {:.2} 秒",
+                        current_ms / 1000.0,
+                        duration.ticks as f64 / 1000.0
+                    ));
+                    if response.changed() {
+                        self.session.seek(pauseink_domain::MediaTime::from_millis(
+                            current_ms.round() as i64,
+                        ));
+                    }
+                } else {
+                    ui.label("メディアを読み込むとシークバーがここに表示されます。");
+                }
+            });
+        });
+
         self.draw_preferences_window(&ctx);
         self.draw_cache_manager_window(&ctx);
         self.draw_runtime_diagnostics_window(&ctx);
 
         egui::Panel::left("left_panel")
             .default_width(250.0)
+            .resizable(true)
             .show(&ctx, |ui| {
                 ui.heading("メディア");
                 ui.label(&self.runtime_status);
+                if self.runtime.is_none() {
+                    ui.label("Windows で runtime が見つからない場合は `診断` に配置場所の案内があります。");
+                }
                 ui.horizontal(|ui| {
                     if ui.button("診断を開く").clicked() {
                         self.runtime_diagnostics_open = true;
@@ -1732,7 +2111,24 @@ impl eframe::App for DesktopApp {
                 ui.separator();
                 ui.heading("テンプレート");
                 ui.text_edit_singleline(&mut self.template.text);
-                ui.text_edit_singleline(&mut self.template.font_family);
+                let mut selected_template_font = self.template.font_family.clone();
+                egui::ComboBox::from_label("テンプレート font")
+                    .selected_text(&selected_template_font)
+                    .show_ui(ui, |ui| {
+                        for family in
+                            template_font_choices(&self.local_font_families, &self.template.font_family)
+                        {
+                            ui.selectable_value(
+                                &mut selected_template_font,
+                                family.clone(),
+                                family,
+                            );
+                        }
+                    });
+                if selected_template_font != self.template.font_family {
+                    self.template.font_family = selected_template_font;
+                    self.font_config_dirty = true;
+                }
                 ui.add(
                     egui::Slider::new(&mut self.template.settings.font_size, 24.0..=180.0)
                         .text("フォントサイズ"),
@@ -1772,7 +2168,7 @@ impl eframe::App for DesktopApp {
                     self.rebuild_local_font_families();
                 }
                 ui.label(format!(
-                    "ローカル候補: {} 件",
+                    "読み込み済み候補: {} 件",
                     self.local_font_families.len()
                 ));
                 for family in self.local_font_families.iter().take(8) {
@@ -1802,6 +2198,7 @@ impl eframe::App for DesktopApp {
 
         egui::Panel::right("inspector")
             .default_width(260.0)
+            .resizable(true)
             .show(&ctx, |ui| {
                 ui.heading("インスペクター");
                 let mut title = self.session.project_title();
@@ -1863,11 +2260,17 @@ impl eframe::App for DesktopApp {
                 );
                 ui.separator();
                 ui.label("ガイド");
-                ui.add(
-                    egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
-                        .text("ガイド傾き"),
-                );
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.settings.guide_slope_degrees, -20.0..=20.0)
+                            .text("ガイド傾き"),
+                    )
+                    .changed()
+                {
+                    self.refresh_guide_geometry();
+                }
                 if ui.button("ガイド解除").clicked() {
+                    self.guide_state = None;
                     self.guide_geometry = None;
                 }
                 ui.separator();
@@ -1876,6 +2279,7 @@ impl eframe::App for DesktopApp {
 
         egui::Panel::bottom("bottom_tabs")
             .default_height(180.0)
+            .resizable(true)
             .show(&ctx, |ui| {
                 ui.horizontal(|ui| {
                     for (tab, label) in [
@@ -2002,7 +2406,7 @@ impl eframe::App for DesktopApp {
                 );
             }
 
-            self.draw_template_preview(&painter, frame_rect, &response);
+            self.draw_template_preview(&ctx, &painter, frame_rect, &response);
             self.draw_guide_overlay(&painter, frame_rect, frame_width, frame_height);
 
             if let Some(slots) = &self.template.placed_slots {
@@ -2095,6 +2499,36 @@ fn preferred_family_id(family_ids: &[String]) -> String {
             .cloned()
     })
     .unwrap_or_else(|| family_ids[0].clone())
+}
+
+fn template_font_choices(local_font_families: &[String], selected_family: &str) -> Vec<String> {
+    let mut choices = vec![SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned()];
+    for family in local_font_families {
+        if !choices.iter().any(|candidate| candidate == family) {
+            choices.push(family.clone());
+        }
+    }
+    if !selected_family.trim().is_empty()
+        && !choices
+            .iter()
+            .any(|candidate| candidate.as_str() == selected_family)
+    {
+        choices.push(selected_family.to_owned());
+    }
+    choices
+}
+
+fn ffmpeg_runtime_windows_help(runtime_root: &Path) -> Vec<String> {
+    let sidecar_dir = sidecar_runtime_dir(runtime_root, "windows-x86_64");
+    vec![
+        format!(
+            "1. 推奨配置: `{}` に `ffmpeg.exe` / `ffprobe.exe` / `manifest.json` を置きます。",
+            sidecar_dir.display()
+        ),
+        "2. sidecar を置けない場合は、`ffmpeg.exe` と `ffprobe.exe` の両方を `PATH` に通してください。"
+            .to_owned(),
+        "3. 配置後に `機能情報更新` を押すか、アプリを再起動すると再検出します。".to_owned(),
+    ]
 }
 
 fn default_export_filename(title: &str, extension: &str) -> String {
@@ -2191,5 +2625,62 @@ mod tests {
         assert!((frame_point.y - 540.0).abs() < 0.01);
         assert!((roundtrip.x - pointer.x).abs() < 0.01);
         assert!((roundtrip.y - pointer.y).abs() < 0.01);
+    }
+
+    #[test]
+    fn template_font_choices_keep_system_default_first_and_preserve_selection() {
+        let choices = template_font_choices(
+            &[
+                "BIZ UDPGothic".to_owned(),
+                "Noto Sans JP".to_owned(),
+                "BIZ UDPGothic".to_owned(),
+            ],
+            "M PLUS Rounded 1c",
+        );
+
+        assert_eq!(choices[0], SYSTEM_DEFAULT_FONT_FAMILY_LABEL);
+        assert!(choices.iter().any(|family| family == "M PLUS Rounded 1c"));
+        assert_eq!(
+            choices
+                .iter()
+                .filter(|family| family.as_str() == "BIZ UDPGothic")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin() {
+        let mut state = GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        );
+        let original_origin = state.horizontal_origin;
+
+        state.advance_to_next_from_bounds(Some((
+            pauseink_domain::Point2 { x: 180.0, y: 210.0 },
+            pauseink_domain::Point2 { x: 250.0, y: 282.0 },
+        )));
+
+        let geometry = state.build_geometry(12.0);
+        let first_vertical = geometry
+            .vertical_lines
+            .iter()
+            .find(|line| line.kind == GuideLineKind::Main)
+            .expect("main vertical");
+        let first_horizontal = geometry.horizontal_lines.first().expect("horizontal line");
+
+        assert_eq!(state.horizontal_origin, original_origin);
+        assert!((first_vertical.start.x - 250.0).abs() < 0.01);
+        assert!((first_horizontal.start.y - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn windows_runtime_help_mentions_sidecar_layout_and_path_fallback() {
+        let lines = ffmpeg_runtime_windows_help(Path::new("/tmp/pauseink_data/runtime"));
+
+        assert!(lines.iter().any(|line| line.contains("windows-x86_64")));
+        assert!(lines.iter().any(|line| line.contains("ffmpeg.exe")));
+        assert!(lines.iter().any(|line| line.contains("PATH")));
     }
 }

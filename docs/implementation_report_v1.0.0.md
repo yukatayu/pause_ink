@@ -331,6 +331,11 @@
   - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/export/src/lib.rs`, `crates/app/src/main.rs`, `crates/fonts/src/lib.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
   - 結果: preview overlay は source media 座標から target texture 座標へ正しく縮尺され、pointer helper の roundtrip / letterbox rejection test を追加した。`egui` 起動時には system / portable cache から日本語 UI fallback font を明示登録するようにした。
   - 次の一手: headless 制約を記録しつつ、report / progress の反映後に commit / push する。
+- 2026-04-06T20:30:00+09:00
+  - 実施内容: template underlay の fixed-width preview を実 font shaping / kerning ベースへ置き換え、font dropdown / slope 回転 / transport bar / Undo-Redo shortcut / resizable panel / guide 縦線送り / template 配置中入力抑止 / Windows runtime help を追加した。
+  - 変更ファイル: `crates/app/Cargo.toml`, `crates/app/src/main.rs`, `crates/fonts/src/lib.rs`, `crates/template_layout/src/lib.rs`, `README.md`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: template preview は読み込み済み font を選択でき、`VA` のような pair kerning を落としにくい run-level shaping で slot 位置を計算するようになった。Ctrl タップで次文字用の縦ガイドを進められ、配置待ち中の accidental stroke も止まる。再生/seek は上部直下の transport bar へ分離し、`Ctrl-Z` / `Ctrl-Shift-Z` / `Ctrl-Y` も利用できる。
+  - 次の一手: docs / report を最終同期し、commit / push する。
 
 ## 6. 検証ログ
 
@@ -535,6 +540,18 @@
   - 結果: exit 0。bugfix 反映後の app compile を確認。`eframe::egui::Panel::*` 系 deprecation warning 8 件は継続。
 - `printf 'DISPLAY=%s\nWAYLAND_DISPLAY=%s\n' \"$DISPLAY\" \"$WAYLAND_DISPLAY\"`
   - 結果: `DISPLAY=`、`WAYLAND_DISPLAY=`。このホストでは GUI の目視起動確認は引き続き不可。
+- `cargo test -p pauseink-template-layout`
+  - 結果: exit 0。5 tests passed。`next_cell_origin_x` を分離した guide geometry と grapheme scale helper の unit test を追加して通過。
+- `cargo test -p pauseink-app --lib --bins`
+  - 結果: exit 0。`pauseink-app` lib 11 tests、bin 6 tests が通過。font choice list、guide vertical advance state、Windows runtime help text、pointer mapping の回帰を確認。
+- `cargo test --workspace`
+  - 結果: exit 0。`pauseink-app` 11 + 6、`pauseink-domain` 15、`pauseink-export` 8、`pauseink-fonts` 8、`pauseink-media` 12、`pauseink-portable-fs` 8、`pauseink-presets-core` 8、`pauseink-project-io` 5、`pauseink-renderer` 6、`pauseink-template-layout` 5、`pauseink-ui` 1 tests が通過。
+- `cargo check -p pauseink-app --all-targets`
+  - 結果: exit 0。template shaping / transport / shortcut / resizable panel / runtime help 追加後の app 全 target compile を確認。`Panel::*` 系の deprecation warning は 9 件。
+- `cargo build -p pauseink-app`
+  - 結果: exit 0。debug build が 1m49s で完了。warning は compile-only で、binary は生成できた。
+- `timeout 5s ./target/debug/pauseink-app`
+  - 結果: exit 1。`neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set`。headless host なので GUI 実表示確認は今回も未実施。
 
 ## 7. 失敗と修正
 
@@ -624,6 +641,39 @@
   - 見送った提案:
     - 日本語 font を repository へ bundle する。理由: まずは system / portable cache 利用で重い同梱物を増やさずに解消できたため
 
+## 8.5 2026-04-06 追加修正バッチ開始メモ
+
+- 開始時点の即時マイルストーン:
+  - template underlay の字幅・字詰め・傾き・font 選択を実動作に合わせて補正する
+  - transport / seek UI を独立させ、object list / log の drag resize と Undo/Redo shortcut を追加する
+  - Ctrl タップで次文字用の縦ガイドを送る挙動と、template 配置中の stroke 抑止を入れる
+  - Windows で FFmpeg runtime が見つからない場合の対処を UI に明示する
+- ユーザー観測の要点:
+  - template slot が固定幅前提で、文字幅と字間が不自然
+  - 傾き設定でも glyph 自体が直立したまま
+  - 読み込み済み font を dropdown から選べない
+  - transport が上部 toolbar に埋もれていて、再生/seek が見つけにくい
+  - `Ctrl-Z` / `Ctrl-Shift-Z` / `Ctrl-Y` が未接続
+  - object list / log panel の境界が drag resize できない
+  - Ctrl 修飾付き guide capture の後、Ctrl タップだけでは次文字用縦ガイドが進まない
+  - template 配置中でも drag すると stroke が始まる
+- sub-agent 回収結果:
+  - UI/操作系 sanity review:
+    - 再生/seek は既に toolbar に存在するが discoverability が弱い
+    - `Panel::*` は `.resizable(true)` を足すだけで drag resize 化できる
+    - Undo/Redo shortcut は `main.rs` だけで接続可能
+    - runtime 未検出案内は左ペインとランタイム診断へ寄せるのが自然
+  - template/font sanity review:
+    - slot 幅が `font_size * scale` 固定で、見えている glyph と box の大きさが不一致
+    - slope は slot の Y オフセットだけで、glyph そのものは回転していない
+    - `template.font_family` は UI に値があるだけで preview へ未反映
+- 今回の実装方針:
+  - `VA` のような pair kerning を殺さないため、1 grapheme ごとの独立計測ではなく line-level shaping を使って slot 位置を決める
+  - kana / latin / punctuation scale は保持しつつ、同一 scale の run ごとに shaping して kerning を温存する
+  - slope は baseline のずれだけでなく、glyph / slot box の回転にも反映する
+  - font dropdown は「システム既定 + 読み込み済み family」を候補にし、選択 family だけを egui に lazy 登録する
+  - guide の次文字縦線は horizontal guide を据えたまま、直前 object 幅に基づいて next-cell origin だけ送る
+
 ## 9. Export / profile メモ
 
 - 2026-04-05 に export profile の参照元を再確認した。
@@ -666,7 +716,7 @@
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in preset は base style 読み込みと適用が中心で、entrance / clear / combo preset の UI binding はまだ薄い。
-- Google Fonts は configured family 管理、portable cache、fetch、graceful failure まで実装済みだが、download 済み font binary を template preview へ厳密反映する部分は今後の改善余地がある。
+- Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。
 - `.pauseink` save は comment 保持を行わず canonical JSON へ正規化する。
