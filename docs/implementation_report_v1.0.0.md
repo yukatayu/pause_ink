@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 19 完了。`V1-09` 〜 `V1-13` の template/UI バッチを完了し、次候補は `V1-14 metrics-based template alignment`。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在のフェーズ: Phase 20 完了。`V1-14 metrics-based template alignment` を完了し、次候補は `V1-02 reveal-head effect`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -201,6 +201,18 @@
   - 結果: `Esc` は `復旧 -> テンプレート詳細 -> 設定 -> キャッシュ管理 -> ランタイム診断` の順で 1 window ずつ閉じ、window が無いときは template preview / placement と guide overlay / capture をまとめて解除するようになった。text edit focus 中は global cancel を奪わないままにしている。
   - 検証: `cargo test -p pauseink-app --bin pauseink-app escape_ -- --nocapture`、`cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`git diff --check`
   - 次の一手: `V1-14` として template の縦位置と縮小文字 alignment を font metrics ベースへ寄せる。
+- 2026-04-07T03:55:00+09:00
+  - 実施内容: `V1-14 metrics-based template alignment` の開始。plan と spec を再確認し、横幅は shaping 維持、縦だけ metrics 化する方針を固定した。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: `x-height / cap-height` が無い font でも fallback は「縮小文字を下揃え」に固定し、guide/grid や `.pauseink` save format には波及させない前提にした。sub-agent で最小変更点の sanity review も開始した。
+  - 次の一手: `pauseink-fonts` に metrics helper を足す前に、template_layout / app の failing test を追加して現状の縦揃え不足を固定する。
+- 2026-04-07T05:25:00+09:00
+  - 実施内容: `V1-14 metrics-based template alignment` を完了した。
+  - 変更ファイル: `crates/fonts/Cargo.toml`, `crates/fonts/src/lib.rs`, `crates/template_layout/src/lib.rs`, `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: `pauseink-fonts` に `ttf-parser` ベースの `load_font_vertical_metrics()` / `extract_font_vertical_metrics()` を追加し、`ascent / descent / x-height / capital height` を取得できるようにした。`pauseink-template-layout` には `template_slot_vertical_metrics()` を追加し、metrics が取れない場合でも縮小英字を line box の下側へ寄せる fallback を入れた。`pauseink-app` は template font ごとの metrics cache を持ち、配置済み / hover preview の slot `origin.y` と `height` を同 helper から計算するようにした。横方向は従来どおり `layout_template_line()` の shaping 幅を維持している。
+  - sub-agent: `Jason` が `template_slots_at_origin` / `draw_template_preview` / `pauseink-fonts` の最小変更点を整理し、guide/grid や save format に波及させない注意点を確認した。主戦場を `crates/app/src/main.rs` と `crates/fonts/src/lib.rs` に絞る判断に採用した。
+  - 検証: `cargo test -p pauseink-template-layout scaled_latin_without_metrics_is_bottom_aligned_in_line_box -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app template_slots_at_origin_bottom_aligns_scaled_latin_without_metrics -- --nocapture`、`cargo test -p pauseink-template-layout metrics_based_alignment_keeps_descender_letters_below_x_height_letters -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app template_slots_at_origin_ -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app template_layout_keeps_shaped_horizontal_advance_under_metrics_alignment -- --nocapture`、`cargo test -p pauseink-fonts extract_font_vertical_metrics_returns_none_for_invalid_bytes -- --nocapture`、`cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`
+  - 次の一手: commit / push して `develop` を最新化する。
 - 2026-04-06T00:00:00+09:00
   - 実施内容: paused batch preview / cross-object effect order / workspace 設定復元 / 再生中入力禁止の bugfix バッチを開始し、即時マイルストーンを更新した。
   - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`

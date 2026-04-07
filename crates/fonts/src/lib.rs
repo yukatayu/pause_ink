@@ -57,6 +57,15 @@ pub fn discover_local_font_families(extra_dirs: &[PathBuf]) -> Vec<String> {
 pub struct LoadedUiFont {
     pub family_name: String,
     pub bytes: Vec<u8>,
+    pub face_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontVerticalMetrics {
+    pub ascent_ratio: f32,
+    pub descent_ratio: f32,
+    pub x_height_ratio: Option<f32>,
+    pub cap_height_ratio: Option<f32>,
 }
 
 pub fn preferred_ui_font_families(configured_families: &[String]) -> Vec<String> {
@@ -120,6 +129,14 @@ pub fn load_font_family(extra_dirs: &[PathBuf], family_name: &str) -> Option<Loa
         .next()
 }
 
+pub fn load_font_vertical_metrics(
+    extra_dirs: &[PathBuf],
+    family_name: &str,
+) -> Option<FontVerticalMetrics> {
+    let loaded_font = load_font_family(extra_dirs, family_name)?;
+    extract_font_vertical_metrics(&loaded_font.bytes, loaded_font.face_index)
+}
+
 fn load_font_candidates_by_family_names(
     extra_dirs: &[PathBuf],
     family_names: &[String],
@@ -158,13 +175,16 @@ fn load_font_candidates_by_family_names(
         let Some(face_id) = database.query(&query) else {
             continue;
         };
-        let Some(bytes) = database.with_face_data(face_id, |data, _| data.to_vec()) else {
+        let Some((bytes, face_index)) =
+            database.with_face_data(face_id, |data, face_index| (data.to_vec(), face_index))
+        else {
             continue;
         };
 
         loaded.push(LoadedUiFont {
             family_name: family_name.to_owned(),
             bytes,
+            face_index,
         });
         if loaded.len() >= max_fonts {
             break;
@@ -172,6 +192,21 @@ fn load_font_candidates_by_family_names(
     }
 
     loaded
+}
+
+pub fn extract_font_vertical_metrics(bytes: &[u8], face_index: u32) -> Option<FontVerticalMetrics> {
+    let face = ttf_parser::Face::parse(bytes, face_index).ok()?;
+    let units_per_em = face.units_per_em() as f32;
+    if units_per_em <= f32::EPSILON {
+        return None;
+    }
+
+    Some(FontVerticalMetrics {
+        ascent_ratio: (face.ascender() as f32 / units_per_em).max(0.0),
+        descent_ratio: ((-(face.descender() as f32)).max(0.0)) / units_per_em,
+        x_height_ratio: normalize_metric(face.x_height(), units_per_em),
+        cap_height_ratio: normalize_metric(face.capital_height(), units_per_em),
+    })
 }
 
 #[derive(Debug, Error)]
@@ -250,6 +285,14 @@ fn slugify_family_name(family: &str) -> String {
     }
 
     slug.trim_matches('-').to_owned()
+}
+
+fn normalize_metric(metric: Option<i16>, units_per_em: f32) -> Option<f32> {
+    let value = metric? as f32;
+    if value <= 0.0 || units_per_em <= f32::EPSILON {
+        return None;
+    }
+    Some(value / units_per_em)
 }
 
 #[cfg(test)]
@@ -340,5 +383,10 @@ mod tests {
             .count();
         assert_eq!(noto_count, 1);
         assert!(families.iter().any(|family| family == "Yu Gothic UI"));
+    }
+
+    #[test]
+    fn extract_font_vertical_metrics_returns_none_for_invalid_bytes() {
+        assert!(extract_font_vertical_metrics(&[0, 1, 2, 3], 0).is_none());
     }
 }

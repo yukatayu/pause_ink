@@ -17,7 +17,7 @@ use pauseink_export::{
 };
 use pauseink_fonts::{
     discover_local_font_families, fetch_google_font_to_cache, google_font_cache_file,
-    google_font_is_cached, load_font_family, load_ui_font_candidates,
+    google_font_is_cached, load_font_family, load_font_vertical_metrics, load_ui_font_candidates,
 };
 use pauseink_media::{
     canvas_point_to_frame, default_platform_id, discover_runtime, fit_frame_to_canvas,
@@ -36,7 +36,8 @@ use pauseink_presets_core::{
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
     build_guide_geometry, guide_fallback_advance_step, guide_next_cell_origin_x,
-    template_grapheme_scale, GuideGeometry, GuideLineKind, GuidePlacement, Point, TemplateSettings,
+    template_grapheme_scale, template_slot_vertical_metrics, GuideGeometry, GuideLineKind,
+    GuidePlacement, Point, TemplateFontMetrics as TemplateSlotFontMetrics, TemplateSettings,
     UnderlayMode,
 };
 use serde::{Deserialize, Serialize};
@@ -930,6 +931,7 @@ struct DesktopApp {
     style_binding: StylePresetBindingState,
     entrance_binding: EntrancePresetBindingState,
     template: TemplatePreviewState,
+    template_font_metrics: Option<TemplateSlotFontMetrics>,
     export: ExportState,
     guide_state: Option<GuideOverlayState>,
     guide_capture_state: GuideCaptureState,
@@ -1055,6 +1057,7 @@ impl DesktopApp {
             style_binding: StylePresetBindingState::default(),
             entrance_binding: EntrancePresetBindingState::default(),
             template: TemplatePreviewState::default(),
+            template_font_metrics: None,
             export,
             guide_state: None,
             guide_capture_state: GuideCaptureState::default(),
@@ -1085,6 +1088,7 @@ impl DesktopApp {
             last_autosave_at: Instant::now(),
         };
         app.restore_app_ui_state_from_settings();
+        app.refresh_template_font_metrics();
         app
     }
 
@@ -1769,6 +1773,7 @@ impl DesktopApp {
 
         self.font_config_dirty = true;
         self.reset_template_slots();
+        self.refresh_template_font_metrics();
         self.refresh_bound_style_fields();
         self.refresh_bound_entrance_fields();
         self.refresh_guide_geometry();
@@ -1822,6 +1827,7 @@ impl DesktopApp {
 
         self.font_config_dirty = true;
         self.reset_template_slots();
+        self.refresh_template_font_metrics();
         self.refresh_bound_style_fields();
         self.refresh_bound_entrance_fields();
         self.refresh_guide_geometry();
@@ -1832,6 +1838,7 @@ impl DesktopApp {
     fn rebuild_local_font_families(&mut self) {
         self.local_font_families = discover_local_font_families(&self.available_font_dirs());
         self.sanitize_template_font_family("選択中のテンプレート font");
+        self.refresh_template_font_metrics();
         self.font_config_dirty = true;
     }
 
@@ -1854,6 +1861,7 @@ impl DesktopApp {
     fn sanitize_template_font_family(&mut self, reason_label: &str) -> bool {
         if self.template.font_family.trim().is_empty() {
             self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
+            self.refresh_template_font_metrics();
             return true;
         }
         if self.template_font_family_is_bound(&self.template.font_family) {
@@ -1862,10 +1870,33 @@ impl DesktopApp {
 
         let unavailable = self.template.font_family.clone();
         self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
+        self.refresh_template_font_metrics();
         self.push_log(format!(
             "{reason_label} `{unavailable}` が見つからないため、システム既定へ戻しました。"
         ));
         true
+    }
+
+    fn refresh_template_font_metrics(&mut self) {
+        let family = self.template.font_family.trim();
+        if family.is_empty() || family == SYSTEM_DEFAULT_FONT_FAMILY_LABEL {
+            self.template_font_metrics = None;
+            return;
+        }
+        if !self.template_font_family_is_bound(family) {
+            self.template_font_metrics = None;
+            return;
+        }
+
+        self.template_font_metrics =
+            load_font_vertical_metrics(&self.available_font_dirs(), family).map(|metrics| {
+                TemplateSlotFontMetrics {
+                    ascent_ratio: metrics.ascent_ratio,
+                    descent_ratio: metrics.descent_ratio,
+                    x_height_ratio: metrics.x_height_ratio,
+                    cap_height_ratio: metrics.cap_height_ratio,
+                }
+            });
     }
 
     fn try_apply_template_font_family(&mut self, ctx: &egui::Context, candidate: String) {
@@ -1887,6 +1918,7 @@ impl DesktopApp {
         }
 
         self.template.font_family = next_family;
+        self.refresh_template_font_metrics();
         self.font_config_dirty = true;
         self.maybe_apply_egui_fonts(ctx);
         self.apply_template_settings_change(ctx);
@@ -2009,23 +2041,32 @@ impl DesktopApp {
     ) -> Vec<pauseink_template_layout::TemplateSlot> {
         let mut slots = Vec::new();
         let slope = self.template.settings.slope_degrees.to_radians().tan();
-        let mut baseline_y = origin.y;
+        let mut line_top_y = origin.y;
 
         for line in self.template.text.split('\n') {
             for (index, layout) in self.layout_template_line(ctx, line).into_iter().enumerate() {
                 let slot_origin_x = origin.x
                     + layout.natural_start_x
                     + self.template.settings.tracking * index as f32;
+                let vertical = template_slot_vertical_metrics(
+                    &layout.grapheme,
+                    self.template.settings.font_size,
+                    layout.scale,
+                    self.template_font_metrics,
+                );
                 let slope_offset_y = -((slot_origin_x - origin.x) * slope);
                 slots.push(pauseink_template_layout::TemplateSlot {
                     grapheme: layout.grapheme,
-                    origin: Point::new(slot_origin_x, baseline_y + slope_offset_y),
+                    origin: Point::new(
+                        slot_origin_x,
+                        line_top_y + vertical.top_offset + slope_offset_y,
+                    ),
                     width: layout.width.max(12.0),
-                    height: (self.template.settings.font_size * layout.scale).max(12.0),
+                    height: vertical.height.max(12.0),
                     scale: layout.scale,
                 });
             }
-            baseline_y += self.template.settings.font_size * self.template.settings.line_height;
+            line_top_y += self.template.settings.font_size * self.template.settings.line_height;
         }
 
         slots
@@ -2112,6 +2153,7 @@ impl DesktopApp {
             return;
         };
 
+        self.refresh_template_font_metrics();
         let slots = self.template_slots_at_origin(ctx, origin);
         self.template.slot_object_ids.resize(slots.len(), None);
         self.template.current_slot_index = if slots.is_empty() {
@@ -7233,6 +7275,82 @@ mod tests {
 
         assert!(after[0].height > before[0].height);
         assert!(after[1].origin.y > before[1].origin.y);
+    }
+
+    #[test]
+    fn template_slots_at_origin_bottom_aligns_scaled_latin_without_metrics() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "A".to_owned();
+        app.template.settings.font_size = 100.0;
+        app.template.settings.latin_scale = 0.6;
+        app.template.settings.tracking = 0.0;
+
+        let slots = app.template_slots_at_origin(&ctx, Point::new(12.0, 24.0));
+
+        assert_eq!(slots.len(), 1);
+        assert!(
+            (slots[0].origin.y - 64.0).abs() < 0.01,
+            "app 側の template slot も fallback 下揃えを使うべき"
+        );
+        assert!((slots[0].height - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn template_slots_at_origin_uses_cached_metrics_for_descender_alignment() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "xy".to_owned();
+        app.template.settings.font_size = 100.0;
+        app.template.settings.latin_scale = 0.6;
+        app.template.settings.tracking = 0.0;
+        app.template_font_metrics = Some(TemplateSlotFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        });
+
+        let slots = app.template_slots_at_origin(&ctx, Point::new(12.0, 24.0));
+
+        assert_eq!(slots.len(), 2);
+        assert!((slots[0].origin.y - slots[1].origin.y).abs() < 0.01);
+        assert!(slots[1].height > slots[0].height);
+    }
+
+    #[test]
+    fn template_layout_keeps_shaped_horizontal_advance_under_metrics_alignment() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "VA".to_owned();
+        app.template.settings.font_size = 96.0;
+        app.template.settings.latin_scale = 0.85;
+        app.template.settings.tracking = 0.0;
+        app.template_font_metrics = Some(TemplateSlotFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        });
+
+        let slots = app.template_slots_at_origin(&ctx, Point::new(0.0, 0.0));
+        let naive_second_start =
+            app.template.settings.font_size * app.template.settings.latin_scale;
+
+        assert_eq!(slots.len(), 2);
+        assert!(
+            slots[1].origin.x < naive_second_start - 1.0,
+            "横方向は固定 advance ではなく shaping ベースの natural width を維持したい"
+        );
     }
 
     #[test]

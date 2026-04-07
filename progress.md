@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-13 Esc cancel for transient modes` を完了。次候補は `V1-14 metrics-based template alignment`。
+- 現在の即時マイルストーン: `V1-14 metrics-based template alignment` を完了。次候補は `V1-02 reveal-head effect`。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -30,6 +30,10 @@
   - `V1-13` を完了し、`Esc` は `復旧 -> テンプレート詳細 -> 設定 -> キャッシュ管理 -> ランタイム診断` の順で window を閉じ、window が無ければ template preview / guide overlay を解除するようにした
   - text edit focus 中は global `Esc` cancel を奪わないことを test で固定し、`cargo test -p pauseink-app --bin pauseink-app escape_ -- --nocapture` を green 化した
   - 仕上げ確認として `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`git diff --check` を再通過した
+  - `V1-14` に着手し、template の横幅は `egui` shaping のまま、縦位置だけ font metrics と fallback の下揃えで差し替える方針を再確認した
+  - `V1-14` を完了し、`pauseink-fonts` に `ttf-parser` ベースの vertical metrics 抽出を追加、`pauseink-template-layout` に vertical alignment helper を追加し、app 側の template slot も同じ helper を使うようにした
+  - metrics が無い family では縮小英字を下揃えし、metrics がある family では `x-height / cap-height / descender` を使って `x` と `y` のような差を template underlay に反映するようにした
+  - 仕上げ確認として `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過した
   - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls` へ絞り直し、slot fit を計画から外した
   - guide 字間は `cell_width` 比、負値許可、guide slope と同じ保存経路で固定した
   - template 詳細は左ペインへ詰め込まず別ポップアップ前提にし、変更がリアルタイムで preview / placed slot へ反映される設計へ更新した
