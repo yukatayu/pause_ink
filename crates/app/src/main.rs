@@ -1677,6 +1677,7 @@ impl DesktopApp {
             .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
         {
             editor_state.template.apply_to(&mut self.template);
+            self.sanitize_template_font_family("保存済みのテンプレート font");
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
             self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
             self.style_binding = editor_state.style_binding;
@@ -1732,6 +1733,7 @@ impl DesktopApp {
             .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
         {
             editor_state.template.apply_to(&mut self.template);
+            self.sanitize_template_font_family("保存済みのテンプレート font");
             self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
             self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
             self.style_binding = editor_state.style_binding;
@@ -1774,19 +1776,8 @@ impl DesktopApp {
     }
 
     fn rebuild_local_font_families(&mut self) {
-        let previous_selection = self.template.font_family.clone();
         self.local_font_families = discover_local_font_families(&self.available_font_dirs());
-        if previous_selection != SYSTEM_DEFAULT_FONT_FAMILY_LABEL
-            && !self
-                .local_font_families
-                .iter()
-                .any(|family| family == &previous_selection)
-        {
-            self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
-            self.push_log(format!(
-                "選択中のテンプレート font `{previous_selection}` が見つからないため、システム既定へ戻しました。"
-            ));
-        }
+        self.sanitize_template_font_family("選択中のテンプレート font");
         self.font_config_dirty = true;
     }
 
@@ -1796,7 +1787,62 @@ impl DesktopApp {
         font_dirs
     }
 
+    fn template_font_family_is_bound(&self, family: &str) -> bool {
+        let family = family.trim();
+        family.is_empty()
+            || family == SYSTEM_DEFAULT_FONT_FAMILY_LABEL
+            || self
+                .local_font_families
+                .iter()
+                .any(|candidate| candidate == family)
+    }
+
+    fn sanitize_template_font_family(&mut self, reason_label: &str) -> bool {
+        if self.template.font_family.trim().is_empty() {
+            self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
+            return true;
+        }
+        if self.template_font_family_is_bound(&self.template.font_family) {
+            return false;
+        }
+
+        let unavailable = self.template.font_family.clone();
+        self.template.font_family = SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned();
+        self.push_log(format!(
+            "{reason_label} `{unavailable}` が見つからないため、システム既定へ戻しました。"
+        ));
+        true
+    }
+
+    fn try_apply_template_font_family(&mut self, ctx: &egui::Context, candidate: String) {
+        let next_family = if candidate.trim().is_empty() {
+            SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned()
+        } else {
+            candidate
+        };
+        if next_family == self.template.font_family {
+            return;
+        }
+        if next_family != SYSTEM_DEFAULT_FONT_FAMILY_LABEL
+            && load_font_family(&self.available_font_dirs(), &next_family).is_none()
+        {
+            self.push_log(format!(
+                "テンプレート font `{next_family}` が見つからないため、変更しませんでした。"
+            ));
+            return;
+        }
+
+        self.template.font_family = next_family;
+        self.font_config_dirty = true;
+        self.maybe_apply_egui_fonts(ctx);
+        self.apply_template_settings_change(ctx);
+    }
+
     fn maybe_apply_egui_fonts(&mut self, ctx: &egui::Context) {
+        let template_font_changed = self.sanitize_template_font_family("選択中のテンプレート font");
+        if template_font_changed && self.template.placed_origin.is_some() {
+            self.refresh_placed_template_slots(ctx);
+        }
         if !self.font_config_dirty {
             return;
         }
@@ -1810,7 +1856,9 @@ impl DesktopApp {
     }
 
     fn template_font_id(&self, size: f32) -> egui::FontId {
-        if self.template.font_family == SYSTEM_DEFAULT_FONT_FAMILY_LABEL {
+        if !self.template_font_family_is_bound(&self.template.font_family)
+            || self.template.font_family == SYSTEM_DEFAULT_FONT_FAMILY_LABEL
+        {
             egui::FontId::proportional(size)
         } else {
             egui::FontId::new(
@@ -3901,10 +3949,7 @@ impl DesktopApp {
                 }
             });
         if selected_template_font != self.template.font_family {
-            self.template.font_family = selected_template_font;
-            self.font_config_dirty = true;
-            self.maybe_apply_egui_fonts(ui.ctx());
-            template_layout_changed = true;
+            self.try_apply_template_font_family(ui.ctx(), selected_template_font);
         }
         template_layout_changed |= ui
             .add(
@@ -5791,6 +5836,13 @@ mod tests {
         );
     }
 
+    fn selectable_template_font_for_tests(app: &DesktopApp) -> String {
+        app.local_font_families
+            .first()
+            .cloned()
+            .unwrap_or_else(|| SYSTEM_DEFAULT_FONT_FAMILY_LABEL.to_owned())
+    }
+
     #[test]
     fn preview_pointer_roundtrips_through_frame_space_mapping() {
         let frame_rect = Rect::from_min_size(Pos2::new(50.0, 75.0), Vec2::new(640.0, 360.0));
@@ -5859,6 +5911,7 @@ mod tests {
         let path = temp_dir.path().join("stateful-project.pauseink");
 
         let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        let template_font_family = selectable_template_font_for_tests(&app);
         app.selected_style_preset_id = "marker_highlight".to_owned();
         app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
         app.session.active_style.thickness = 13.0;
@@ -5873,7 +5926,7 @@ mod tests {
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
         app.template.text = "保存対象".to_owned();
-        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.font_family = template_font_family.clone();
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
         app.template.settings.line_height = 1.45;
@@ -5917,7 +5970,7 @@ mod tests {
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
         assert_eq!(reopened.template.text, "保存対象");
-        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert_eq!(reopened.template.font_family, template_font_family);
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
         assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
@@ -5940,6 +5993,7 @@ mod tests {
         portable_paths.ensure_exists().expect("portable dirs");
 
         let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        let template_font_family = selectable_template_font_for_tests(&app);
         app.selected_style_preset_id = "marker_highlight".to_owned();
         app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
         app.session.active_style.thickness = 13.0;
@@ -5958,7 +6012,7 @@ mod tests {
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
         app.template.text = "次回起動復元".to_owned();
-        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.font_family = template_font_family.clone();
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
         app.template.settings.line_height = 1.45;
@@ -6005,7 +6059,7 @@ mod tests {
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
         assert_eq!(reopened.template.text, "次回起動復元");
-        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert_eq!(reopened.template.font_family, template_font_family);
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
         assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
@@ -6170,6 +6224,7 @@ mod tests {
         portable_paths.ensure_exists().expect("portable dirs");
 
         let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        let template_font_family = selectable_template_font_for_tests(&app);
         app.selected_style_preset_id = "marker_highlight".to_owned();
         app.session.active_style.color = pauseink_domain::RgbaColor::new(250, 180, 32, 255);
         app.session.active_style.thickness = 15.0;
@@ -6184,7 +6239,7 @@ mod tests {
         app.session.active_style.glow.blur_radius = 9.0;
         app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
         app.session.active_entrance.speed_scalar = 1.8;
-        app.template.font_family = "BIZ UDPGothic".to_owned();
+        app.template.font_family = template_font_family.clone();
         app.template.text = "再起動復元".to_owned();
         app.template.settings.font_size = 132.0;
         app.template.settings.tracking = 10.0;
@@ -6209,7 +6264,7 @@ mod tests {
             pauseink_domain::EntranceKind::PathTrace
         );
         assert!((reopened.session.active_entrance.speed_scalar - 1.8).abs() < 0.001);
-        assert_eq!(reopened.template.font_family, "BIZ UDPGothic");
+        assert_eq!(reopened.template.font_family, template_font_family);
         assert_eq!(reopened.template.text, "再起動復元");
         assert!((reopened.template.settings.font_size - 132.0).abs() < 0.001);
         assert!((reopened.template.settings.slope_degrees - 8.0).abs() < 0.001);
@@ -6952,6 +7007,55 @@ mod tests {
 
         assert!(after[0].height > before[0].height);
         assert!(after[1].origin.y > before[1].origin.y);
+    }
+
+    #[test]
+    fn missing_template_font_falls_back_to_default_without_panicking() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "AB".to_owned();
+        app.template.font_family = "PauseInk Missing Font".to_owned();
+        app.template.placed_origin = Some(Point::new(24.0, 36.0));
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.maybe_apply_egui_fonts(&ctx);
+            app.refresh_placed_template_slots(&ctx);
+        }));
+
+        assert!(
+            result.is_ok(),
+            "未発見 family を restored state が持っていても reflow で panic してはいけない"
+        );
+        assert_eq!(app.template.font_family, SYSTEM_DEFAULT_FONT_FAMILY_LABEL);
+        assert!(
+            app.template.placed_slots.is_some(),
+            "fallback 後も template slot を再計算できる必要がある"
+        );
+    }
+
+    #[test]
+    fn invalid_template_font_selection_keeps_previous_family() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "AB".to_owned();
+        app.template.placed_origin = Some(Point::new(24.0, 36.0));
+        app.refresh_placed_template_slots(&ctx);
+
+        app.try_apply_template_font_family(&ctx, "PauseInk Missing Font".to_owned());
+
+        assert_eq!(app.template.font_family, SYSTEM_DEFAULT_FONT_FAMILY_LABEL);
+        assert!(
+            app.logs
+                .iter()
+                .any(|line| line.contains("変更しませんでした")),
+            "dropdown 選択失敗は log に残したい"
+        );
     }
 
     #[test]

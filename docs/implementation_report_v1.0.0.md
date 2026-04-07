@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了済み。計画見直しで template/UI 系の追加 task `V1-09` 〜 `V1-14` を起票し、次候補は `V1-09 template font switch crash fix`。
+- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了済み。template/UI 系の追加 task `V1-09` 〜 `V1-13` をこのバッチで順に実装中で、現在は `V1-09` を完了し、`V1-10 multiline template editor UI` に着手した。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -171,6 +171,12 @@
 
 ## 5. 作業ログ
 
+- 2026-04-07T00:35:00+09:00
+  - 実施内容: `V1-09 template font switch crash fix` を TDD で実装し、template 表示中の font 切替 crash を修正した。
+  - 変更ファイル: `crates/app/src/main.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: `template_font_id()` に未 bind family fallback を追加し、dropdown 適用 / restore / frame-start の 3 経路を `sanitize_template_font_family` / `try_apply_template_font_family` に寄せた。未発見 family を含む project/settings でも preview / reflow が panic せず `システム既定` に落ちるようになり、invalid selection は current family を保持したまま log へ記録されるようになった。
+  - 検証: `cargo test -p pauseink-app missing_template_font_ -- --nocapture`、`cargo test -p pauseink-app invalid_template_font_selection_keeps_previous_family -- --nocapture`、`cargo check -p pauseink-app --all-targets`
+  - 次の一手: `V1-10` として template text input を multiline + 高さ可変にし、engine 側で既に持っている改行対応を UI から使えるようにする。
 - 2026-04-06T00:00:00+09:00
   - 実施内容: paused batch preview / cross-object effect order / workspace 設定復元 / 再生中入力禁止の bugfix バッチを開始し、即時マイルストーンを更新した。
   - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
