@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-09` を完了し、次の `V1-10 multiline template editor UI` に着手する。
+- 現在の即時マイルストーン: `V1-10` を完了し、次の `V1-11 panel-aware wide controls` に着手する。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -145,6 +145,9 @@
   - `V1-09` を完了し、template font dropdown / restore / frame-start の 3 経路に安全化を入れて、未発見 family を持つ project/settings があっても preview / reflow で panic せず `システム既定` へ fallback するようにした
   - template 表示中に無効な font family へ切り替えようとしても現在の family を維持し、log に理由を残すようにした
   - `cargo test -p pauseink-app missing_template_font_ -- --nocapture`、`cargo test -p pauseink-app invalid_template_font_selection_keeps_previous_family -- --nocapture`、`cargo check -p pauseink-app --all-targets` を通過
+  - `V1-10` を完了し、template text input を multiline 化して `Enter` 改行を有効化し、右下ドラッグで高さを変えられる editor へ置き換えた
+  - template text editor の高さは `settings.json5` の app-only `editor_ui_state` にだけ保存し、`.pauseink` reopen では漏れず、workspace relaunch では復元されるようにした
+  - `cargo test -p pauseink-app --bin pauseink-app save_ -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app restore_app_ui_state_accepts_legacy_editor_ui_payload_without_height -- --nocapture`、`cargo check -p pauseink-app --all-targets` を通過
   - 今回の確認として `cargo test -p pauseink-media windows_media_commands_use_hidden_process_helper -- --nocapture`、`cargo test -p pauseink-export windows_export_commands_use_hidden_process_helper -- --nocapture`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`python3 -m unittest scripts/package_release_asset_test.py`、`rg -n "Command::new\\(" crates/media/src/lib.rs crates/export/src/lib.rs`、`python3 scripts/package_release_asset.py --binary target/debug/pauseink-app --platform linux-x86_64 --version dev-smoke --format tar.gz --output-dir <temp>`、`tar -tzf <artifact>` を通し、production 側の child process spawn が helper へ集約され、archive 内に `README.md` と `presets/style_presets` / `presets/export_profiles` が入ることを確認した
   - Linux host では `/usr/bin/ffmpeg`、`/usr/bin/ffprobe`、`ffmpeg 6.1.1-3ubuntu5` を実確認した
   - `cargo test -p pauseink-template-layout`、`cargo test -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`cargo build -p pauseink-app` を通過

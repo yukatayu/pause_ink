@@ -45,9 +45,19 @@ use unicode_segmentation::UnicodeSegmentation;
 
 const SYSTEM_DEFAULT_FONT_FAMILY_LABEL: &str = "システム既定";
 const DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH: f32 = 1400.0;
+const DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 72.0;
+const MIN_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 48.0;
+const MAX_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 260.0;
 const PROJECT_EDITOR_UI_SETTINGS_KEY: &str = "pauseink_editor_ui";
 const PROJECT_BASE_STYLE_PRESET_KEY: &str = "base_style";
 const PROJECT_ENTRANCE_PRESET_KEY: &str = "entrance";
+
+fn clamp_template_text_editor_height(height: f32) -> f32 {
+    height.clamp(
+        MIN_TEMPLATE_TEXT_EDITOR_HEIGHT,
+        MAX_TEMPLATE_TEXT_EDITOR_HEIGHT,
+    )
+}
 
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
@@ -275,6 +285,42 @@ impl ProjectEditorUiState {
             style_binding: app.style_binding.clone(),
             entrance_binding: app.entrance_binding.clone(),
         }
+    }
+
+    fn apply_to_app(self, app: &mut DesktopApp) {
+        self.template.apply_to(&mut app.template);
+        app.sanitize_template_font_family("保存済みのテンプレート font");
+        app.settings.guide_slope_degrees = self.guide_slope_degrees;
+        app.settings.guide_next_gap_ratio = self.guide_next_gap_ratio;
+        app.style_binding = self.style_binding;
+        app.entrance_binding = self.entrance_binding;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceEditorUiState {
+    #[serde(flatten)]
+    project_ui: ProjectEditorUiState,
+    #[serde(default = "workspace_template_text_editor_height_default")]
+    template_text_editor_height: f32,
+}
+
+fn workspace_template_text_editor_height_default() -> f32 {
+    DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT
+}
+
+impl WorkspaceEditorUiState {
+    fn capture(app: &DesktopApp) -> Self {
+        Self {
+            project_ui: ProjectEditorUiState::capture(app),
+            template_text_editor_height: app.template_text_editor_height,
+        }
+    }
+
+    fn apply_to_app(self, app: &mut DesktopApp) {
+        self.project_ui.apply_to_app(app);
+        app.template_text_editor_height =
+            clamp_template_text_editor_height(self.template_text_editor_height);
     }
 }
 
@@ -910,6 +956,7 @@ struct DesktopApp {
     font_config_dirty: bool,
     google_font_input: String,
     pending_export: Option<PendingExportJob>,
+    template_text_editor_height: f32,
     last_update_at: Instant,
     last_autosave_at: Instant,
 }
@@ -1025,6 +1072,7 @@ impl DesktopApp {
             font_config_dirty: true,
             google_font_input: String::new(),
             pending_export: None,
+            template_text_editor_height: DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT,
             last_update_at: Instant::now(),
             last_autosave_at: Instant::now(),
         };
@@ -1653,7 +1701,7 @@ impl DesktopApp {
 
     fn persist_app_ui_state_into_settings(&mut self) {
         self.settings.editor_ui_state = Some(
-            serde_json::to_value(ProjectEditorUiState::capture(self))
+            serde_json::to_value(WorkspaceEditorUiState::capture(self))
                 .expect("settings editor ui state should serialize"),
         );
         self.settings.base_style_state = Some(
@@ -1676,12 +1724,7 @@ impl DesktopApp {
             .cloned()
             .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
         {
-            editor_state.template.apply_to(&mut self.template);
-            self.sanitize_template_font_family("保存済みのテンプレート font");
-            self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
-            self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
-            self.style_binding = editor_state.style_binding;
-            self.entrance_binding = editor_state.entrance_binding;
+            editor_state.apply_to_app(self);
         }
 
         if let Some(base_style_state) = self
@@ -1730,14 +1773,17 @@ impl DesktopApp {
             .settings
             .editor_ui_state
             .clone()
+            .and_then(|value| serde_json::from_value::<WorkspaceEditorUiState>(value).ok())
+        {
+            editor_state.apply_to_app(self);
+        } else if let Some(editor_state) = self
+            .settings
+            .editor_ui_state
+            .clone()
             .and_then(|value| serde_json::from_value::<ProjectEditorUiState>(value).ok())
         {
-            editor_state.template.apply_to(&mut self.template);
-            self.sanitize_template_font_family("保存済みのテンプレート font");
-            self.settings.guide_slope_degrees = editor_state.guide_slope_degrees;
-            self.settings.guide_next_gap_ratio = editor_state.guide_next_gap_ratio;
-            self.style_binding = editor_state.style_binding;
-            self.entrance_binding = editor_state.entrance_binding;
+            editor_state.apply_to_app(self);
+            self.template_text_editor_height = DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT;
         }
 
         if let Some(base_style_state) = self
@@ -2083,6 +2129,59 @@ impl DesktopApp {
     fn apply_template_settings_change(&mut self, ctx: &egui::Context) {
         self.mark_project_ui_dirty();
         self.refresh_placed_template_slots(ctx);
+    }
+
+    fn draw_template_text_editor(&mut self, ui: &mut egui::Ui) -> bool {
+        self.template_text_editor_height =
+            clamp_template_text_editor_height(self.template_text_editor_height);
+        let response = ui.add_sized(
+            [
+                ui.available_width().max(120.0),
+                self.template_text_editor_height,
+            ],
+            egui::TextEdit::multiline(&mut self.template.text)
+                .desired_width(f32::INFINITY)
+                .desired_rows(2)
+                .hint_text("テンプレート文字列。Enter で改行できます。"),
+        );
+
+        let handle_size = 14.0;
+        let handle_rect = Rect::from_min_max(
+            Pos2::new(
+                response.rect.right() - handle_size,
+                response.rect.bottom() - handle_size,
+            ),
+            response.rect.right_bottom(),
+        );
+        let handle_response = ui.interact(
+            handle_rect,
+            ui.id().with("template_text_editor_resize_handle"),
+            Sense::drag(),
+        );
+        if handle_response.hovered() || handle_response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeSouthEast);
+        }
+        if handle_response.dragged() {
+            let delta_y = ui.ctx().input(|input| input.pointer.delta().y);
+            if delta_y.abs() > f32::EPSILON {
+                self.template_text_editor_height =
+                    clamp_template_text_editor_height(self.template_text_editor_height + delta_y);
+            }
+        }
+
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        let painter = ui.painter();
+        for inset in [2.0, 6.0, 10.0] {
+            painter.line_segment(
+                [
+                    Pos2::new(handle_rect.right() - inset, handle_rect.bottom()),
+                    Pos2::new(handle_rect.right(), handle_rect.bottom() - inset),
+                ],
+                stroke,
+            );
+        }
+
+        response.changed()
     }
 
     fn draw_template_details_window(&mut self, ctx: &egui::Context) {
@@ -3936,8 +4035,7 @@ impl DesktopApp {
 
     fn draw_left_panel_scroll_body(&mut self, ui: &mut egui::Ui) {
         ui.heading("テンプレート");
-        let mut template_layout_changed =
-            ui.text_edit_singleline(&mut self.template.text).changed();
+        let mut template_layout_changed = self.draw_template_text_editor(ui);
         let mut selected_template_font = self.template.font_family.clone();
         egui::ComboBox::from_label("テンプレート font")
             .selected_text(&selected_template_font)
@@ -5925,8 +6023,9 @@ mod tests {
             pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
-        app.template.text = "保存対象".to_owned();
+        app.template.text = "保存\n対象".to_owned();
         app.template.font_family = template_font_family.clone();
+        app.template_text_editor_height = 148.0;
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
         app.template.settings.line_height = 1.45;
@@ -5969,8 +6068,12 @@ mod tests {
             900
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
-        assert_eq!(reopened.template.text, "保存対象");
+        assert_eq!(reopened.template.text, "保存\n対象");
         assert_eq!(reopened.template.font_family, template_font_family);
+        assert_eq!(
+            reopened.template_text_editor_height, DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT,
+            "project reopen では workspace 専用の editor height を復元しない"
+        );
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
         assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
@@ -6011,8 +6114,9 @@ mod tests {
             pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
-        app.template.text = "次回起動復元".to_owned();
+        app.template.text = "次回\n起動復元".to_owned();
         app.template.font_family = template_font_family.clone();
+        app.template_text_editor_height = 132.0;
         app.template.settings.font_size = 128.0;
         app.template.settings.tracking = 12.0;
         app.template.settings.line_height = 1.45;
@@ -6058,8 +6162,9 @@ mod tests {
             900
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
-        assert_eq!(reopened.template.text, "次回起動復元");
+        assert_eq!(reopened.template.text, "次回\n起動復元");
         assert_eq!(reopened.template.font_family, template_font_family);
+        assert!((reopened.template_text_editor_height - 132.0).abs() < 0.01);
         assert!((reopened.template.settings.font_size - 128.0).abs() < 0.01);
         assert!((reopened.template.settings.tracking - 12.0).abs() < 0.01);
         assert!((reopened.template.settings.line_height - 1.45).abs() < 0.01);
@@ -6240,7 +6345,8 @@ mod tests {
         app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
         app.session.active_entrance.speed_scalar = 1.8;
         app.template.font_family = template_font_family.clone();
-        app.template.text = "再起動復元".to_owned();
+        app.template.text = "再起動\n復元".to_owned();
+        app.template_text_editor_height = 156.0;
         app.template.settings.font_size = 132.0;
         app.template.settings.tracking = 10.0;
         app.template.settings.slope_degrees = 8.0;
@@ -6265,10 +6371,33 @@ mod tests {
         );
         assert!((reopened.session.active_entrance.speed_scalar - 1.8).abs() < 0.001);
         assert_eq!(reopened.template.font_family, template_font_family);
-        assert_eq!(reopened.template.text, "再起動復元");
+        assert_eq!(reopened.template.text, "再起動\n復元");
+        assert!((reopened.template_text_editor_height - 156.0).abs() < 0.01);
         assert!((reopened.template.settings.font_size - 132.0).abs() < 0.001);
         assert!((reopened.template.settings.slope_degrees - 8.0).abs() < 0.001);
         assert!((reopened.settings.guide_slope_degrees - -4.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn restore_app_ui_state_accepts_legacy_editor_ui_payload_without_height() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+        app.template.text = "旧形式".to_owned();
+        app.template.settings.font_size = 144.0;
+        app.settings.editor_ui_state =
+            Some(serde_json::to_value(ProjectEditorUiState::capture(&app)).expect("serialize"));
+
+        let reopened = DesktopApp::new(portable_paths, app.settings, None, None);
+
+        assert_eq!(reopened.template.text, "旧形式");
+        assert!((reopened.template.settings.font_size - 144.0).abs() < 0.01);
+        assert_eq!(
+            reopened.template_text_editor_height, DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT,
+            "旧 settings payload からでも multiline editor height は既定値へ落ちるべき"
+        );
     }
 
     #[test]
