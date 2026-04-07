@@ -89,17 +89,18 @@
 | FUT-06 | optional codec-pack 取得ツール | provenance / compliance が mainline と別問題のため |
 | FUT-07 | effect scripting | v1.0 は built-in effect + declarative preset に限定 |
 | FUT-08 | object 選択時の preview/canvas ハイライト | 視認性と編集導線には有用だが、誤って常時強い装飾を出すと preview のデザイン可読性を壊しやすいため |
+| FUT-09 | Premiere Pro 風の統合 timeline | seek bar、object/page event、将来の track 編集を 1 本の timeline へ寄せる大規模 UI で、v1.0 の範囲を超えるため |
 
 ## 2. 依存関係マップ
 
 | Task ID | タイトル | 依存 | 目的の要点 |
 |---|---|---|---|
 | V1-01 | preset 境界の正規化 | なし | style / entrance / clear / combo を分け、reset / inherit を扱える editor state を入れる |
-| V1-02 | reveal-head effect | V1-01 | head effect を renderer / preview / export / preset に接続する |
+| V1-02 | reveal hot-trail accent effect | V1-01 | 再生 / export 中の recent visible segment に accent を乗せる |
 | V1-03 | post-action chain | V1-01 | built-in post-action を renderer / UI / project に接続する |
 | V1-04 | clear effect / clear preset / combo preset | V1-01 | clear kind / ordering / granularity を UI と renderer で完結させる |
 | V1-05 | selection / group / z-order foundation | なし | multi-select, group, ungroup, z-order の command と UI を入れる |
-| V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
+| V1-06 | object outline / page events panel 強化 | V1-04, V1-05, V1-16 | page-first tree、batch edit、現在生存中表示、auto-follow を揃える |
 | V1-07 | template / guide advanced controls | なし | template 詳細設定を別ポップアップへ逃がし、guide の次文字字間調整を UI に露出する |
 | V1-08 | side panel scroll / overflow hardening | なし | 左右ペインを縦スクロール対応にし、項目増加でも画面外へはみ出さないようにする |
 | V1-09 | template font switch crash fix | なし | template 表示中の font 切替を fail-safe にしてクラッシュを止める |
@@ -108,23 +109,22 @@
 | V1-12 | template slot UI removal | V1-11 | template 側に露出している slot 概念を引っ込め、前後ボタンと current slot 強調を削除する |
 | V1-13 | `Esc` cancel for transient modes | なし | template 配置 / guide を keyboard から安全に解除できるようにする |
 | V1-14 | metrics-based template alignment | V1-10 | template の縦位置と小文字揃えを font metrics ベースへ寄せつつ、横幅は kerning を壊さない shaping ベースを維持する |
-| PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
+| V1-15 | gradient color / coordinate space / repeat | なし | 線色を単色だけでなく gradient にし、stroke/object/canvas 基準や繰り返し幅を扱えるようにする |
+| V1-16 | flat auto-group semantics / merge grouping | V1-05 | 同じ page 内の連続筆記を flat な group として扱い、group 同士の group 化は入れ子でなく merge にする |
+| PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout と provenance を整えつつ best-capable runtime を選べるようにする |
 | PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 既存 release workflow を sidecar / notices 同梱の完成形へ引き上げる |
-| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-10, V1-11, V1-12, V1-13, V1-14, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
+| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-10, V1-11, V1-12, V1-13, V1-14, V1-15, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
 
 ## 3. 実装対象の現状スナップショット
 
-- `reveal-head effect` は `crates/domain/src/annotations.rs` に型だけあるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
+- `reveal hot-trail accent` は domain に型があるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
 - `post-action chain` も domain に型だけあり、app / renderer / preset へ未接続。
 - clear event は domain と renderer に最小 primitive があるが、app 側は `全消去 -> Instant clear 挿入` のみで、`kind / duration / granularity / ordering` の編集 UI と preset 導線が無い。
-- `V1-01`, `V1-05`, `V1-07`, `V1-08` は develop で完了済み。以後の未着手はそれ以外の task に限る。
-- template の横幅は `egui` shaping ベースで取れているが、縦位置は `baseline_y + font_size * scale` 近辺の簡易モデルで、`ascent / descent / x-height / cap-height` を見ていない。
-- template engine 自体は `\n` を解釈できるが、左ペインの入力欄は single-line なので GUI から改行を入れられない。
-- seek bar や template 文字入力欄は panel 幅へ十分に追従しておらず、横幅が余っても入力領域が伸びない箇所がある。
-- `前スロット / 次スロット` は現在 slot index を手動補正するだけで、slot の意味自体が UI 上で説明されていない。
-- current slot の強調表示も、template を順番になぞる利用者には不要な UI 概念になっている。
-- template 表示中に font family を切り替えると crash する報告があり、font 適用タイミングと placed slot 再計算の境界を見直す必要がある。
-- `Esc` で template 配置や guide を解除する shortcut はまだ無い。
+- `V1-01`, `V1-05`, `V1-07`〜`V1-14` は develop で完了済み。以後の未着手は `V1-02`, `V1-03`, `V1-04`, `V1-06`, `V1-15`, `V1-16`, `PKG-*`, `QA-01` が中心。
+- outline panel は flat list のままで、page-first tree、alive highlight、auto-follow、page events 強化はまだ入っていない。
+- group は explicit 操作でしか作られず、「同じ page で連続して書いたまとまり」を flat group として扱う規則は未実装。
+- gradient color は未実装で、base style は単色前提のまま。
+- sidecar runtime の packaging / provenance は未完了で、runtime 選択も `best-capable runtime` policy まで固まっていない。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 - GitHub Release workflow は app binary archive の build/upload までは済んでいるが、sidecar / notices / manifest 同梱は未完了。
 
@@ -139,7 +139,7 @@
 | V1-03 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/domain` の group/order test、`crates/renderer` の reveal sequence test |
 | V1-04 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/domain` の clear semantics test、`crates/renderer` の clear test、`crates/app` の page event UI test |
 | V1-05 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/domain/src/project_commands.rs` と `crates/app` の selection/undo 系 test |
-| V1-06 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | bottom panel / object list / page event の UI test、run 導出 helper の test |
+| V1-06 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | bottom panel / object list / page event の UI test、page/group/object tree view model の test |
 | V1-07 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/template_layout` と `crates/app` の template save/restore / guide geometry test |
 | V1-08 | `.docs/03_ui_window_model.md`, `.docs/10_testing_and_done_criteria.md` | `crates/app/src/main.rs` の bottom panel / layout 系 test、panel 幅と canvas 安定性の test |
 | V1-09 | `.docs/03_ui_window_model.md`, `.docs/13_risk_register.md` | `crates/app/src/main.rs` の template placement / font restore test、font reload 周りの helper |
@@ -148,6 +148,8 @@
 | V1-12 | `.docs/03_ui_window_model.md`, `.docs/02_final_spec_v1.0.0.md` | template placement UI test、current-slot highlight 削除後の preview test、guide 非回帰 test |
 | V1-13 | `.docs/03_ui_window_model.md`, `.docs/02_final_spec_v1.0.0.md` | keyboard shortcut 処理、guide/template の transient state test |
 | V1-14 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/template_layout`, `crates/fonts`, `crates/app` の template slot / shaping / save-restore test |
+| V1-15 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/domain` の style schema、`crates/renderer` の color/effect test、`crates/app` の preset/save-restore test |
+| V1-16 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/app` の group/undo/save-load test、`crates/domain` の membership command test |
 | PKG-01 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/13_risk_register.md` | `crates/media` の runtime discovery test、`scripts/package_release_asset.py` の archive test |
 | PKG-02 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/10_testing_and_done_criteria.md` | workflow YAML parse、packager script の dry-run |
 | QA-01 | `.docs/10_testing_and_done_criteria.md`, `.docs/13_risk_register.md` | 現在の workspace test、host export smoke、既知制約一覧 |
@@ -231,39 +233,45 @@
 - UI から field 単位に inherit / override / reset ができる
 - 既存 project と既存 style preset を壊さない
 
-### V1-02: reveal-head effect
+### V1-02: reveal hot-trail accent effect
 
 **優先度:** P0
 **依存:** V1-01
-**ひとことで言うと:** なぞり書きの「今どこまで進んだか」を見やすくする先頭ハイライト演出を入れる task。
+**ひとことで言うと:** 再生 / export 中の「書かれた直後のインク」を発光させ、先端付近に気持ちよい熱量を足す task。
 
-**目的:** spec 5.3 の `none / solid / glow / comet-tail` を preview/export で正しく見せ、preset と project 保存に接続する。
+**目的:** timed entrance の先端付近に、design-first な optional accent を付ける。preview / export で同じ見え方にし、preset / project 保存へ接続する。
 
 **具体的に困る場面**
 
-- 利用者が path trace の書き順を見せたくて head effect を想定しても、今は線の先頭が視認しづらく、動画で「どこまで書けたか」が分かりにくい。
-- 開発者目線では、head effect を static style として入れてしまうと、outline / glow / clear との前後関係を後から全部やり直すことになる。
+- 利用者が「書いた瞬間だけ少し白っぽく光る」「先端付近だけ熱を持ったように見える」動画にしたくても、今は timed entrance が素の線の出現しか持たず、演出が平坦に見える。
+- 先端を単なる発光点にすると、`いまインクが乗った部分` と `光っている部分` の境界が硬く見え、安っぽくなりやすい。
+- 開発者目線では、これを static style として入れると、outline / glow / clear / gradient との前後関係を後から全部やり直すことになる。
 
 **現状の問題**
 
-- domain には `RevealHeadEffect` があるが、renderer は path front に head を描いていない。
-- inspector に head effect editor が無い。
-- preset / project restore / export smoke が head effect を検証していない。
+- domain には `RevealHeadEffect` があるが、renderer は `visible path front` 近傍を再解釈して描いていない。
+- inspector に、drop shadow のように「使いたい人だけ有効化する」accent editor が無い。
+- preset / project restore / export smoke が accent を検証していない。
 
 **設計**
 
-- head effect は static style ではなく entrance 評価の副生成物として扱う。
-- renderer で timed entrance を評価したあと、`visible path front` と `progress` から head overlay を計算する。
-- `solid` は塗りつぶし円/楕円、`glow` は blur 付き halo、`comet_tail` は進行方向へ減衰する trail を描く。
-- `color_source` は `stroke_color`, `preset_accent`, `custom` の 3 系統で解決する。
-- `persistence` は reveal 完了後の残留時間として扱い、preview/export 双方で同じ式を使う。
+- accent は static style ではなく entrance 評価の副生成物として扱う。paused editor の静止表示では常時出さず、再生中 / export 中の timed entrance にだけ乗せる。
+- 「光る点」を別に足すのではなく、`先端から少し後ろまでの短い可視 path 区間` を再描画する。
+  - `hot core`: base ink より少し白寄せ・少し太め
+  - `bloom halo`: その外側へ柔らかい glow
+- `hot core` と `bloom halo` は、path front からの距離で `smoothstep` 系の減衰をかける。これにより「今インクが乗っている部分」と「光っている部分」の境界をぼかし、段差感を消す。
+- `style` は `soft glow / neon ink / comet trail / custom` を基本にし、UI では `無効 / preset / custom` で切り替える。
+- `color_source` は `ink`, `accent`, `custom` の 3 系統で解決する。
+- `persistence` は reveal 完了後の短い残留時間として扱う。長すぎる尾は v1.0 では避ける。
+- 描画順は `shadow / glow / outline / base / hot core / bloom halo` を固定する。
 
 **着手前に決めるべきこと**
 
-- head の形状を「path front の点」「path front の短い接線付き trail」のどこまで持つか。後から形状モデルを変えると preset parameter が増減する。
-- `Instant` entrance で head effect を完全無効にするか、短時間だけ出すか。仕様差が preview/export の両方へ波及する。
-- `color_source` の優先順位を `custom > preset accent > stroke color` のように固定すること。ここが曖昧だと preset 再現性が崩れる。
-- head の描画順を `drop shadow / glow / outline / base / head` のどこに置くか。後から変えると見た目回帰が大きい。
+- v1.0 では detached な「光点」をやめ、`recent visible segment` 再描画モデルで固定する。ここを後から点モデルへ戻すと UI も preset も変わる。
+- `Instant` entrance では accent を無効にする。ここを揺らすと preview/export の期待がぶれる。
+- `color_source` の優先順位を `custom > accent > ink` で固定する。
+- `hot core` の白寄せ上限をどこまで許すか。上げすぎると白飛びし、低すぎると発光感が出ない。
+- `gradient` 実装前は、accent 色は object の effective color から 1 点サンプルした色で処理し、gradient 導入時に位置依存色へ拡張できる形にしておく。
 
 **変更ファイル**
 
@@ -275,25 +283,27 @@
 
 **実装ステップ**
 
-1. renderer に `HeadRenderState` を追加し、entrance progress から head geometry を計算する。
-2. `solid / glow / comet_tail` の CPU-safe 描画 pass を追加する。
-3. inspector に kind / color source / size / blur / tail length / persistence / blend mode を追加する。
-4. active entrance と current object sync を head effect まで拡張する。
-5. entrance preset / combo preset へ head effect を載せる。
-6. export smoke で head effect が preview と矛盾しないことを確認する。
+1. renderer に `RecentInkAccentState` を追加し、entrance progress から `recent visible segment` を切り出す。
+2. `hot core` と `bloom halo` の CPU-safe 描画 pass を追加する。
+3. inspector の `出現` に、折りたたみ式の `先端アクセント` editor を追加する。
+4. active entrance と current object sync を accent まで拡張する。
+5. entrance preset / combo preset へ accent を載せる。
+6. export smoke で accent が preview と矛盾しないことを確認する。
 
 **必要テスト**
 
-- `renderer`: `PathTrace + glow head` が先頭に追従する
+- `renderer`: `PathTrace + soft glow` が先端近傍の短区間へだけ乗る
+- `renderer`: `hot core` と `bloom halo` の強度が path front から滑らかに減衰し、硬い境界を作らない
 - `renderer`: persistence が reveal 完了後も一定時間残る
-- `renderer`: `Instant` では head effect が出ない、または spec どおり no-op になる
-- `app`: head effect の設定が save/reopen と settings relaunch で戻る
+- `renderer`: `Instant` entrance では accent が出ない
+- `app`: accent 設定が save/reopen と settings relaunch で戻る
 
 **完了条件**
 
-- inspector から head effect を編集できる
+- inspector の `出現` から optional accent を編集できる
 - preview / export の見え方が一致する
-- preset と project save に head effect が含まれる
+- 「光る部分」と「新しいインク」の境界が段差にならず、自然に見える
+- preset と project save に accent が含まれる
 
 ### V1-03: post-action chain
 
@@ -509,35 +519,38 @@
 ### V1-06: object outline / page events panel の強化
 
 **優先度:** P1
-**依存:** V1-04, V1-05
+**依存:** V1-04, V1-05, V1-16
 **ひとことで言うと:** 下の一覧パネルを「ただの文字列」から、探しやすく編集しやすい実用品へする task。
 
 **目的:** spec 10 の panel 要件へ近づける。flat list を tree / batch-edit 可能な panel に引き上げる。
 
 **具体的に困る場面**
 
-- 利用者が object 数の多い project を開くと、今の flat list では「どの stroke がどの group / run に属しているか」「今どの object が生きているか」がほぼ追えない。
+- 利用者が object 数の多い project を開くと、今の flat list では「どの page のものか」「どの group に属するか」「今どの object が生きているか」がほぼ追えない。
 - clear event を多数打った project でも、page events が plain text だけだと時刻修正や比較がしづらい。
-- 開発者も tree / run 導出ルールが曖昧なままだと、selection や auto-follow を足すたびに UI 表示が揺れる。
+- 開発者も page / group / object の境界が曖昧なままだと、selection や auto-follow を足すたびに UI 表示が揺れる。
 
 **現状の問題**
 
 - `オブジェクト一覧` は `object id / stroke count / page / z` の文字列羅列だけ。
-- `run / group / glyph / stroke` の tree が無い。
+- `page / group / object / stroke` の tree が無い。
 - `visibility / lock / solo / auto-follow-current / alive highlight` が無い。
 - `ページイベント` も timeline track ではなく plain text list。
 
 **設計**
 
 - 下部 panel は引き続き単一 window 内に保ち、tree widget を自作せず `egui::CollapsingHeader` と small action row の組み合わせで構成する。
-- outline tree の top level は `run`、その下に `group`、その下に `glyph object`、leaf に `stroke` を置く。
-- run は `style/entrance/preset/page` が同じ連続 object から導出する view model とし、persistent data にはしない。
+- outline tree の top level は `page`、その下に `group` と `未グループ object` を置き、group の下に `glyph object`、その下に `stroke` を置く。
+- user 向け UI には `run` を出さない。必要なら内部 view model でのみ使う。
+- group は flat のみで、入れ子は作らない。`group 同士を group 化する` 操作は階層化ではなく member の merge として扱う。
+- `V1-16` を前提に、同じ page 内で連続筆記された object 群は自動 group として見えるようにする。まだ `V1-16` が無い段階では explicit group だけで tree を組めても、最終 UI の意味が変わるので先に group semantics を固める。
 - `alive` 判定は current preview time と clear/page interval から導く。
 - `lock / solo / visibility` は v1.0 では editor-only state とし、project へは保存しない。
 
 **着手前に決めるべきこと**
 
-- run 導出のキーを `page + preset + style + entrance` のどこまで含めるか。後から run 分割条件を変えると outline 操作感が変わる。
+- 自動 group を作る boundary をどこで切るか。page change、style/preset change、template 再配置、guide 再アンカーのどれを group break に含めるかを先に固定する。
+- group merge 時に group 名や created_at をどう決めるか。後から変えると undo/redo と save/load の見え方が変わる。
 - `lock / solo / visibility` を editor-only 一時 state にするか、relaunch まで戻すか。保存境界を最初に固定する。
 - auto-follow を再生中だけにするか、seek/selection change にも反応させるか。後から変えると UX が大きく変わる。
 - page events タブを「一覧 + 詳細編集」か「簡易 timeline 風」かのどちらへ寄せるか。実装コスト差が大きい。
@@ -552,21 +565,22 @@
 **実装ステップ**
 
 1. outline tree 用の view model を app 側に追加する。
-2. run/group/glyph/stroke の階層表示を実装する。
+2. page/group/object/stroke の階層表示を実装する。
 3. multi-select / batch action / auto-follow-current を接続する。
 4. alive highlight と page filter を追加する。
 5. page events tab を timeline track 風の表示へ近づける。
 
 **必要テスト**
 
-- `app`: run 導出が group と混同しない
+- `app`: page-first tree が group と ungrouped object を正しく振り分ける
+- `app`: group merge 後も tree が入れ子にならない
 - `app`: current time 更新で alive highlight が切り替わる
 - `app`: auto-follow が current object を view 内へ保つ
 - `app`: visibility / solo / lock が editor preview にだけ効き、export へ漏れない
 
 **完了条件**
 
-- outline panel が tree で使える
+- outline panel が page-first tree で使える
 - page events tab から clear を編集しやすい
 - batch edit と auto-follow が spec に沿う
 
@@ -1060,17 +1074,155 @@
 - kerning を壊さず横幅計算を維持できる
 - metrics 不在時も縮小文字は下揃えで破綻しない
 
+### V1-15: gradient color / coordinate space / repeat
+
+**優先度:** P1
+**依存:** なし
+**ひとことで言うと:** 線色を単色だけでなく gradient にし、stroke/object/canvas 基準や繰り返し幅を扱えるようにする task。
+
+**目的:** v1.0 の style を「単色」から一段広げ、エモい見た目を作りやすくする。ただし effect と renderer を壊さないよう、gradient の意味を最初に固定する。
+
+**具体的に困る場面**
+
+- 利用者が文字に少し温度感を乗せたい、画面全体で夕焼けのような色の流れを出したい、と思っても今は単色しか選べない。
+- gradient の座標系を曖昧にすると、object を動かした時や export した時に「見えていた色の流れ」が変わりやすい。
+- outline / glow / head accent と gradient の責務を曖昧にすると、effect 側で色の扱いが破綻しやすい。
+
+**現状の問題**
+
+- `StyleSnapshot` は単色前提。
+- renderer は path 上の位置ごとの color 評価を持っていない。
+- preset / project save / UI に gradient editor が無い。
+
+**設計**
+
+- v1.0 は `linear gradient` のみに絞る。radial / conic は future work。
+- `color_mode = solid | gradient` を base style に追加する。
+- gradient は次を持つ。
+  - `scope`: `stroke | object | canvas`
+  - `repeat_mode`: `none | repeat | mirror`
+  - `angle_deg`
+  - `span`
+  - `offset`
+  - `stops` 2〜4 個
+- effect への適用は v1.0 では広げすぎない。まず base stroke だけ gradient を許し、outline / shadow / glow / head accent は `ink 由来の代表色` を引く。
+
+**着手前に決めるべきこと**
+
+- `span` を px で持つか、scope ごとの正規化比率で持つか。後から変えると preset 値の意味が変わる。
+- `canvas scope` を media frame 基準にするか preview rect 基準にするか。export と preview 一致に直結する。
+- stroke path に沿った gradient を v1.0 に入れるかどうか。入れると path parameterization が増えて一気に重くなる。
+
+**変更ファイル**
+
+- Modify: `crates/domain/src/annotations.rs`
+- Modify: `crates/renderer/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/presets_core/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. domain / preset / save format に gradient schema を追加する。
+2. renderer に `scope` ごとの gradient sampler を追加する。
+3. inspector に gradient editor を追加する。
+4. project save / reopen と preset 反映を接続する。
+5. export / preview 一致の回帰 test を追加する。
+
+**必要テスト**
+
+- `renderer`: `object scope` の gradient が object 移動で相対位置を保つ
+- `renderer`: `canvas scope` の gradient が export と preview で一致する
+- `renderer`: `repeat` / `mirror` が期待通りに繰り返す
+- `app`: gradient style が save/reopen と preset で戻る
+
+**完了条件**
+
+- 単色と gradient を UI から切り替えられる
+- `stroke / object / canvas` 基準が破綻しない
+- export と preview の色の流れが一致する
+
+### V1-16: flat auto-group semantics / merge grouping
+
+**優先度:** P0
+**依存:** V1-05
+**ひとことで言うと:** 同じ page で連続して書いた object 群を flat な group として扱い、group 同士の group 化は入れ子ではなく merge にする task。
+
+**目的:** user から見て自然な「連続して書いたまとまり」を、そのまま group の基本単位にする。`group -> object` だけの階層へ整理し、V1-06 の page-first tree と post-action scope を分かりやすくする。
+
+**具体的に困る場面**
+
+- 利用者は「連続して書いたひとかたまり」を一緒に動かしたり色を変えたりしたいのに、今は object ごとにしかまとまりが無い。
+- group の中にさらに group を入れられる設計にすると、UI も undo/redo も一気に複雑になる。
+- page-first tree を作っても、自動 group の意味が曖昧だと「どこでまとまりが切れるのか」が毎回変わってしまう。
+
+**現状の問題**
+
+- group は explicit 操作でしか作られない。
+- 既存 `group_selected_objects()` は「すでに group 所属の object は v1.0 では group 化できない」制約を持つ。
+- group merge と auto-group break の規則が無い。
+
+**設計**
+
+- group は flat のみ。入れ子を禁止する。
+- 同じ page 内で、同じ pen/style 系設定のまま連続して commit された object 群は、自動 group として同じ group に入れる。
+- auto-group の break は少なくとも次で切る。
+  - page change
+  - active style / preset change
+  - template の再配置
+  - guide の再アンカーまたは明示解除
+  - manual clear
+- `グループ化` は `group を作る` よりも `選択対象の member を 1 つの flat group へ統合する` と解釈する。
+- group 同士を group 化した場合は、新しい親 group を作らず、member union を持つ 1 group へ merge する。
+
+**着手前に決めるべきこと**
+
+- auto-group break に `entrance/effect` 変更を含めるかどうか。後から変えると group 切れ方が変わる。
+- merge 後の group metadata をどう決めるか。`created_at`、name、z-order 表示が揺れないよう先に固定する。
+- auto-group を editor-only view ではなく persistent data として save するか。V1-06 と save/load の意味が変わるので最初に固定する。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/lib.rs`
+- Modify: `crates/domain/src/project_commands.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. auto-group break 条件を app session に追加する。
+2. object commit 時に current flat group へ吸収する経路を追加する。
+3. `グループ化` を merge semantics へ拡張する。
+4. undo/redo と save/load の group roundtrip を固定する。
+5. V1-06 が読む page-first tree view model と整合させる。
+
+**必要テスト**
+
+- `app`: 同一 page / 同一 pen の連続 object が auto-group へ入る
+- `app`: style change / template 再配置 / guide reset / clear で auto-group が切れる
+- `app`: group 同士の group 化が入れ子ではなく merge になる
+- `app`: undo/redo と save/reopen で flat group が崩れない
+
+**完了条件**
+
+- user から見て `group -> object` だけの階層になる
+- 連続筆記のまとまりが自然に group になる
+- group merge と undo/redo が安定する
+
 ### PKG-01: portable FFmpeg sidecar packaging / provenance / notices
 
 **優先度:** P0
 **依存:** なし
-**ひとことで言うと:** 配布 zip を展開しただけで動くように、FFmpeg 同梱の出荷形を作る task。
+**ひとことで言うと:** 配布 zip を展開しただけで動くように sidecar を整えつつ、system runtime の方が高機能な場合はそれを邪魔しない task。
 
-**目的:** mainline runtime 方針を host `ffmpeg` 依存から脱し、portable sidecar runtime を release-ready にする。
+**目的:** mainline runtime 方針を portable sidecar へ寄せながら、実行時には `best-capable runtime` を選べるようにし、sidecar のせいで system `ffmpeg` より機能が落ちる事態を避ける。
 
 **具体的に困る場面**
 
 - 利用者が release archive を展開しても sidecar が入っていなければ、Windows では `winget` や `PATH` 設定が必要になり、v1.0 の「portable mainline」前提から外れる。
+- 逆に、同梱 sidecar が license-safe 構成で H.264 非対応でも、system `ffmpeg` なら decode できるのに、app が sidecar を固定優先してしまうと「開けるはずの動画が開けない」状態になる。
 - 配布した runtime の provenance や license summary が無いと、後から「この ffmpeg はどこ由来か」「GPL なのか」が追えず、配布判断で止まる。
 - 開発者が runner ごとに適当な layout で sidecar を詰めると、discovery / diagnostics / release packaging が全部ずれる。
 
@@ -1078,17 +1230,25 @@
 
 - runtime discovery と manifest 読み込みはあるが、実際の sidecar を repository / release asset へ載せる手順が未整備。
 - provenance / notices / runtime source policy が release artifacts に反映されていない。
+- runtime 選択はまだ「どの操作でどちらを優先するか」の policy が弱く、sidecar があるだけで system runtime より狭い capability を選ぶ危険が残る。
 
 **設計**
 
 - sidecar 自体は repository commit へ直接 vendor しない。取得済み runtime を CI/release packaging stage で assembly する。
+- release に同梱する sidecar は `v1.0 built-in export family を満たす license-safe baseline` に限定する。optional codec pack は mainline へ混ぜない。
 - manifest は最低限次を持つ。
   - runtime version
   - source URL / source label
   - license summary
   - build summary
   - supported families
+  - known decode / encode capability summary
 - release asset には app binary と sidecar runtime、notice file、manifest を同梱する。
+- app 実行時は `discover_runtime` 後に source 固定ではなく `best-capable runtime` を選ぶ。
+  - probe / import / preview / export ごとに必要 capability を定義する
+  - sidecar が足りれば sidecar を使う
+  - sidecar が足りず system runtime の方が適合するなら system runtime へ fallback する
+  - 診断 UI に「どの runtime を、なぜ選んだか」を出す
 - optional codec pack は mainline asset と分離し、この task では触らない。
 
 **着手前に決めるべきこと**
@@ -1097,6 +1257,8 @@
 - manifest schema の必須項目を何にするか。後から field を足すと tooling 互換が揺れる。
 - notices を platform ごとに分けるか、runtime ごとに 1 つにまとめるか。asset layout に直結する。
 - runtime の取得元と更新手順を人手管理にするか、CI input artifact にするか。release 運用が変わる。
+- runtime 選択を `sidecar 優先固定` にしないことを最初に固定する。operation ごとの capability arbitration を設計へ入れないと、「同梱したせいで開けない」が起こり得る。
+- sidecar が満たすべき `最低 capability floor` を family ごとに固定する。ここを曖昧にすると release 検品が揺れる。
 
 **変更ファイル**
 
@@ -1110,13 +1272,16 @@
 1. release asset の directory layout を確定する。
 2. manifest schema と notices の最小必須項目を定義する。
 3. packager script に sidecar assembly を追加する。
-4. runtime 不在時の fail-fast と log を整える。
-5. packaging 手順を docs に残す。
+4. operation ごとの runtime capability arbitration を media 層へ追加する。
+5. runtime 不在時の fail-fast と log を整える。
+6. packaging 手順と fallback policy を docs に残す。
 
 **必要テスト**
 
 - packager script: sidecar / manifest / notices が archive に入る
 - media: sidecar manifest 不備時に明確な error を返す
+- media: sidecar が decode/export 要件を満たさない場合は system runtime へ fallback する
+- media: sidecar が十分なら system runtime より sidecar を選ぶ
 - release workflow dry-run: asset 名が OS ごとに安定する
 
 **完了条件**
@@ -1124,6 +1289,7 @@
 - release asset が mainline sidecar 付きで組める
 - provenance / notices を人が確認できる
 - app が host runtime に暗黙依存しない
+- sidecar のせいで system runtime より機能が落ちる状況を避けられる
 
 ### PKG-02: GitHub Release への sidecar 統合
 
@@ -1302,36 +1468,58 @@
 - 完成見た目の確認を阻害しない
 - export へ editor-only overlay が漏れない
 
+### FUT-09: Premiere Pro 風の統合 timeline
+
+**優先度:** Future
+**依存:** V1-06, V1-16
+**ひとことで言うと:** seek bar、object/page event、将来の track 編集を、NLE 風の 1 本の timeline へ統合する大規模 UI 改修。
+
+**目的:** transport bar と下部 panel を別々に見る負担を減らし、将来的に object / group / clear / effect の時間編集を 1 箇所へ集約する。
+
+**具体的に困る場面**
+
+- 利用者が再生位置、clear event、object の存在区間を見比べたい時、今は transport と下部 panel を往復する必要がある。
+- 将来、object の時間編集や effect の scope を GUI から触りたくなった時、現在の panel 構成では track 表現を載せにくい。
+
+**設計**
+
+- v1.0 では入れず、将来の大規模 task として切り分ける。
+- top timeline ruler、page/clear track、group/object track、playhead、zoom/scroll を持つ NLE 風 UI を想定する。
+- page-first tree と連動し、tree selection と timeline selection が同期する形を目標にする。
+
+**着手前に決めるべきこと**
+
+- tree と timeline を左右分割にするか、timeline 主体にするか。
+- track 編集を drag/drop まで許すか、v1 では閲覧中心にするか。
+- 現在の transport bar と export queue をどう統合するか。
+
+**完了条件**
+
+- selection、seek、page/clear/object の関係が 1 画面で追える
+- 将来の track 編集へ拡張しやすい UI 骨格ができる
+
 ## 6. 着手おすすめ順
 
 ここでは **未着手 task のみ** を、依存だけでなく「後戻りしにくい順」「reported bug を早く止める順」で並べます。
 
-1. `V1-09` template font switch crash fix
-   - crash は最優先で止める価値が高く、局所修正で済む可能性が高い。
-2. `V1-10` multiline template editor UI
-   - engine 既存機能の GUI 開放で、仕様変更が小さい。
-3. `V1-11` panel-aware wide controls
-   - layout 層の改善で独立性が高く、後続 UI task の土台になる。
-4. `V1-12` template slot UI removal
-   - `V1-11` 後なら panel 幅と action row を同時に整理しやすい。
-5. `V1-13` `Esc` cancel for transient modes
-   - keyboard 導線の改善で独立性が高いが、popup/focus 優先順位だけは先に固定する。
-6. `V1-14` metrics-based template alignment
-   - 設計は固められるが、font metrics source の追加を伴うため一段重い。
-7. `V1-02` reveal-head effect
-   - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
-8. `V1-04` clear / clear preset / combo preset
-   - 利用者が直接困る操作 gap が大きく、page-event track の source of truth をここで確定できる。
-9. `V1-06` outline / page events panel 強化
-   - `V1-05` と `V1-04` が揃ってから入ると UI だけ空洞になるのを避けられる。
-10. `V1-03` post-action chain
-    - 最も timing が複雑で、group/run の基盤と outline 可視化がある方が安全。
-11. `PKG-01` portable sidecar packaging
-    - productization 側の大きな未完了。release asset 設計をここで固定する。
-12. `PKG-02` release workflow sidecar 統合
-    - workflow 自体はあるので、PKG-01 完了後は sidecar 統合へ絞って進められる。
-13. `QA-01` cross-platform validation / closeout
-    - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
+1. `V1-02` reveal hot-trail accent effect
+   - design がほぼ固まり、renderer / inspector / preset を同時に進めやすい。
+2. `V1-04` clear / clear preset / combo preset
+   - 利用者が直接困る操作 gap が大きく、page-event 側の source of truth をここで確定できる。
+3. `V1-16` flat auto-group semantics / merge grouping
+   - page-first tree の前提になる group semantics を先に固定すると、後戻りが減る。
+4. `V1-06` outline / page events panel 強化
+   - `V1-04` と `V1-16` が揃ってから入ると UI だけ空洞になるのを避けられる。
+5. `V1-03` post-action chain
+   - timing scope が重く、group semantics と outline 可視化がある方が安全。
+6. `V1-15` gradient color / coordinate space / repeat
+   - 映えるが renderer / effect / save format に触るため、基本演出が固まってから入る方が安全。
+7. `PKG-01` portable sidecar packaging
+   - productization 側の大きな未完了。runtime arbitration と asset 設計をここで固定する。
+8. `PKG-02` release workflow sidecar 統合
+   - workflow 自体はあるので、PKG-01 完了後は sidecar 統合へ絞って進められる。
+9. `QA-01` cross-platform validation / closeout
+   - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
 
 ## 7. task 指定時の返答ルール
 
@@ -1345,7 +1533,8 @@
 ## 8. 先に確認しておくべき地雷
 
 - `V1-01` を飛ばして `V1-04` へ行くと preset schema の後戻りが起きやすい。
-- `V1-05` を飛ばして `V1-06` を進めると outline tree の UI だけ出来て command が空洞になる。
+- `V1-16` を飛ばして `V1-06` を進めると page-first tree の UI だけ出来て、group の意味が後から変わりやすい。
+- `V1-15` を早く入れすぎると `V1-02` の accent 色取得と effect 色責務が揺れやすい。
 - `PKG-01` を飛ばして `PKG-02` を進めると release workflow が host runtime 前提に戻りやすい。
 - `QA-01` は単なる docs 更新ではなく、実 build / export / validation の証跡が必須。
 

@@ -8,8 +8,13 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-14 metrics-based template alignment` を完了。次候補は `V1-02 reveal-head effect`。
+- 現在の即時マイルストーン: `V1-14 metrics-based template alignment` を完了。次候補は `V1-02 reveal hot-trail accent effect`。
 - 最新の確認事項:
+  - `.docs/16_remaining_tasks_plan.md` を見直し、`V1-02` を「編集時の視認性」ではなく再生 / export 向けの `reveal hot-trail accent effect` として再定義した
+  - `V1-06` は `page-first tree` 前提へ設計変更し、その前提を固める task として `V1-16 flat auto-group semantics / merge grouping` を新設した
+  - `V1-15 gradient color / coordinate space / repeat` を追加し、gradient は `linear`・`stroke/object/canvas` 基準・`repeat/mirror` の仕様詰め task として切り出した
+  - `PKG-01` は portable sidecar 同梱に加え、sidecar のせいで system runtime より機能が落ちない `best-capable runtime` 選択を要件へ加えた
+  - future work に `Premiere Pro 風の統合 timeline UI` を追加した
   - `test_timeline_01.md` を追加し、V1-05 の object selection / multi-select / group / ungroup / z-order / batch style-entrance / undo-redo / save-reopen と、V1-09〜V1-14 の簡易確認手順を日本語で整理した
   - 同手順書では、v1.0 の outline 編集で object 選択と group 選択は mixed selection を持たず、どちらか一方へ切り替わる制約も明記した
   - `AGENTS.md` と `.docs/` を全件読了

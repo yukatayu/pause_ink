@@ -47,3 +47,16 @@ optional で codec を使える FFmpeg runtime を、provenance / compliance を
 
 v1.0 の対象外です。  
 将来、安全な expression layer や scripting API を足す可能性はありますが、最初に hot path へ入れてはいけません。
+
+## 8. 統合 timeline UI
+
+将来の大規模 UI 改修です。
+seek bar、page clear、object / group の時間関係を 1 本の timeline へ統合し、Premiere Pro のような NLE 風操作へ寄せる案です。
+
+- timeline ruler
+- playhead
+- page / clear track
+- object / group track
+- zoom / horizontal scroll
+
+v1.0 では入れません。まずは現在の transport bar と page-first tree を安定させることを優先します。

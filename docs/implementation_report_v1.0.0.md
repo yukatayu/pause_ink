@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 完了。`V1-14 metrics-based template alignment` を完了し、次候補は `V1-02 reveal-head effect`。
+- 現在のフェーズ: Phase 20 完了。`V1-14 metrics-based template alignment` を完了し、次候補は `V1-02 reveal hot-trail accent effect`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -58,6 +58,21 @@
   - 検討した代替案: group 選択と object 選択の同時一括編集を期待値として書く。
   - 理由: 現行 `SelectionState` は object / group を同時保持せず、手順書で mixed selection を期待値にすると誤案内になるため。
   - 影響: V1-05 の手動確認は、object 複数選択と group 選択を別ケースで回す構成にする。
+- 2026-04-07T13:15:00+09:00
+  - 決定: `V1-02` は「編集中の先端視認性」ではなく、再生 / export 中の timed entrance に乗る `reveal hot-trail accent effect` として再定義する。
+  - 検討した代替案: detached な光点や static style としての head effect。
+  - 理由: user 要望は最終動画の演出であり、`光る部分` と `いまインクが乗った部分` の境界を滑らかにしたいので、`recent visible segment` 再描画モデルの方が自然なため。
+  - 影響: `V1-02` の UI は `出現` 内の optional accent editor とし、renderer は `hot core + bloom halo` の 2 層を timed entrance にだけ乗せる前提で計画を更新した。
+- 2026-04-07T13:15:00+09:00
+  - 決定: `V1-06` の outline panel は `page-first tree` を採用し、user 向け UI に `run` を出さない。
+  - 検討した代替案: `run -> group -> object -> stroke` の tree。
+  - 理由: user 目線では `どの page のどのまとまりか` が先に分かる方が自然で、`run` は内部概念に留めた方が分かりやすいため。
+  - 影響: `V1-06` は `page/group/object/stroke` tree 前提に更新し、その前提 task として `V1-16 flat auto-group semantics / merge grouping` を追加した。
+- 2026-04-07T13:15:00+09:00
+  - 決定: gradient color は `V1-15` として独立 task 化し、v1.0 は `linear gradient`、`stroke/object/canvas` scope、`repeat/mirror` を first scope とする。
+  - 検討した代替案: effect と同時に拡張した多様な gradient、radial / conic を含む広い仕様。
+  - 理由: 見た目の自由度は上がるが、座標系・保存・effect との責務を先に固定しないと手戻りが大きいため。
+  - 影響: `V1-15` を task 台帳へ追加し、`PKG-01` も `best-capable runtime` 選択を要件へ加える形で計画を更新した。
 
 - 2026-04-04T23:56:59+09:00
   - 決定: 文書と UI は日本語を正とし、既存の英語記述も実装に合わせて日本語へ更新する。
