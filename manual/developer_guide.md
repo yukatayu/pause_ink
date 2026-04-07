@@ -163,6 +163,15 @@ entrance sequencing は page 全体 1 本の queue ではなく、同じ `create
 - undo / redo 後は `repair_selection_after_project_change()` で selection を prune し、直前の group/ungroup 文脈が残っていれば group 選択または member object 選択へ復元します
 - 現 UI は outline panel 起点の最小導線です。canvas 直接選択、複雑な tree 編集、group style editor は `V1-06` 以降の範囲です
 
+## 6.6 `Esc` cancel の優先順位
+
+- global `Esc` は `handle_global_shortcuts()` で処理します
+- 優先順位は `復旧ダイアログ -> テンプレート詳細 -> 設定 -> キャッシュ管理 -> ランタイム診断 -> template cancel -> guide cancel` です
+- window が開いている間は 1 回の `Esc` で 1 window だけ閉じ、template / guide の解除には進みません
+- window が無いときは、template の `placement_armed` と `placed_slots` をまとめて reset し、そのあと guide overlay / capture state を clear します
+- text edit に focus がある frame では global `Esc` cancel を奪いません。`ctx.egui_wants_keyboard_input()` を最初に見て early return します
+- `clear_guide_state()` は overlay だけでなく stale capture context も落とすので、`Esc` から guide を解除するときも同じ helper を再利用します
+
 ## 7. FFmpeg runtime
 
 runtime は mainline では sidecar provider 前提ですが、開発・検証では host runtime も使えます。

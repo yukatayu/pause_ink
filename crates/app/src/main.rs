@@ -2363,9 +2363,80 @@ impl DesktopApp {
         }
     }
 
+    fn close_transient_window_on_escape(&mut self) -> bool {
+        if self.recovery_prompt_open {
+            self.recovery_prompt_open = false;
+            self.push_log("復旧ダイアログを閉じました。");
+            return true;
+        }
+        if self.template_details_open {
+            self.template_details_open = false;
+            self.push_log("テンプレート詳細を閉じました。");
+            return true;
+        }
+        if self.preferences_open {
+            self.preferences_open = false;
+            self.push_log("設定を閉じました。");
+            return true;
+        }
+        if self.cache_manager_open {
+            self.cache_manager_open = false;
+            self.push_log("キャッシュ管理を閉じました。");
+            return true;
+        }
+        if self.runtime_diagnostics_open {
+            self.runtime_diagnostics_open = false;
+            self.push_log("ランタイム診断を閉じました。");
+            return true;
+        }
+        false
+    }
+
+    fn cancel_template_on_escape(&mut self) -> bool {
+        let template_active = self.template.placement_armed
+            || self.template.placed_origin.is_some()
+            || self.template.placed_slots.is_some();
+        if !template_active {
+            return false;
+        }
+
+        self.template.placement_armed = false;
+        self.reset_template_slots();
+        self.push_log("テンプレート配置を解除しました。");
+        true
+    }
+
+    fn cancel_guide_on_escape(&mut self) -> bool {
+        let guide_active = self.guide_state.is_some()
+            || self.guide_geometry.is_some()
+            || self.guide_capture_armed
+            || self.guide_capture_state.in_progress
+            || self.pending_guide_character_bounds.is_some();
+        if !guide_active {
+            return false;
+        }
+
+        self.clear_guide_state();
+        true
+    }
+
     fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
+        }
+
+        let escape =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if escape {
+            if self.close_transient_window_on_escape() {
+                return;
+            }
+
+            let template_canceled = self.cancel_template_on_escape();
+            let guide_canceled = self.cancel_guide_on_escape();
+            if template_canceled || guide_canceled {
+                return;
+            }
         }
 
         let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
@@ -5922,6 +5993,44 @@ mod tests {
         );
     }
 
+    fn escape_key_event() -> Event {
+        Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn run_escape_shortcut_frame(app: &mut DesktopApp, ctx: &egui::Context) {
+        run_shortcut_frame(app, ctx, Modifiers::default(), vec![escape_key_event()]);
+    }
+
+    fn run_escape_frame_with_focused_text_edit(app: &mut DesktopApp, ctx: &egui::Context) {
+        let mut text = String::new();
+        let _ = ctx.run(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                events: vec![escape_key_event()],
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut text).id_source("v1-13-focused-text-edit"),
+                    );
+                    response.request_focus();
+                });
+                assert!(
+                    ctx.text_edit_focused(),
+                    "テスト前提: escape 実行 frame では text edit focus が維持されている必要がある"
+                );
+                app.handle_global_shortcuts(ctx);
+            },
+        );
+    }
+
     fn selectable_template_font_for_tests(app: &DesktopApp) -> String {
         app.local_font_families
             .first()
@@ -7760,6 +7869,83 @@ mod tests {
         assert!(!app.guide_modifier_used_for_stroke);
         assert!(app.guide_capture_state.current_target_object_id().is_none());
         assert!(!app.guide_capture_state.in_progress);
+    }
+
+    #[test]
+    fn escape_closes_popup_before_canceling_template_or_guide() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.runtime_diagnostics_open = true;
+        app.template.placement_armed = true;
+        app.template.placed_origin = Some(Point::new(24.0, 36.0));
+        app.refresh_placed_template_slots(&ctx);
+        app.guide_state = Some(GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.refresh_guide_geometry();
+
+        run_escape_shortcut_frame(&mut app, &ctx);
+
+        assert!(!app.runtime_diagnostics_open);
+        assert!(app.template.placement_armed);
+        assert!(app.template.placed_slots.is_some());
+        assert!(app.guide_state.is_some());
+    }
+
+    #[test]
+    fn escape_cancels_template_and_guide_when_no_popup_is_open() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.placement_armed = true;
+        app.template.placed_origin = Some(Point::new(24.0, 36.0));
+        app.refresh_placed_template_slots(&ctx);
+        app.guide_state = Some(GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.refresh_guide_geometry();
+        app.guide_capture_armed = true;
+        app.guide_capture_state.start();
+
+        run_escape_shortcut_frame(&mut app, &ctx);
+
+        assert!(!app.template.placement_armed);
+        assert!(app.template.placed_origin.is_none());
+        assert!(app.template.placed_slots.is_none());
+        assert!(app.guide_state.is_none());
+        assert!(app.guide_geometry.is_none());
+        assert!(!app.guide_capture_armed);
+        assert!(!app.guide_capture_state.in_progress);
+    }
+
+    #[test]
+    fn escape_does_not_cancel_template_or_guide_while_text_input_has_focus() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.placement_armed = true;
+        app.template.placed_origin = Some(Point::new(24.0, 36.0));
+        app.refresh_placed_template_slots(&ctx);
+        app.guide_state = Some(GuideOverlayState::from_reference_bounds(
+            pauseink_domain::Point2 { x: 100.0, y: 200.0 },
+            pauseink_domain::Point2 { x: 160.0, y: 280.0 },
+        ));
+        app.refresh_guide_geometry();
+
+        run_escape_frame_with_focused_text_edit(&mut app, &ctx);
+
+        assert!(app.template.placement_armed);
+        assert!(app.template.placed_slots.is_some());
+        assert!(app.guide_state.is_some());
     }
 
     #[test]
