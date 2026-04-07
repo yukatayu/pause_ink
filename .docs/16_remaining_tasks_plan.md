@@ -105,7 +105,7 @@
 | V1-09 | template font switch crash fix | なし | template 表示中の font 切替を fail-safe にしてクラッシュを止める |
 | V1-10 | multiline template editor UI | なし | 改行入力を GUI から扱えるようにし、editor 高さも調整可能にする |
 | V1-11 | panel-aware wide controls | なし | seek bar や template 入力欄など primary controls を panel 幅へ自然に追従させる |
-| V1-12 | template placement action row simplification | V1-11 | `前スロット/次スロット` の価値を残しつつ、左パネルの最小幅を圧迫しない配置へ整理する |
+| V1-12 | template slot direct selection / button removal | V1-11 | slot の意味を利用者に分かる形へ整理し、専用の前後ボタンを廃して direct selection へ寄せる |
 | V1-13 | `Esc` cancel for transient modes | なし | template 配置 / guide を keyboard から安全に解除できるようにする |
 | V1-14 | metrics-based template alignment | V1-10 | template の縦位置と小文字揃えを font metrics ベースへ寄せつつ、横幅は kerning を壊さない shaping ベースを維持する |
 | PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
@@ -121,7 +121,8 @@
 - template の横幅は `egui` shaping ベースで取れているが、縦位置は `baseline_y + font_size * scale` 近辺の簡易モデルで、`ascent / descent / x-height / cap-height` を見ていない。
 - template engine 自体は `\n` を解釈できるが、左ペインの入力欄は single-line なので GUI から改行を入れられない。
 - seek bar や template 文字入力欄は panel 幅へ十分に追従しておらず、横幅が余っても入力領域が伸びない箇所がある。
-- `前スロット / 次スロット` は slot index を手動補正する用途で残っているが、常時 4 ボタン横並びのため左パネル最小幅を押し上げている。
+- `前スロット / 次スロット` は現在 slot index を手動補正するだけで、slot の意味自体が UI 上で説明されていない。
+- ユーザ視点では「今どこに書くかを変えたい」のであって、専用の前後ボタンを押したいわけではない。
 - template 表示中に font family を切り替えると crash する報告があり、font 適用タイミングと placed slot 再計算の境界を見直す必要がある。
 - `Esc` で template 配置や guide を解除する shortcut はまだ無い。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
@@ -144,7 +145,7 @@
 | V1-09 | `.docs/03_ui_window_model.md`, `.docs/13_risk_register.md` | `crates/app/src/main.rs` の template placement / font restore test、font reload 周りの helper |
 | V1-10 | `.docs/03_ui_window_model.md`, `.docs/05_project_file_format.md` | template save/restore test、left panel UI test、editor UI state 保存の有無 |
 | V1-11 | `.docs/03_ui_window_model.md` | transport bar / left panel layout test、`available_width` 前提の UI helper |
-| V1-12 | `.docs/03_ui_window_model.md` | template slot stepper test、template placement UI test |
+| V1-12 | `.docs/03_ui_window_model.md`, `.docs/02_final_spec_v1.0.0.md` | template slot stepper test、template placement UI test、multi-stroke same-slot test |
 | V1-13 | `.docs/03_ui_window_model.md`, `.docs/02_final_spec_v1.0.0.md` | keyboard shortcut 処理、guide/template の transient state test |
 | V1-14 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/template_layout`, `crates/fonts`, `crates/app` の template slot / shaping / save-restore test |
 | PKG-01 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/13_risk_register.md` | `crates/media` の runtime discovery test、`scripts/package_release_asset.py` の archive test |
@@ -874,63 +875,72 @@
 - ボタンや余白は必要以上に広がらない
 - 狭い幅でも UI が壊れない
 
-### V1-12: template placement action row simplification
+### V1-12: template slot direct selection / button removal
 
 **優先度:** P1
 **依存:** V1-11
-**ひとことで言うと:** `前スロット/次スロット` の機能は残しつつ、常時 4 ボタン横並びをやめて左パネルの最低幅を下げる task。
+**ひとことで言うと:** `前スロット/次スロット` の専用ボタンを前提にせず、slot を直接選ぶ操作へ寄せて、左パネルの action row を軽くする task。
 
-**目的:** `前スロット/次スロット` の価値を整理し、必要なら secondary action へ格下げする。template placement の主操作を分かりやすくしつつ、panel 幅を圧迫しないようにする。
+**目的:** 利用者にとって必要なのは「今どの template 位置に書くかを把握し、必要ならそこを変えられること」であり、専用の `前/次` ボタンそのものではない。この task では slot 概念を可視化し、current target を direct selection で変えられるようにして、専用ボタンを削除する。
 
 **具体的に困る場面**
 
 - 左パネルが狭いと `テンプレート配置 / 前スロット / 次スロット / テンプレート解除` の 4 連ボタンが最小幅を押し上げる。
-- 利用者から見ると `前スロット/次スロット` の用途が見えにくく、「自動で次へ進むのに、なぜ必要なのか」が分かりづらい。
+- 利用者から見ると `前スロット/次スロット` の用途が見えにくく、「何を動かしているのか」が分かりづらい。
+- 「一つ戻る / 一つ進む」よりも、「この box に書きたい」と直接指定できた方が自然で、誤操作も少ない。
 
 **現状の問題**
 
-- `前スロット/次スロット` は placement 補正のための secondary action なのに、常時 primary row に置かれている。
-- slot navigation の価値説明が UI 上に無い。
+- 現状の `slot index` は次 stroke の target を指すが、その意味が UI 文言に出ていない。
+- `前スロット/次スロット` は index の加減算でしかなく、利用者の意図である「書きたい位置を選ぶ」に対して遠い UI になっている。
+- 常時 primary row に置かれており、左パネルの横幅を無駄に押し広げている。
 
 **設計**
 
-- capability 自体は残す。用途は次の 3 つに限定して説明する。
-  - 自動 advance を戻して書き直す
-  - 1 slot 飛ばして次へ進む
-  - 非連続な位置へ手動補正する
-- 左ペインの primary row は `テンプレート配置` と `テンプレート解除` を主にし、slot navigation は placement active 時だけ出す compact secondary row へ移す。
-- secondary row は `◀` / `▶` の小ボタン + `3 / 8` の現在位置表示を基本にし、文言ボタンを常時置かない。
-- もし実機確認で利用頻度が極端に低ければ、最終的に `テンプレート詳細` へ退避する余地を残す。
+- `slot` は「template で定義された 1 文字ぶんの位置」であり、highlight 中の slot が「次に stroke が入る場所」であると UI 上に明示する。
+- 専用の `前スロット/次スロット` ボタンは削除する。
+- 代わりに、配置済み slot box をクリックして current slot を直接選べるようにする。
+- 左ペインには compact な状態表示だけを残す。
+  - 例: `対象 slot: 3 / 8`
+- `テンプレート配置` と `テンプレート解除` は主 row に残す。
+- current slot の変更手段は、v1.0 では次の 2 つに絞る。
+  - slot box の direct click
+  - 既存の自動進行ロジック
+- もし実装上どうしても direct click だけでは不足する場合の fallback として、placement active 時のみ `◀/▶` の compact control を出す余地は残すが、mainline 設計は「専用ボタン無し」を優先する。
 
 **着手前に決めるべきこと**
 
-- slot navigation を完全削除せず残すかどうか。あとから戻すと shortcut / test をやり直す。
-- compact row を常時表示するか、placement active 時だけ出すか。左パネル密度が変わる。
-- keyboard shortcut を同時導入するか。説明コストと衝突が増える。
+- direct slot selection の hit-test を「axis-aligned box」で見るか、「回転後 box」まで厳密に見るか。実装コストと誤選択率が変わる。
+- current slot 変更で既存 object への追記を許すか、新規 stroke 開始時だけ反映するか。編集中 object との整合に影響する。
+- fallback の `◀/▶` を完全に消すか、debug/暫定 escape hatch として隠し気味に残すか。後から戻すと manual と test をやり直す。
 
 **変更ファイル**
 
 - Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
 - Modify: `manual/user_guide.md`
 
 **実装ステップ**
 
-1. template action row を primary / secondary に分ける。
-2. slot navigation を compact 表示へ移す。
-3. 現在 slot index 表示を追加する。
-4. panel 最小幅と wrapping の改善を確認する。
+1. `slot = 次に stroke が入る位置` を示す current slot 表示を追加する。
+2. preview 上の slot box hit-test を追加し、クリックで current slot を直接選べるようにする。
+3. 左ペインから `前スロット/次スロット` ボタンを削除する。
+4. `テンプレート配置 / テンプレート解除` のみで主 row を構成し、panel 最小幅を確認する。
+5. fallback control が必要かを実機確認で再判定する。
 
 **必要テスト**
 
-- `app`: template slot stepper が compact UI でも前後に動く
-- `app`: placement inactive 時は slot navigation が出ない、または無効化される
+- `app`: slot box click で current slot が切り替わる
+- `app`: current slot 表示が placed slot 数と同期する
+- `app`: `前スロット/次スロット` ボタン削除後も template 配置 UI が崩れない
 - `app`: narrow panel でも template action row が崩れにくい
 
 **完了条件**
 
-- 左パネルの template action row が圧迫しにくくなる
-- `前スロット/次スロット` の価値を失わず secondary action 化できる
-- 現在 slot の位置が UI で分かる
+- `slot` の意味と current target が UI で分かる
+- 利用者は書きたい slot を direct selection できる
+- 左パネルの template action row から専用の前後ボタンを外せる
+- 必要なら fallback control の有無を実機確認で判断できる
 
 ### V1-13: `Esc` cancel for transient modes
 
@@ -1307,7 +1317,7 @@
    - engine 既存機能の GUI 開放で、仕様変更が小さい。
 3. `V1-11` panel-aware wide controls
    - layout 層の改善で独立性が高く、後続 UI task の土台になる。
-4. `V1-12` template placement action row simplification
+4. `V1-12` template slot direct selection / button removal
    - `V1-11` 後なら panel 幅と action row を同時に整理しやすい。
 5. `V1-13` `Esc` cancel for transient modes
    - keyboard 導線の改善で独立性が高いが、popup/focus 優先順位だけは先に固定する。
