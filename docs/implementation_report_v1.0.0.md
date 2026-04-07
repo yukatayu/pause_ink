@@ -1391,9 +1391,9 @@
   - 実施内容:
     - `FUT-08 object 選択時の preview/canvas ハイライト` を future work 詳細 task として補強した。
     - `Esc` による template / guide 解除は future から本体 task へ昇格し、`V1-13` として切り出した。
-    - 追加で `V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template slot direct selection / button removal`、`V1-14 metrics-based template alignment` を起票した。
+    - 追加で `V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template slot UI removal`、`V1-14 metrics-based template alignment` を起票した。
     - plan の現状スナップショットも更新し、`V1-01 / V1-05 / V1-07 / V1-08` 完了済み、未着手はそれ以外という状態へ揃えた。
-    - その後 `V1-12` を再定義し、専用の `前スロット/次スロット` ボタンを残す前提をやめ、slot direct selection と button removal を mainline 設計にした。
+    - その後 `V1-12` を再定義し、slot direct selection も採らず、専用の `前スロット/次スロット` ボタン、current slot 状態表示、current slot 強調表示を template UI から外す mainline 設計にした。
   - 調査メモ:
     - template 幅計算の本番経路は `DesktopApp::layout_template_line()` と `template_slots_at_origin()` で、横幅は `egui` shaping ベース、縦位置は簡易 baseline モデルだった。
     - template engine 自体は `\n` 対応済みだが、GUI は `text_edit_singleline` のため multiline を入力できない。

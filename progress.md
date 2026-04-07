@@ -107,8 +107,8 @@
   - 上記 bugfix バッチについて `cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過し、manual / report / progress も同期した
   - `.docs/16_remaining_tasks_plan.md` を新設し、未実装の v1.0 残項目と future work を task 番号つきで整理した
   - `.docs/16_remaining_tasks_plan.md` に task ごとの具体的な困り方、不可逆寄りの先決事項、共通の doc/test 読み順を追記し、大域計画の最終見直し版へ更新した
-  - `.docs/16_remaining_tasks_plan.md` をさらに更新し、`V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template slot direct selection / button removal`、`V1-13 Esc cancel for transient modes`、`V1-14 metrics-based template alignment` を追加した
-  - その後 `V1-12` は再検討し、`前スロット/次スロット` の専用ボタンを残す前提ではなく、slot direct selection と button removal を mainline にする task へ上書きした
+  - `.docs/16_remaining_tasks_plan.md` をさらに更新し、`V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template slot UI removal`、`V1-13 Esc cancel for transient modes`、`V1-14 metrics-based template alignment` を追加した
+  - その後 `V1-12` は再検討し、slot direct selection も採らず、`前スロット/次スロット`、current slot 状態表示、current slot 強調表示を template UI から外す task へ上書きした
   - `FUT-08 object 選択時の preview/canvas ハイライト` は future work のまま detail task 化し、`Esc` 解除は ready task として future から本体計画へ昇格した
   - template 幅は shaping ベース維持、縦揃えだけ metrics ベースへ寄せる方針を計画へ固定し、`VA` などの kerning を壊さない設計にした
   - multiline template engine 自体は既に `\\n` 対応済みだが、GUI は single-line のため `V1-10` として分離した
