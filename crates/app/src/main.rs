@@ -2104,6 +2104,7 @@ impl DesktopApp {
             self.last_committed_object_bounds = Some((min, max));
             self.pending_guide_character_bounds = None;
             self.guide_state = Some(GuideOverlayState::from_reference_bounds(min, max));
+            self.session.note_auto_group_break();
             self.refresh_guide_geometry();
             self.push_log("ガイド基準を更新しました。");
         }
@@ -2142,6 +2143,7 @@ impl DesktopApp {
         self.guide_modifier_was_down = false;
         self.guide_modifier_used_for_stroke = false;
         self.guide_modifier_tap_suppressed = false;
+        self.session.note_auto_group_break();
         self.push_log("ガイドを解除しました。");
     }
 
@@ -2160,10 +2162,16 @@ impl DesktopApp {
     }
 
     fn reset_template_slots(&mut self) {
+        let had_template_state = self.template.placement_armed
+            || self.template.placed_origin.is_some()
+            || self.template.placed_slots.is_some();
         self.template.placed_origin = None;
         self.template.placed_slots = None;
         self.template.slot_object_ids.clear();
         self.template.current_slot_index = 0;
+        if had_template_state {
+            self.session.note_auto_group_break();
+        }
     }
 
     fn refresh_placed_template_slots(&mut self, ctx: &egui::Context) {
@@ -3065,6 +3073,7 @@ impl DesktopApp {
                     self.template.current_slot_index = 0;
                     self.template.slot_object_ids.clear();
                     self.refresh_placed_template_slots(ctx);
+                    self.session.note_auto_group_break();
                     self.template.placement_armed = false;
                     self.push_log("テンプレート配置を確定しました。");
                 }
@@ -3957,6 +3966,7 @@ impl DesktopApp {
             BottomTab::Outline => {
                 let selected_object_count = self.session.selected_object_ids().len();
                 let selected_group_count = self.session.selected_group_ids().len();
+                let selected_groupable_object_count = self.session.selected_groupable_object_count();
                 let has_selected_targets = !(self.session.selected_object_ids().is_empty()
                     && self.session.selected_group_ids().is_empty());
                 ui.horizontal_wrapped(|ui| {
@@ -3965,7 +3975,10 @@ impl DesktopApp {
                         selected_object_count, selected_group_count
                     ));
                     if ui
-                        .add_enabled(selected_object_count >= 2, egui::Button::new("グループ化"))
+                        .add_enabled(
+                            selected_groupable_object_count >= 2,
+                            egui::Button::new("グループ化"),
+                        )
                         .clicked()
                     {
                         match self.session.group_selected_objects() {
@@ -6167,7 +6180,7 @@ fn merge_bounds(
 mod tests {
     use super::*;
     use eframe::egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
-    use pauseink_domain::{MediaTime, Point2};
+    use pauseink_domain::{GlyphObjectId, MediaTime, Point2};
     use pauseink_media::{ImportedMedia, MediaProbe, MediaSupport, PlaybackState};
     use pauseink_portable_fs::{load_settings_from_file, PortablePaths, Settings};
     use tempfile::tempdir;
@@ -6204,6 +6217,21 @@ mod tests {
                 support: MediaSupport::Supported,
             },
         }
+    }
+
+    fn commit_session_stroke(
+        app: &mut DesktopApp,
+        start: Point2,
+        end: Point2,
+        at_ms: i64,
+    ) -> GlyphObjectId {
+        app.session.begin_stroke(start, MediaTime::from_millis(at_ms));
+        app.session
+            .append_stroke_point(end, MediaTime::from_millis(at_ms + 10));
+        app.session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed")
+            .expect("object id")
     }
 
     fn run_canvas_input_frame(
@@ -8186,6 +8214,70 @@ mod tests {
         assert_eq!(state.current_target_object_id(), Some(object_id.clone()));
         assert_eq!(state.take_if_pending_after_commit(), Some(object_id));
         assert!(!state.in_progress);
+    }
+
+    #[test]
+    fn capture_guide_from_object_breaks_auto_group_chain() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        let first_object = commit_session_stroke(
+            &mut app,
+            Point2 { x: 0.0, y: 0.0 },
+            Point2 { x: 20.0, y: 20.0 },
+            0,
+        );
+        app.capture_guide_from_object(&first_object);
+        commit_session_stroke(
+            &mut app,
+            Point2 { x: 40.0, y: 0.0 },
+            Point2 { x: 60.0, y: 20.0 },
+            40,
+        );
+
+        assert!(
+            app.session.project.groups.is_empty(),
+            "guide 基準更新は auto-group chain を切ってほしい"
+        );
+    }
+
+    #[test]
+    fn reset_template_slots_breaks_auto_group_chain() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        commit_session_stroke(
+            &mut app,
+            Point2 { x: 0.0, y: 0.0 },
+            Point2 { x: 20.0, y: 20.0 },
+            0,
+        );
+        app.template.placement_armed = true;
+        app.template.placed_origin = Some(Point::new(100.0, 80.0));
+        app.template.placed_slots = Some(vec![pauseink_template_layout::TemplateSlot {
+            grapheme: "あ".to_owned(),
+            origin: Point::new(100.0, 80.0),
+            width: 32.0,
+            height: 40.0,
+            scale: 1.0,
+        }]);
+
+        app.reset_template_slots();
+        commit_session_stroke(
+            &mut app,
+            Point2 { x: 40.0, y: 0.0 },
+            Point2 { x: 60.0, y: 20.0 },
+            40,
+        );
+
+        assert!(
+            app.session.project.groups.is_empty(),
+            "template reset は auto-group chain を切ってほしい"
+        );
     }
 
     #[test]

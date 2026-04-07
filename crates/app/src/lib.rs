@@ -11,7 +11,7 @@ use pauseink_domain::{
     GlyphObjectZIndexChange, Group, GroupId, InsertClearEventCommand, InsertGlyphObjectCommand,
     InsertGroupCommand, InsertStrokeCommand, MediaTime, NormalizeZOrderCommand, OrderingMetadata,
     Point2, RemoveGroupCommand, SetGlyphObjectEntranceCommand, SetGlyphObjectStyleCommand, Stroke,
-    StrokeId, StrokeSample, StyleSnapshot, DEFAULT_HISTORY_DEPTH,
+    StrokeId, StrokeSample, StyleSnapshot, UpdateGroupMembershipCommand, DEFAULT_HISTORY_DEPTH,
 };
 use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
@@ -89,6 +89,27 @@ struct GroupSelectionContext {
     object_ids: Vec<GlyphObjectId>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum AutoGroupContext {
+    Pending {
+        object_id: GlyphObjectId,
+        page_index: usize,
+        style: StyleSnapshot,
+        entrance: EntranceBehavior,
+    },
+    Active {
+        group_id: GroupId,
+        page_index: usize,
+        style: StyleSnapshot,
+        entrance: EntranceBehavior,
+    },
+}
+
+struct AutoGroupPlan {
+    commands: Vec<Box<dyn pauseink_domain::Command<AnnotationProject>>>,
+    next_context: Option<AutoGroupContext>,
+}
+
 pub struct AppSession {
     pub document: PauseInkDocument,
     pub project: AnnotationProject,
@@ -106,6 +127,7 @@ pub struct AppSession {
     stroke_draft: Option<StrokeDraft>,
     last_created_object_id: Option<GlyphObjectId>,
     last_group_selection_context: Option<GroupSelectionContext>,
+    auto_group_context: Option<AutoGroupContext>,
     next_id_counter: u64,
     next_capture_order: u64,
 }
@@ -137,6 +159,7 @@ impl AppSession {
             stroke_draft: None,
             last_created_object_id: None,
             last_group_selection_context: None,
+            auto_group_context: None,
             next_id_counter: 1,
             next_capture_order: 1,
             document,
@@ -167,6 +190,7 @@ impl AppSession {
             stroke_draft: None,
             last_created_object_id: None,
             last_group_selection_context: None,
+            auto_group_context: None,
             next_id_counter,
             next_capture_order,
         })
@@ -415,6 +439,14 @@ impl AppSession {
         self.selection = SelectionState::default();
     }
 
+    pub fn note_auto_group_break(&mut self) {
+        self.auto_group_context = None;
+    }
+
+    pub fn selected_groupable_object_count(&self) -> usize {
+        self.selected_target_object_ids().len()
+    }
+
     pub fn apply_active_style_to_selection(&mut self) -> AnyhowResult<bool> {
         self.apply_style_to_object_ids(
             &self.selected_target_object_ids(),
@@ -446,42 +478,110 @@ impl AppSession {
     }
 
     pub fn group_selected_objects(&mut self) -> AnyhowResult<Option<GroupId>> {
-        let object_ids = self.selected_object_ids();
+        let object_ids = self.selected_target_object_ids();
         if object_ids.len() < 2 {
             return Ok(None);
         }
-        if object_ids
-            .iter()
-            .any(|object_id| self.group_for_object_id(object_id).is_some())
-        {
-            anyhow::bail!("既に group へ所属している object は v1.0 では group 化できません。");
-        }
-
-        let created_at = object_ids
+        let page_indices = object_ids
             .iter()
             .filter_map(|object_id| {
                 self.project
                     .glyph_objects
                     .iter()
                     .find(|object| object.id == *object_id)
-                    .map(|object| object.created_at)
+                    .map(|object| object.page_index(&self.project.clear_events))
             })
-            .min()
-            .unwrap_or_else(|| self.current_time());
-        let group = Group {
-            id: GroupId::new(self.allocate_id("group")),
-            glyph_object_ids: object_ids.clone(),
-            created_at,
-            ..Group::default()
+            .collect::<HashSet<_>>();
+        if page_indices.len() > 1 {
+            anyhow::bail!("異なる page の object は同じ group にできません。");
+        }
+
+        let existing_group_ids = dedupe_group_ids(
+            object_ids
+                .iter()
+                .filter_map(|object_id| self.group_for_object_id(object_id)),
+        );
+        let ordered_group_ids = self
+            .project
+            .groups
+            .iter()
+            .filter(|group| existing_group_ids.contains(&group.id))
+            .map(|group| group.id.clone())
+            .collect::<Vec<_>>();
+
+        let group_id = if let Some(anchor_group_id) = ordered_group_ids.first().cloned() {
+            let anchor_group = self
+                .project
+                .groups
+                .iter()
+                .find(|group| group.id == anchor_group_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("anchor group not found: {}", anchor_group_id.0))?;
+            let mut commands: Vec<Box<dyn pauseink_domain::Command<AnnotationProject>>> = Vec::new();
+            if anchor_group.glyph_object_ids != object_ids {
+                commands.push(Box::new(UpdateGroupMembershipCommand {
+                    group_id: anchor_group_id.clone(),
+                    from_glyph_object_ids: anchor_group.glyph_object_ids.clone(),
+                    to_glyph_object_ids: object_ids.clone(),
+                    from_loose_stroke_ids: anchor_group.loose_stroke_ids.clone(),
+                    to_loose_stroke_ids: anchor_group.loose_stroke_ids.clone(),
+                }));
+            }
+
+            for group in self.project.groups.iter().rev() {
+                if group.id != anchor_group_id && ordered_group_ids.contains(&group.id) {
+                    let index = self
+                        .project
+                        .group_index(&group.id)
+                        .expect("existing group should have index");
+                    commands.push(Box::new(RemoveGroupCommand {
+                        group: group.clone(),
+                        index,
+                    }));
+                }
+            }
+
+            if commands.is_empty() {
+                return Ok(None);
+            }
+            self.history
+                .apply(&mut self.project, Box::new(CommandBatch::new(commands)))?;
+            anchor_group_id
+        } else {
+            let created_at = object_ids
+                .iter()
+                .filter_map(|object_id| {
+                    self.project
+                        .glyph_objects
+                        .iter()
+                        .find(|object| object.id == *object_id)
+                        .map(|object| object.created_at)
+                })
+                .min()
+                .unwrap_or_else(|| self.current_time());
+            let group = Group {
+                id: GroupId::new(self.allocate_id("group")),
+                glyph_object_ids: object_ids.clone(),
+                created_at,
+                ..Group::default()
+            };
+            let group_id = group.id.clone();
+            self.history.apply(
+                &mut self.project,
+                Box::new(InsertGroupCommand { group, index: None }),
+            )?;
+            group_id
         };
-        let group_id = group.id.clone();
-        self.history.apply(
-            &mut self.project,
-            Box::new(InsertGroupCommand { group, index: None }),
-        )?;
+
         self.last_group_selection_context = Some(GroupSelectionContext {
             group_ids: vec![group_id.clone()],
             object_ids: object_ids.clone(),
+        });
+        self.auto_group_context = Some(AutoGroupContext::Active {
+            group_id: group_id.clone(),
+            page_index: page_indices.into_iter().next().unwrap_or(0),
+            style: self.active_style.clone(),
+            entrance: self.active_entrance.clone(),
         });
         self.replace_group_selection(vec![group_id.clone()]);
         self.dirty = true;
@@ -525,6 +625,7 @@ impl AppSession {
             group_ids,
             object_ids: object_ids.clone(),
         });
+        self.repair_auto_group_context_after_project_change();
         self.replace_object_selection(object_ids);
         self.dirty = true;
         Ok(true)
@@ -710,19 +811,23 @@ impl AppSession {
                 created_at,
                 ..GlyphObject::default()
             };
+            let auto_group_plan = self.plan_auto_group_for_new_object(&object_id, created_at);
+            let mut commands: Vec<Box<dyn pauseink_domain::Command<AnnotationProject>>> = vec![
+                Box::new(InsertStrokeCommand {
+                    stroke,
+                    index: None,
+                }),
+                Box::new(InsertGlyphObjectCommand {
+                    object,
+                    index: None,
+                }),
+            ];
+            commands.extend(auto_group_plan.commands);
             self.history.apply(
                 &mut self.project,
-                Box::new(CommandBatch::new(vec![
-                    Box::new(InsertStrokeCommand {
-                        stroke,
-                        index: None,
-                    }),
-                    Box::new(InsertGlyphObjectCommand {
-                        object,
-                        index: None,
-                    }),
-                ])),
+                Box::new(CommandBatch::new(commands)),
             )?;
+            self.auto_group_context = auto_group_plan.next_context;
             object_id
         };
 
@@ -823,6 +928,125 @@ impl AppSession {
             .find(|group| group.id == *group_id)
             .map(|group| group.glyph_object_ids.clone())
             .unwrap_or_default()
+    }
+
+    fn plan_auto_group_for_new_object(
+        &mut self,
+        new_object_id: &GlyphObjectId,
+        created_at: MediaTime,
+    ) -> AutoGroupPlan {
+        let page_index = pauseink_domain::page_index_for_time(&self.project.clear_events, created_at);
+        let pending_context = || AutoGroupContext::Pending {
+            object_id: new_object_id.clone(),
+            page_index,
+            style: self.active_style.clone(),
+            entrance: self.active_entrance.clone(),
+        };
+
+        let Some(context) = self.auto_group_context.clone() else {
+            return AutoGroupPlan {
+                commands: Vec::new(),
+                next_context: Some(pending_context()),
+            };
+        };
+        if !auto_group_context_matches(&context, page_index, &self.active_style, &self.active_entrance)
+        {
+            return AutoGroupPlan {
+                commands: Vec::new(),
+                next_context: Some(pending_context()),
+            };
+        }
+
+        match context {
+            AutoGroupContext::Pending { object_id, .. } => {
+                if let Some(group_id) = self.group_for_object_id(&object_id) {
+                    return self.plan_append_to_existing_group(
+                        &group_id,
+                        new_object_id,
+                        page_index,
+                        pending_context,
+                    );
+                }
+
+                if self.project.glyph_object_index(&object_id).is_none() {
+                    return AutoGroupPlan {
+                        commands: Vec::new(),
+                        next_context: Some(pending_context()),
+                    };
+                }
+
+                let group_id = GroupId::new(self.allocate_id("group"));
+                let group = Group {
+                    id: group_id.clone(),
+                    glyph_object_ids: vec![object_id.clone(), new_object_id.clone()],
+                    created_at: created_at
+                        .min(self.object_created_at(&object_id).unwrap_or(created_at)),
+                    ..Group::default()
+                };
+                AutoGroupPlan {
+                    commands: vec![Box::new(InsertGroupCommand { group, index: None })],
+                    next_context: Some(AutoGroupContext::Active {
+                        group_id,
+                        page_index,
+                        style: self.active_style.clone(),
+                        entrance: self.active_entrance.clone(),
+                    }),
+                }
+            }
+            AutoGroupContext::Active { group_id, .. } => {
+                self.plan_append_to_existing_group(
+                    &group_id,
+                    new_object_id,
+                    page_index,
+                    pending_context,
+                )
+            }
+        }
+    }
+
+    fn plan_append_to_existing_group<F>(
+        &self,
+        group_id: &GroupId,
+        new_object_id: &GlyphObjectId,
+        page_index: usize,
+        pending_context: F,
+    ) -> AutoGroupPlan
+    where
+        F: FnOnce() -> AutoGroupContext,
+    {
+        let Some(group) = self.project.groups.iter().find(|group| group.id == *group_id) else {
+            return AutoGroupPlan {
+                commands: Vec::new(),
+                next_context: Some(pending_context()),
+            };
+        };
+        let mut next_object_ids = group.glyph_object_ids.clone();
+        if !next_object_ids.contains(new_object_id) {
+            next_object_ids.push(new_object_id.clone());
+        }
+        AutoGroupPlan {
+            commands: vec![Box::new(UpdateGroupMembershipCommand {
+                group_id: group_id.clone(),
+                from_glyph_object_ids: group.glyph_object_ids.clone(),
+                to_glyph_object_ids: next_object_ids,
+                from_loose_stroke_ids: group.loose_stroke_ids.clone(),
+                to_loose_stroke_ids: group.loose_stroke_ids.clone(),
+            })],
+            next_context: Some(AutoGroupContext::Active {
+                group_id: group_id.clone(),
+                page_index,
+                style: self.active_style.clone(),
+                entrance: self.active_entrance.clone(),
+            }),
+        }
+    }
+
+    fn object_created_at(&self, object_id: &GlyphObjectId) -> Option<MediaTime> {
+        self.project
+            .glyph_objects
+            .iter()
+            .find(|object| object.id == *object_id)
+            .map(|object| object.created_at)
     }
 
     fn apply_style_to_object_ids(
@@ -934,6 +1158,7 @@ impl AppSession {
     }
 
     fn repair_selection_after_project_change(&mut self) {
+        self.repair_auto_group_context_after_project_change();
         self.selection
             .selected_object_ids
             .retain(|object_id| self.project.glyph_object_index(object_id).is_some());
@@ -1006,6 +1231,21 @@ impl AppSession {
         }
     }
 
+    fn repair_auto_group_context_after_project_change(&mut self) {
+        let should_clear = match &self.auto_group_context {
+            Some(AutoGroupContext::Pending { object_id, .. }) => {
+                self.project.glyph_object_index(object_id).is_none()
+            }
+            Some(AutoGroupContext::Active { group_id, .. }) => {
+                self.project.group_index(group_id).is_none()
+            }
+            None => false,
+        };
+        if should_clear {
+            self.auto_group_context = None;
+        }
+    }
+
     pub fn insert_clear_event(&mut self, kind: ClearKind) -> AnyhowResult<ClearEventId> {
         let clear_event = ClearEvent {
             id: ClearEventId::new(self.allocate_id("clear")),
@@ -1023,6 +1263,7 @@ impl AppSession {
                 index: None,
             }),
         )?;
+        self.note_auto_group_break();
         self.dirty = true;
         Ok(clear_event_id)
     }
@@ -1032,6 +1273,7 @@ impl AppSession {
         if changed {
             self.dirty = true;
             self.repair_selection_after_project_change();
+            self.note_auto_group_break();
         }
         Ok(changed)
     }
@@ -1041,6 +1283,7 @@ impl AppSession {
         if changed {
             self.dirty = true;
             self.repair_selection_after_project_change();
+            self.note_auto_group_break();
         }
         Ok(changed)
     }
@@ -1216,6 +1459,32 @@ fn dedupe_group_ids(ids: impl IntoIterator<Item = GroupId>) -> Vec<GroupId> {
         }
     }
     deduped
+}
+
+fn auto_group_context_matches(
+    context: &AutoGroupContext,
+    page_index: usize,
+    style: &StyleSnapshot,
+    entrance: &EntranceBehavior,
+) -> bool {
+    match context {
+        AutoGroupContext::Pending {
+            page_index: context_page,
+            style: context_style,
+            entrance: context_entrance,
+            ..
+        }
+        | AutoGroupContext::Active {
+            page_index: context_page,
+            style: context_style,
+            entrance: context_entrance,
+            ..
+        } => {
+            *context_page == page_index
+                && context_style == style
+                && context_entrance == entrance
+        }
+    }
 }
 
 fn toggle_vec_membership<T>(items: &mut Vec<T>, value: T)
@@ -2010,7 +2279,8 @@ mod tests {
     #[test]
     fn group_selected_objects_and_undo_redo_keep_selection_consistent() {
         let mut session = AppSession::default();
-        for start_x in [0.0, 40.0] {
+        for (start_x, red) in [(0.0, 255), (40.0, 128)] {
+            session.active_style.color = RgbaColor::new(red, 255, 255, 255);
             session.begin_stroke(
                 Point2 { x: start_x, y: 0.0 },
                 MediaTime::from_millis(start_x as i64),
@@ -2051,6 +2321,139 @@ mod tests {
         assert!(session.redo().expect("redo should succeed"));
         assert_eq!(session.selected_group_ids(), vec![group_id]);
         assert!(session.selected_object_ids().is_empty());
+    }
+
+    #[test]
+    fn grouping_selected_groups_merges_members_without_nesting() {
+        let mut session = AppSession::default();
+        for start_x in [0.0, 40.0, 80.0, 120.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 20.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(vec![object_ids[0].clone(), object_ids[1].clone()]);
+        let first_group_id = session
+            .group_selected_objects()
+            .expect("first grouping should succeed")
+            .expect("first group id");
+        session.replace_object_selection(vec![object_ids[2].clone(), object_ids[3].clone()]);
+        let second_group_id = session
+            .group_selected_objects()
+            .expect("second grouping should succeed")
+            .expect("second group id");
+
+        session.replace_group_selection(vec![first_group_id.clone(), second_group_id.clone()]);
+        let merged_group_id = session
+            .group_selected_objects()
+            .expect("merge should succeed")
+            .expect("merged group id");
+
+        assert_eq!(merged_group_id, first_group_id);
+        assert_eq!(session.project.groups.len(), 1);
+        assert_eq!(
+            session.project.groups[0].glyph_object_ids,
+            object_ids,
+            "group 同士の group 化は flat merge にしたい"
+        );
+        assert_eq!(session.selected_group_ids(), vec![merged_group_id]);
+    }
+
+    #[test]
+    fn auto_group_groups_same_style_strokes_on_same_page() {
+        let mut session = AppSession::default();
+
+        for start_x in [0.0, 40.0, 80.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 18.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+
+        assert_eq!(session.project.groups.len(), 1);
+        assert_eq!(session.project.groups[0].glyph_object_ids.len(), 3);
+    }
+
+    #[test]
+    fn auto_group_breaks_on_style_change_and_page_change() {
+        let mut session = AppSession::default();
+
+        for (start_x, red) in [(0.0, 255), (40.0, 128), (80.0, 128)] {
+            session.active_style.color = RgbaColor::new(red, 255, 255, 255);
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 16.0,
+                    y: 16.0,
+                },
+                MediaTime::from_millis(start_x as i64 + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+
+        assert_eq!(session.project.groups.len(), 1);
+        assert_eq!(
+            session.project.groups[0].glyph_object_ids.len(),
+            2,
+            "style change 後は新しい chain として数え直したい"
+        );
+
+        session.seek(MediaTime::from_millis(500));
+        session
+            .insert_clear_event(ClearKind::Instant)
+            .expect("clear event should insert");
+
+        for start_x in [120.0, 160.0] {
+            session.begin_stroke(
+                Point2 { x: start_x, y: 0.0 },
+                MediaTime::from_millis(600 + start_x as i64),
+            );
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 16.0,
+                    y: 16.0,
+                },
+                MediaTime::from_millis(610 + start_x as i64),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+
+        assert_eq!(session.project.groups.len(), 2);
+        assert_eq!(session.project.groups[1].glyph_object_ids.len(), 2);
     }
 
     #[test]

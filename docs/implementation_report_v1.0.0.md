@@ -5,11 +5,26 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 継続。`V1-02 reveal hot-trail accent effect` を完了し、次候補は `V1-16 flat auto-group semantics / merge grouping`。
+- 現在のフェーズ: Phase 20 継続。`V1-16 flat auto-group semantics / merge grouping` を完了し、次候補は `V1-06 page-first outline / page events`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
 - 最新の検証済み transparent export: `cargo test --workspace` 内の `pauseink_export::tests::transparent_png_sequence_export_smoke_if_host_runtime_exists`
+
+### 最新作業ログ
+
+- 2026-04-07:
+  - Task: `V1-16 flat auto-group semantics / merge grouping`
+  - 実施内容: `crates/app/src/lib.rs` に `AutoGroupContext` を追加し、same page・同一 style/entrance の連続 commit を flat group として persistent data へ吸収する経路を追加した。manual `グループ化` は nested group を作らず、選択対象 member を 1 group へ merge するように変更した。
+  - UI 連携: `crates/app/src/main.rs` で guide 基準更新、guide 解除、template reset、template 配置確定を auto-group break として扱い、outline の `グループ化` enable 条件を `selected_target_object_ids()` ベースへ更新した。
+  - test-first 修正: 既存 `group_selected_objects_and_undo_redo_keep_selection_consistent` は新仕様で自動 group に吸われるため、manual grouping を検証する責務に合わせて stroke 間で style を変える形へ更新した。
+  - 実行コマンド:
+    - `cargo test -p pauseink-app --lib grouping_selected_groups_merges_members_without_nesting -- --nocapture`
+    - `cargo test -p pauseink-app --lib auto_group_ -- --nocapture`
+    - `cargo test -p pauseink-app --lib group_selected_objects_and_undo_redo_keep_selection_consistent -- --nocapture`
+    - `cargo test -p pauseink-app --bin pauseink-app capture_guide_from_object_breaks_auto_group_chain -- --nocapture`
+    - `cargo test -p pauseink-app --bin pauseink-app reset_template_slots_breaks_auto_group_chain -- --nocapture`
+  - 結果: すべて exit 0。flat auto-group、group merge、guide/template break、manual grouping undo/redo を回帰固定した。
 
 ## 2. 環境
 

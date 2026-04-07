@@ -82,6 +82,8 @@ v1.0 の前提:
 - `オブジェクト一覧` で複数 object または group を選んでいる場合、右ペインの style / entrance 操作はその選択全体へまとめて適用されます
 - style / entrance の各項目には `preset 継承中` と `上書き中` の表示があり、`presetへ戻す` でその項目だけ継承へ戻せます
 - フォント、テンプレート、ガイド傾き、基本スタイル、outline / drop shadow / glow、entrance 設定は `settings.json5` に保存され、次回起動時に復元されます
+- 同じ page で、同じ style / entrance のまま連続して確定した object は auto-group として自動でまとまります
+- guide 基準更新、guide 解除、template の再配置 / reset、clear、undo / redo を挟むと、その auto-group chain はそこで切れます
 
 ### 3.3 ガイド capture
 
@@ -104,7 +106,7 @@ v1.0 の前提:
 - 下部 `オブジェクト一覧` の object 行をクリックすると、その object を選択します
 - Linux / Windows では `Ctrl`、macOS では `Cmd` を押しながらクリックすると複数選択を追加 / 解除できます
 - group 行をクリックすると group を選択し、その group に含まれる object 群をまとめて操作対象にできます
-- `グループ化` は未所属 object を 2 件以上選んだときに使えます
+- `グループ化` は選択対象を flat な 1 group へ統合します。group 同士をまとめた場合も、入れ子は作らず member を merge します
 - `グループ解除` は選択中 group を外し、member object を再び個別 selection に戻します
 - `背面へ` / `一つ後ろ` / `一つ前` / `前面へ` は、選択 object または選択 group の member object をまとめて前後移動します
 - 右ペインの基本スタイル、効果、出現 preset / 出現設定は、通常時は選択中 object 群全体へ同じ値を適用します
