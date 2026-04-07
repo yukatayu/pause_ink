@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了し、残 task は `V1-02 / V1-03 / V1-04 / V1-06 / packaging / QA` に移った。
+- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了済み。計画見直しで template/UI 系の追加 task `V1-09` 〜 `V1-14` を起票し、次候補は `V1-09 template font switch crash fix`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -1383,3 +1383,24 @@
     - exit 0。workspace test 全通、`pauseink-app --all-targets` check 通過。
     - app 側では `multi_select_style_and_entrance_apply_to_selected_objects_and_roundtrip_history`、`group_selected_objects_and_undo_redo_keep_selection_consistent`、`move_selected_objects_forward_and_backward_preserves_relative_order`、`ungroup_selected_groups_restores_object_selection` を追加して回帰固定した。
     - domain 側では group remove / membership update / batch style-entrance / z-order normalize の往復を unit test で固定した。
+
+## 15. 2026-04-07 残 task 計画の再整理
+
+- 2026-04-07T16:20:00+09:00
+  - 直近マイルストーン: template/UI 系の追加要件を `.docs/16_remaining_tasks_plan.md` へ task 化し、実装 readiness を整理する。
+  - 実施内容:
+    - `FUT-08 object 選択時の preview/canvas ハイライト` を future work 詳細 task として補強した。
+    - `Esc` による template / guide 解除は future から本体 task へ昇格し、`V1-13` として切り出した。
+    - 追加で `V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template placement action row simplification`、`V1-14 metrics-based template alignment` を起票した。
+    - plan の現状スナップショットも更新し、`V1-01 / V1-05 / V1-07 / V1-08` 完了済み、未着手はそれ以外という状態へ揃えた。
+  - 調査メモ:
+    - template 幅計算の本番経路は `DesktopApp::layout_template_line()` と `template_slots_at_origin()` で、横幅は `egui` shaping ベース、縦位置は簡易 baseline モデルだった。
+    - template engine 自体は `\n` 対応済みだが、GUI は `text_edit_singleline` のため multiline を入力できない。
+    - font 切替 crash の有力原因は、未 bind family が `template_font_choices()` に残り、`template_font_id()` がそのまま `FontFamily::Name` で引いて `epaint` panic 経路へ入ること。
+    - `前スロット / 次スロット` は slot geometry を動かすのではなく `current_slot_index` だけを手動補正する secondary action であることを確認した。
+  - 方針:
+    - template の横幅は shaping ベースを維持し、縦位置だけ metrics ベースへ寄せる。これにより `VA` 等の kerning を壊さず baseline 改善を狙う。
+    - multiline editor と panel 幅追従は独立 task として先に片づけ、metrics 導入は一段後ろへ置く。
+  - 検証:
+    - `git diff --check`
+      - 結果: exit 0。計画書・進捗・レポートの docs-only 更新に whitespace error が無いことを確認。

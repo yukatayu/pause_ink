@@ -8,7 +8,7 @@
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: 今回バッチ (`V1-01 -> V1-08 -> V1-07 -> V1-05`) は完了。次候補は `.docs/16_remaining_tasks_plan.md` の `V1-02 reveal-head effect`。
+- 現在の即時マイルストーン: 今回バッチ (`V1-01 -> V1-08 -> V1-07 -> V1-05`) は完了。計画見直しで template 系の追加 task (`V1-09` 〜 `V1-14`) を起票済みで、次候補は `V1-09 template font switch crash fix`。
 - 最新の確認事項:
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
@@ -107,6 +107,11 @@
   - 上記 bugfix バッチについて `cargo test --workspace` と `cargo check -p pauseink-app --all-targets` を再通過し、manual / report / progress も同期した
   - `.docs/16_remaining_tasks_plan.md` を新設し、未実装の v1.0 残項目と future work を task 番号つきで整理した
   - `.docs/16_remaining_tasks_plan.md` に task ごとの具体的な困り方、不可逆寄りの先決事項、共通の doc/test 読み順を追記し、大域計画の最終見直し版へ更新した
+  - `.docs/16_remaining_tasks_plan.md` をさらに更新し、`V1-09 template font switch crash fix`、`V1-10 multiline template editor UI`、`V1-11 panel-aware wide controls`、`V1-12 template placement action row simplification`、`V1-13 Esc cancel for transient modes`、`V1-14 metrics-based template alignment` を追加した
+  - `FUT-08 object 選択時の preview/canvas ハイライト` は future work のまま detail task 化し、`Esc` 解除は ready task として future から本体計画へ昇格した
+  - template 幅は shaping ベース維持、縦揃えだけ metrics ベースへ寄せる方針を計画へ固定し、`VA` などの kerning を壊さない設計にした
+  - multiline template engine 自体は既に `\\n` 対応済みだが、GUI は single-line のため `V1-10` として分離した
+  - template font 切替 crash は `未 bind family` を `FontFamily::Name` で引く panic 経路が最有力と切り分け、`V1-09` の設計へ反映した
   - Windows の release binary だけ二重にコンソールが開く問題について、原因を `windows_subsystem` 未宣言と切り分け、`crates/app/src/main.rs` に release 専用 GUI subsystem 宣言を追加した
   - 上記の回帰として `windows_release_build_declares_gui_subsystem` を追加し、targeted test / `cargo test -p pauseink-app --lib --bins` / `cargo check -p pauseink-app --all-targets` を通した
   - `cargo test -p pauseink-renderer later_paused_batch_starts_in_parallel_with_first_timed_object_of_page -- --nocapture`、`cargo test -p pauseink-renderer paused_preview_forces_current_batch_fully_visible_without_releasing_previous_batch_queue -- --nocapture`、`cargo test -p pauseink-renderer later_object_outline_and_shadow_stay_behind_earlier_object_body -- --nocapture`、`cargo test -p pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`、`cargo test -p pauseink-app canvas_input_is_ignored_while_playback_is_running -- --nocapture` を red/green で通した
@@ -186,5 +191,5 @@
 ## 次の具体的な一手
 
 1. display server がある Linux または実機 Windows で、outline 起点の複数選択 / group / z-order、effect editor、出現速度 editor、template 字詰め、guide 進行を目視確認する。
-2. `.docs/16_remaining_tasks_plan.md` に従って `V1-02 reveal-head effect` と `V1-03 post-action chain` を順番に進める。
-3. `rustup target add x86_64-pc-windows-gnu` を入れた環境で Windows build を再試行し、release 用 portable sidecar runtime の bundling / provenance / notices を詰める。
+2. `.docs/16_remaining_tasks_plan.md` に従って `V1-09` から `V1-14` までの template/UI 系バッチを順に進める。
+3. その後 `V1-02 reveal-head effect`、`V1-04 clear/combo preset`、`V1-06`、`V1-03 post-action chain`、packaging / QA の順で閉じる。

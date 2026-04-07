@@ -54,9 +54,15 @@
 6. object outline / page events panel の強化
 7. template / guide advanced controls
 8. side panel scroll / overflow hardening
-9. portable FFmpeg sidecar packaging / provenance / notices
-10. GitHub Release への sidecar 統合
-11. Windows / macOS / Linux の最終検証
+9. template font 切替 crash の修正
+10. multiline template editor UI
+11. panel 幅追従の primary controls 整理
+12. template placement action row の簡素化
+13. `Esc` による transient template / guide 解除
+14. metrics-based template alignment
+15. portable FFmpeg sidecar packaging / provenance / notices
+16. GitHub Release への sidecar 統合
+17. Windows / macOS / Linux の最終検証
 
 ### 1.2 この計画に含めないもの
 
@@ -70,7 +76,6 @@
 - `FUT-06`: optional codec-pack 取得ツール
 - `FUT-07`: arbitrary effect scripting
 - `FUT-08`: object 選択時の preview/canvas ハイライト
-- `FUT-09`: `Esc` による template 配置 / guide の解除
 
 ### 1.3 Future work 参照 ID
 
@@ -84,7 +89,6 @@
 | FUT-06 | optional codec-pack 取得ツール | provenance / compliance が mainline と別問題のため |
 | FUT-07 | effect scripting | v1.0 は built-in effect + declarative preset に限定 |
 | FUT-08 | object 選択時の preview/canvas ハイライト | 視認性と編集導線には有用だが、誤って常時強い装飾を出すと preview のデザイン可読性を壊しやすいため |
-| FUT-09 | `Esc` による template 配置 / guide の解除 | 便利な editor shortcut だが、既存の keyboard shortcut と衝突しない解除優先順位を先に整理してから入れた方が安全なため |
 
 ## 2. 依存関係マップ
 
@@ -98,21 +102,28 @@
 | V1-06 | object outline / page events panel 強化 | V1-04, V1-05 | tree 表示、batch edit、現在生存中表示、auto-follow を揃える |
 | V1-07 | template / guide advanced controls | なし | template 詳細設定を別ポップアップへ逃がし、guide の次文字字間調整を UI に露出する |
 | V1-08 | side panel scroll / overflow hardening | なし | 左右ペインを縦スクロール対応にし、項目増加でも画面外へはみ出さないようにする |
+| V1-09 | template font switch crash fix | なし | template 表示中の font 切替を fail-safe にしてクラッシュを止める |
+| V1-10 | multiline template editor UI | なし | 改行入力を GUI から扱えるようにし、editor 高さも調整可能にする |
+| V1-11 | panel-aware wide controls | なし | seek bar や template 入力欄など primary controls を panel 幅へ自然に追従させる |
+| V1-12 | template placement action row simplification | V1-11 | `前スロット/次スロット` の価値を残しつつ、左パネルの最小幅を圧迫しない配置へ整理する |
+| V1-13 | `Esc` cancel for transient modes | なし | template 配置 / guide を keyboard から安全に解除できるようにする |
+| V1-14 | metrics-based template alignment | V1-10 | template の縦位置と小文字揃えを font metrics ベースへ寄せつつ、横幅は kerning を壊さない shaping ベースを維持する |
 | PKG-01 | portable FFmpeg sidecar packaging | なし | sidecar layout, manifest, provenance, notices を出荷形にする |
 | PKG-02 | GitHub Release sidecar 統合 | PKG-01 | 既存 release workflow を sidecar / notices 同梱の完成形へ引き上げる |
-| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-07, V1-08, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
+| QA-01 | cross-platform validation / closeout | V1-02, V1-03, V1-04, V1-06, V1-10, V1-11, V1-12, V1-13, V1-14, PKG-01, PKG-02 | 実 build / runtime / export を OS ごとに通し、docs を確定する |
 
 ## 3. 実装対象の現状スナップショット
 
 - `reveal-head effect` は `crates/domain/src/annotations.rs` に型だけあるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
 - `post-action chain` も domain に型だけあり、app / renderer / preset へ未接続。
 - clear event は domain と renderer に最小 primitive があるが、app 側は `全消去 -> Instant clear 挿入` のみで、`kind / duration / granularity / ordering` の編集 UI と preset 導線が無い。
-- preset は現状 `style preset` に entrance まで同居しており、spec の `base style / entrance / clear / combo` 分離と `inherit / reset` UI がまだ無い。
-- selection は `selected_object_id: Option<GlyphObjectId>` の単一選択だけで、multi-select / group / ungroup / z-order 操作が未整備。
-- `オブジェクト一覧` は flat text list、`ページイベント` は flat list で、spec の tree / batch edit / alive highlight / auto-follow に未達。
-- template では内部の `line_height / kana_scale / latin_scale / punctuation_scale / underlay_mode` はあるが UI 露出が不足している。
-- guide では `slope` しか編集できず、次文字用の縦線セットを直前文字からどれだけ離すかを調整する editor parameter がない。
-- 左右ペインは縦スクロール前提で作られておらず、今後 controls が増えると低い画面で操作不能になりやすい。
+- `V1-01`, `V1-05`, `V1-07`, `V1-08` は develop で完了済み。以後の未着手はそれ以外の task に限る。
+- template の横幅は `egui` shaping ベースで取れているが、縦位置は `baseline_y + font_size * scale` 近辺の簡易モデルで、`ascent / descent / x-height / cap-height` を見ていない。
+- template engine 自体は `\n` を解釈できるが、左ペインの入力欄は single-line なので GUI から改行を入れられない。
+- seek bar や template 文字入力欄は panel 幅へ十分に追従しておらず、横幅が余っても入力領域が伸びない箇所がある。
+- `前スロット / 次スロット` は slot index を手動補正する用途で残っているが、常時 4 ボタン横並びのため左パネル最小幅を押し上げている。
+- template 表示中に font family を切り替えると crash する報告があり、font 適用タイミングと placed slot 再計算の境界を見直す必要がある。
+- `Esc` で template 配置や guide を解除する shortcut はまだ無い。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 - GitHub Release workflow は app binary archive の build/upload までは済んでいるが、sidecar / notices / manifest 同梱は未完了。
 
@@ -130,6 +141,12 @@
 | V1-06 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | bottom panel / object list / page event の UI test、run 導出 helper の test |
 | V1-07 | `.docs/02_final_spec_v1.0.0.md`, `.docs/03_ui_window_model.md` | `crates/template_layout` と `crates/app` の template save/restore / guide geometry test |
 | V1-08 | `.docs/03_ui_window_model.md`, `.docs/10_testing_and_done_criteria.md` | `crates/app/src/main.rs` の bottom panel / layout 系 test、panel 幅と canvas 安定性の test |
+| V1-09 | `.docs/03_ui_window_model.md`, `.docs/13_risk_register.md` | `crates/app/src/main.rs` の template placement / font restore test、font reload 周りの helper |
+| V1-10 | `.docs/03_ui_window_model.md`, `.docs/05_project_file_format.md` | template save/restore test、left panel UI test、editor UI state 保存の有無 |
+| V1-11 | `.docs/03_ui_window_model.md` | transport bar / left panel layout test、`available_width` 前提の UI helper |
+| V1-12 | `.docs/03_ui_window_model.md` | template slot stepper test、template placement UI test |
+| V1-13 | `.docs/03_ui_window_model.md`, `.docs/02_final_spec_v1.0.0.md` | keyboard shortcut 処理、guide/template の transient state test |
+| V1-14 | `.docs/02_final_spec_v1.0.0.md`, `.docs/04_architecture.md` | `crates/template_layout`, `crates/fonts`, `crates/app` の template slot / shaping / save-restore test |
 | PKG-01 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/13_risk_register.md` | `crates/media` の runtime discovery test、`scripts/package_release_asset.py` の archive test |
 | PKG-02 | `.docs/07_media_runtime_and_ffmpeg.md`, `.docs/10_testing_and_done_criteria.md` | workflow YAML parse、packager script の dry-run |
 | QA-01 | `.docs/10_testing_and_done_criteria.md`, `.docs/13_risk_register.md` | 現在の workspace test、host export smoke、既知制約一覧 |
@@ -680,6 +697,364 @@
 - 低い画面でも主要 controls へ到達できる
 - 既存の width resize と bottom panel の安定性を壊さない
 
+### V1-09: template font switch crash fix
+
+**優先度:** P0
+**依存:** なし
+**ひとことで言うと:** template 表示中の font family 切替を fail-safe にして、配置済み slot があっても落ちないようにする task。
+
+**目的:** reported crash を止める。font family の変更を「即値書き換え」ではなく、検証済みの apply pipeline に通してから preview / placed slot へ反映する。
+
+**具体的に困る場面**
+
+- 利用者が template を表示したまま font を変えると app が落ち、保存前の作業を失う。
+- 開発者が font 適用タイミングを曖昧なまま修正すると、今度は crash は止まっても「font dropdown だけ変わって実際の slot は旧 font のまま」になる。
+
+**現状の問題**
+
+- 左ペインの font dropdown 変更時に `font_family` を即時更新し、その場で `maybe_apply_egui_fonts()` と layout refresh を混在させている。
+- `template_font_choices` は未発見の選択中 family も choices に残す一方、`template_font_id()` は `システム既定` 以外を常に `FontFamily::Name` で引くため、未 bind family を preview/reflow が踏む panic 経路がある。
+- placed slot の再計算は `slot_object_ids.resize(...)` に留まるため、font 切替で slot 並びが変わった場合の index ずれも検討が必要。
+
+**設計**
+
+- `requested_template_font_family` と `applied_template_font_family` を分けず、既存 state は維持しつつ「apply 前 validation」を 1 箇所へ寄せる。
+- font 変更時は即座に `self.template.font_family` を採用せず、次の順で処理する。
+  1. 候補 family が local / Google cache / system から解決できるか検証する
+  2. 解決できる場合だけ `font_config_dirty = true`
+  3. `maybe_apply_egui_fonts()` を通して font registry を更新する
+  4. 更新成功後に placed slot reflow と preview invalidation を行う
+- 解決できない場合は previous family を維持し、log に理由を出す。
+- placed slot がある状態の font 切替は `reset_template_slots()` ではなく `refresh_placed_template_slots()` による reflow を基本とし、slot index と origin は保持する。
+
+**着手前に決めるべきこと**
+
+- font 適用失敗時に「前の font を保持」するか「システム既定へ戻す」か。UX が変わる。
+- `maybe_apply_egui_fonts()` の失敗を recoverable log に留めるか、UI toast 的な明示エラーにするか。通知量が変わる。
+- font 変更中に template details popup が開いている場合も同じ apply pipeline に統一するか。入口が複数あると再発しやすい。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/fonts/src/lib.rs` （必要なら validation helper を追加）
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. template font 変更の apply helper を 1 箇所へ集約する。
+2. candidate family の解決可否と fallback を明示化する。
+3. placed slot がある状態の reflow を安全に通す。
+4. font 切替失敗時の log を追加する。
+
+**必要テスト**
+
+- `app`: placed slot がある状態で font family を切り替えても panic / crash しない
+- `app`: 無効な family を選んだとき previous family を維持する
+- `app`: font family 切替後も slot origin と current slot index が保持される
+
+**完了条件**
+
+- template 表示中の font 切替で落ちない
+- 正常系では preview と placed slot が新 font で reflow する
+- 失敗系では安全に前状態へ留まる
+
+### V1-10: multiline template editor UI
+
+**優先度:** P1
+**依存:** なし
+**ひとことで言うと:** template text を GUI から改行付きで入力できるようにし、入力欄の高さもユーザが調整できるようにする task。
+
+**目的:** engine 側にある `\n` 対応を GUI から使えるようにする。2 行初期表示と resizable editor を用意し、template details の `行間` が実際の multiline template で意味を持つ状態へ持っていく。
+
+**具体的に困る場面**
+
+- 利用者が 2 行以上の template を置きたくても、今は single-line input のため GUI から改行を入れられない。
+- 左ペインが狭い環境では、長い template を編集すると全文が見えず、誤字修正や改行位置の調整がしづらい。
+
+**現状の問題**
+
+- template text input は `text_edit_singleline` 固定。
+- editor の高さは固定で、複数行の確認に向かない。
+
+**設計**
+
+- 左ペインの template text input を `TextEdit::multiline` へ置き換える。
+- 初期表示は 2 行分の高さとし、右下ドラッグで高さを変えられる `egui::Resize` コンテナで包む。
+- 横幅は panel の available width に追従させるが、ボタン列や見出しの余白までは塗りつぶさない。
+- editor height は project ではなく app/editor UI state として保存する。template 本文そのものは既存どおり project に保存する。
+- line break の正規化は既存 project save の canonical 形式へ従い、`\r\n` 読み込みは lenient のまま、save は `\n` に寄せる。
+
+**着手前に決めるべきこと**
+
+- editor height を app relaunch まで戻すか、project ごとに持つか。UI state の保存先が変わる。
+- multiline editor を常時表示にするか、折りたたみ可能にするか。左ペイン密度に影響する。
+- Enter キーの扱いを「そのまま改行」にするか、特殊 shortcut と衝突させないか。操作感が変わる。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/app/src/lib.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. template text input を multiline 化する。
+2. `egui::Resize` で高さ可変にする。
+3. editor height を UI state へ保存し、relaunch で戻す。
+4. 改行が placed slot reflow に即時反映されることを確認する。
+
+**必要テスト**
+
+- `app`: multiline template text が save/reopen で保持される
+- `app`: `\n` を含む template 編集が即時 reflow される
+- `app`: editor height state が relaunch で戻る
+
+**完了条件**
+
+- GUI から改行入り template を編集できる
+- 初期高さは 2 行分で、右下ドラッグで高さ変更できる
+- 改行と行間設定が preview / placed slot に反映される
+
+### V1-11: panel-aware wide controls
+
+**優先度:** P1
+**依存:** なし
+**ひとことで言うと:** seek bar や template 入力欄など、広い方が使いやすい primary controls だけを panel 幅へ自然に追従させる task。
+
+**目的:** 利用者が panel 幅を広げたとき、入力や transport の主要部品もそれに見合って広く使えるようにする。一方で、余白やボタンまで不必要に引き伸ばさない。
+
+**具体的に困る場面**
+
+- シークバーが短いままで、panel を広げても seek 精度が上がらない。
+- template 入力欄が短いままだと、長い文字列や改行入り text の編集性が上がらない。
+
+**現状の問題**
+
+- seek bar 自体は `available_width()` を見る実装が入っているが、container 側の割付と他の text field の扱いが統一されていない。
+- どの widget を stretch し、どの widget を fixed にするかのルールがまだ無い。
+
+**設計**
+
+- 対象を「連続量を編集する primary control」に限定する。
+  - seek bar
+  - template text editor
+  - 必要なら preset 名や ID の長文 text field
+- stretch 方針は `available_width() - reserved_inline_width` の残りだけを使う。
+- ボタン列、短い numeric field、status badge は fixed のまま維持する。
+- 実装は共通 helper を 1 つ置き、場当たり的な `add_sized` の乱立を避ける。
+
+**着手前に決めるべきこと**
+
+- wide control の対象集合をどこまで広げるか。広げすぎると UI が間延びする。
+- seek bar の最小幅をいくつに固定するか。狭い画面での折り返し挙動が変わる。
+- multiline template editor と同時にやる前提か。layout 調整が重複しやすい。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. wide control 用 helper を追加する。
+2. transport bar の seek slider 割付を監査し、必要なら container 側も含めて調整する。
+3. template text editor を panel 幅追従にする。
+4. 余白やボタン列が不自然に伸びないことを確認する。
+
+**必要テスト**
+
+- `app`: panel 幅が広いと seek bar の usable width が伸びる
+- `app`: template text editor が panel 幅へ追従する
+- `app`: narrow width でも主要ボタン行が崩れない
+
+**完了条件**
+
+- seek bar と template input が panel 幅に応じて広がる
+- ボタンや余白は必要以上に広がらない
+- 狭い幅でも UI が壊れない
+
+### V1-12: template placement action row simplification
+
+**優先度:** P1
+**依存:** V1-11
+**ひとことで言うと:** `前スロット/次スロット` の機能は残しつつ、常時 4 ボタン横並びをやめて左パネルの最低幅を下げる task。
+
+**目的:** `前スロット/次スロット` の価値を整理し、必要なら secondary action へ格下げする。template placement の主操作を分かりやすくしつつ、panel 幅を圧迫しないようにする。
+
+**具体的に困る場面**
+
+- 左パネルが狭いと `テンプレート配置 / 前スロット / 次スロット / テンプレート解除` の 4 連ボタンが最小幅を押し上げる。
+- 利用者から見ると `前スロット/次スロット` の用途が見えにくく、「自動で次へ進むのに、なぜ必要なのか」が分かりづらい。
+
+**現状の問題**
+
+- `前スロット/次スロット` は placement 補正のための secondary action なのに、常時 primary row に置かれている。
+- slot navigation の価値説明が UI 上に無い。
+
+**設計**
+
+- capability 自体は残す。用途は次の 3 つに限定して説明する。
+  - 自動 advance を戻して書き直す
+  - 1 slot 飛ばして次へ進む
+  - 非連続な位置へ手動補正する
+- 左ペインの primary row は `テンプレート配置` と `テンプレート解除` を主にし、slot navigation は placement active 時だけ出す compact secondary row へ移す。
+- secondary row は `◀` / `▶` の小ボタン + `3 / 8` の現在位置表示を基本にし、文言ボタンを常時置かない。
+- もし実機確認で利用頻度が極端に低ければ、最終的に `テンプレート詳細` へ退避する余地を残す。
+
+**着手前に決めるべきこと**
+
+- slot navigation を完全削除せず残すかどうか。あとから戻すと shortcut / test をやり直す。
+- compact row を常時表示するか、placement active 時だけ出すか。左パネル密度が変わる。
+- keyboard shortcut を同時導入するか。説明コストと衝突が増える。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. template action row を primary / secondary に分ける。
+2. slot navigation を compact 表示へ移す。
+3. 現在 slot index 表示を追加する。
+4. panel 最小幅と wrapping の改善を確認する。
+
+**必要テスト**
+
+- `app`: template slot stepper が compact UI でも前後に動く
+- `app`: placement inactive 時は slot navigation が出ない、または無効化される
+- `app`: narrow panel でも template action row が崩れにくい
+
+**完了条件**
+
+- 左パネルの template action row が圧迫しにくくなる
+- `前スロット/次スロット` の価値を失わず secondary action 化できる
+- 現在 slot の位置が UI で分かる
+
+### V1-13: `Esc` cancel for transient modes
+
+**優先度:** P1
+**依存:** なし
+**ひとことで言うと:** template 配置や guide を `Esc` で解除できるようにし、mouse 主体の操作から安全に抜けられるようにする task。
+
+**目的:** transient editor mode を keyboard で即座に抜けられるようにする。template placement / guide / pending overlay を `Esc` で安全に閉じる。
+
+**具体的に困る場面**
+
+- 利用者が template placement 中や guide 表示中に「やめたい」と思っても、今は mouse で解除ボタンまで戻る必要がある。
+- shortcut 導入時に優先順位を曖昧にすると、text edit の `Esc`、popup close、template cancel が衝突する。
+
+**現状の問題**
+
+- `Esc` による transient mode cancel が無い。
+- keyboard shortcut の優先順位表が無い。
+
+**設計**
+
+- `Esc` の優先順位を明示する。
+  1. 開いている popup/window を閉じる
+  2. template placement を解除する
+  3. guide overlay / capture 待ちを解除する
+  4. それ以外は no-op
+- text editor に keyboard focus がある間は、その widget 側の既定挙動を優先し、global cancel は発火させない。
+- template cancel は `placement_armed = false` と placed slot reset、guide cancel は overlay state と capture 関連 state の reset を 1 helper へまとめる。
+
+**着手前に決めるべきこと**
+
+- popup close と mode cancel のどちらを優先するか。UI 期待値が変わる。
+- `Esc` を text input focus 中に奪うかどうか。編集体験が変わる。
+- guide cancel で `last_committed_object_bounds` まで消すか。次の guide 生成位置に影響する。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+
+**実装ステップ**
+
+1. global `Esc` handler を 1 箇所へ集約する。
+2. template cancel helper と guide cancel helper を分ける。
+3. popup open/focus との優先順位を固定する。
+4. undo/redo や guide capture と干渉しないことを確認する。
+
+**必要テスト**
+
+- `app`: template placement 中の `Esc` で slot と armed state が解除される
+- `app`: guide 表示中の `Esc` で overlay と capture state が解除される
+- `app`: text editor focus 中は global `Esc` cancel が発火しない
+
+**完了条件**
+
+- `Esc` で template placement と guide を解除できる
+- popup / text edit / global cancel の優先順位が一貫する
+- guide 再生成位置が壊れない
+
+### V1-14: metrics-based template alignment
+
+**優先度:** P1
+**依存:** V1-10
+**ひとことで言うと:** template の縦位置を font metrics ベースへ寄せ、小さくした英字や句読点の揃い方を改善する task。
+
+**目的:** `x` と `y`、小さめ英字、句読点などの縦揃えを改善する。ただし横幅まで単純な font metrics へ置き換えて kerning を壊さないよう、「縦は metrics、横は shaping」の責務分離を固定する。
+
+**具体的に困る場面**
+
+- 英字や句読点を縮小した template で、下端や baseline が不自然に浮いたり沈んだりする。
+- mixed-script の multiline template で、行ごとの見た目は reflow しても、小文字の収まりが揃わず下敷きとして使いにくい。
+
+**現状の問題**
+
+- template の横幅は `egui` shaping 由来の glyph width を使っているが、縦位置は `font_size * scale` 前提の簡易モデル。
+- `pauseink-fonts` は family 解決には使っているが、ascent/descent/x-height/cap-height の抽出 API はまだ無い。
+
+**設計**
+
+- 横方向は引き続き shaping / layout engine ベースにする。理由は、`VA` のような kerning や ligature に相当する advance 調整を壊さないため。
+- 縦方向だけ metrics ベースへ寄せる。
+  - 第一候補: font の `ascent / descent`
+  - 取れる場合は `x-height / cap-height`
+  - 取れない場合は「縮小文字は下揃え」の fallback
+- `pauseink-fonts` に metrics 抽出 helper を追加し、template に使う family から line metrics を引けるようにする。
+- slot には `baseline_offset_y` 相当の内部計算を導入するが、保存 format は大きく変えず、resolved slot geometry のみ再計算で吸収する。
+- `line_height` は line box 間距離として維持し、per-slot vertical alignment だけを差し替える。
+
+**着手前に決めるべきこと**
+
+- どの metrics source を採用するか。`ttf-parser` 等の parser 追加可否を最初に決める。
+- Latin/Kana/Punctuation を script 別 baseline に分けるか、単一の alphabetic-like baseline + fallback にするか。後から変えると slot 見た目が大きく変わる。
+- `x-height` 不在時の fallback を「下揃え」で固定するか、bbox 近似へ寄せるか。見た目互換に効く。
+
+**変更ファイル**
+
+- Modify: `crates/fonts/Cargo.toml`
+- Modify: `crates/fonts/src/lib.rs`
+- Modify: `crates/template_layout/src/lib.rs`
+- Modify: `crates/app/src/main.rs`
+- Modify: `manual/user_guide.md`
+- Modify: `manual/developer_guide.md`
+
+**実装ステップ**
+
+1. font metrics 抽出 helper を `pauseink-fonts` へ追加する。
+2. template slot 計算へ vertical metrics を導入する。
+3. shaping ベースの horizontal width と組み合わせる。
+4. fallback 時の下揃えロジックを入れる。
+5. mixed-script / multiline の回帰 test を追加する。
+
+**必要テスト**
+
+- `template_layout`: scaled latin / punctuation が baseline 付近で自然に揃う
+- `template_layout`: metrics 不在 fallback でも縮小文字が下揃えになる
+- `app`: font 切替後も metrics-based slot reflow が安定する
+- `app`: `VA` 相当の width が naive fixed advance より shaping に近いことを回帰で固定する
+
+**完了条件**
+
+- template の縦揃えが metrics ベースで改善される
+- kerning を壊さず横幅計算を維持できる
+- metrics 不在時も縮小文字は下揃えで破綻しない
+
 ### PKG-01: portable FFmpeg sidecar packaging / provenance / notices
 
 **優先度:** P0
@@ -870,32 +1245,88 @@
 - `progress.md` が最終状態になっている
 - `docs/implementation_report_v1.0.0.md` がコマンドと結果を含んで完結している
 
+### FUT-08: object 選択時の preview/canvas ハイライト
+
+**優先度:** Future
+**依存:** V1-06
+**ひとことで言うと:** 選択中 object を canvas 側でも追えるようにしつつ、preview の見た目を壊さないハイライト表現を定める future work。
+
+**目的:** object outline で選んだ object が preview 上のどれかを分かりやすくする。ただし annotation の完成見た目を強い装飾で壊さない。
+
+**具体的に困る場面**
+
+- object 数が多い project で、outline から object を選んでも preview 上の対応物がどれか即座に分からない。
+- 強すぎる selection overlay を入れると、実際の線色や effect の確認がしづらくなる。
+
+**現状の問題**
+
+- selection の source of truth 自体は `V1-05` で app session にあるが、canvas 側へ可視化していない。
+- どの visual language が preview を壊さないかの UX 検討がまだ無い。
+
+**設計**
+
+- base stroke を直接塗り替えず、editor-only overlay で示す。
+- 候補は次の 3 つまでに絞って比較する。
+  - subtle outline halo
+  - low-alpha bounding box
+  - active object のみ faint pulse
+- export には絶対に漏らさない。
+- multi-select 時は「focus object を強く、他 selected を弱く」の 2 段階表現を基本にする。
+
+**着手前に決めるべきこと**
+
+- 選択ハイライトを bbox ベースにするか stroke path ベースにするか。見た目と実装コストが大きく変わる。
+- focus object と selected set の見分け方をどうするか。selection UX の根本になる。
+- preview correctness 優先時にハイライトをどの程度 suppress するか。effect 編集時の視認性に影響する。
+
+**変更ファイル**
+
+- Modify: `crates/app/src/main.rs`
+- Modify: `crates/renderer/src/lib.rs` または app overlay 描画部
+- Modify: `manual/user_guide.md`
+
+**必要テスト**
+
+- `app`: selected/focused object の overlay state が切り替わる
+- `app`: export snapshot に selection highlight が漏れない
+- `app`: multi-select 時に focus と non-focus が区別される
+
+**完了条件**
+
+- preview 上で選択対象を見失いにくくなる
+- 完成見た目の確認を阻害しない
+- export へ editor-only overlay が漏れない
+
 ## 6. 着手おすすめ順
 
-上から順に依頼すれば、そのまま無理なく進めやすい順です。依存だけでなく、既存部分を壊しにくい順と、後戻りを減らしやすい順を優先しています。
+ここでは **未着手 task のみ** を、依存だけでなく「後戻りしにくい順」「reported bug を早く止める順」で並べます。
 
-1. `V1-01` preset 境界正規化
-   - 以後の effect / clear / combo の保存境界をここで固定しないと schema の手戻りが大きい。
-2. `V1-08` side panel scroll / overflow hardening
-   - 独立性が高く、先に入れておくと後続 task で UI 項目が増えても破綻しにくい。
-3. `V1-05` selection / group / z-order foundation
-   - 本質的な編集導線なので早めにやる価値は高い。入れ子禁止・outline 起点・app session 一本化を固定したので、手戻りリスクはかなり下がった。
-4. `V1-07` template / guide advanced controls
-   - 独立性が高く、既存 UI を壊しにくい。template 詳細ポップアップと guide gap は軽めで、早めに片付けると運用上の細かなストレスを減らせる。
-5. `V1-02` reveal-head effect
+1. `V1-09` template font switch crash fix
+   - crash は最優先で止める価値が高く、局所修正で済む可能性が高い。
+2. `V1-10` multiline template editor UI
+   - engine 既存機能の GUI 開放で、仕様変更が小さい。
+3. `V1-11` panel-aware wide controls
+   - layout 層の改善で独立性が高く、後続 UI task の土台になる。
+4. `V1-12` template placement action row simplification
+   - `V1-11` 後なら panel 幅と action row を同時に整理しやすい。
+5. `V1-13` `Esc` cancel for transient modes
+   - keyboard 導線の改善で独立性が高いが、popup/focus 優先順位だけは先に固定する。
+6. `V1-14` metrics-based template alignment
+   - 設計は固められるが、font metrics source の追加を伴うため一段重い。
+7. `V1-02` reveal-head effect
    - `V1-01` 後なら preset 境界が固まり、renderer への局所変更で進めやすい。
-6. `V1-04` clear / clear preset / combo preset
+8. `V1-04` clear / clear preset / combo preset
    - 利用者が直接困る操作 gap が大きく、page-event track の source of truth をここで確定できる。
-7. `V1-06` outline / page events panel 強化
-   - `V1-04` と `V1-05` が揃ってから入ると UI だけ空洞になるのを避けられる。
-8. `V1-03` post-action chain
-   - 最も timing が複雑で、group/run の基盤と outline 可視化がある方が安全。
-9. `PKG-01` portable sidecar packaging
-   - productization 側の大きな未完了。release asset 設計をここで固定する。
-10. `PKG-02` release workflow sidecar 統合
+9. `V1-06` outline / page events panel 強化
+   - `V1-05` と `V1-04` が揃ってから入ると UI だけ空洞になるのを避けられる。
+10. `V1-03` post-action chain
+    - 最も timing が複雑で、group/run の基盤と outline 可視化がある方が安全。
+11. `PKG-01` portable sidecar packaging
+    - productization 側の大きな未完了。release asset 設計をここで固定する。
+12. `PKG-02` release workflow sidecar 統合
     - workflow 自体はあるので、PKG-01 完了後は sidecar 統合へ絞って進められる。
-11. `QA-01` cross-platform validation / closeout
-   - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
+13. `QA-01` cross-platform validation / closeout
+    - 最後に OS ごとの build/import/export/diagnostics を実機証跡で閉じる。
 
 ## 7. task 指定時の返答ルール
 
