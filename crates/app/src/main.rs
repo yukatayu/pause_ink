@@ -59,6 +59,14 @@ fn clamp_template_text_editor_height(height: f32) -> f32 {
     )
 }
 
+fn inline_wide_control_width(
+    available_width: f32,
+    reserved_inline_width: f32,
+    min_width: f32,
+) -> f32 {
+    (available_width - reserved_inline_width).max(min_width)
+}
+
 fn main() -> Result<()> {
     let executable_dir = std::env::current_exe()?
         .parent()
@@ -2136,7 +2144,7 @@ impl DesktopApp {
             clamp_template_text_editor_height(self.template_text_editor_height);
         let response = ui.add_sized(
             [
-                ui.available_width().max(120.0),
+                inline_wide_control_width(ui.available_width(), 0.0, 120.0),
                 self.template_text_editor_height,
             ],
             egui::TextEdit::multiline(&mut self.template.text)
@@ -2182,6 +2190,24 @@ impl DesktopApp {
         }
 
         response.changed()
+    }
+
+    fn draw_labeled_wide_singleline(
+        ui: &mut egui::Ui,
+        label: &str,
+        value: &mut String,
+    ) -> egui::Response {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.add_sized(
+                [
+                    inline_wide_control_width(ui.available_width(), 0.0, 120.0),
+                    0.0,
+                ],
+                egui::TextEdit::singleline(value),
+            )
+        })
+        .inner
     }
 
     fn draw_template_details_window(&mut self, ctx: &egui::Context) {
@@ -4154,14 +4180,8 @@ impl DesktopApp {
             if ui.button("preset 解除").clicked() {
                 self.clear_style_preset_binding();
             }
-            ui.horizontal(|ui| {
-                ui.label("user preset ID");
-                ui.text_edit_singleline(&mut self.preset_editor_id);
-            });
-            ui.horizontal(|ui| {
-                ui.label("user preset 名");
-                ui.text_edit_singleline(&mut self.preset_editor_name);
-            });
+            Self::draw_labeled_wide_singleline(ui, "user preset ID", &mut self.preset_editor_id);
+            Self::draw_labeled_wide_singleline(ui, "user preset 名", &mut self.preset_editor_name);
             ui.horizontal(|ui| {
                 if ui.button("追加保存").clicked() {
                     self.save_user_style_preset(false);
@@ -4217,14 +4237,16 @@ impl DesktopApp {
                     self.clear_entrance_preset_binding();
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("出現 preset ID");
-                ui.text_edit_singleline(&mut self.entrance_preset_editor_id);
-            });
-            ui.horizontal(|ui| {
-                ui.label("出現 preset 名");
-                ui.text_edit_singleline(&mut self.entrance_preset_editor_name);
-            });
+            Self::draw_labeled_wide_singleline(
+                ui,
+                "出現 preset ID",
+                &mut self.entrance_preset_editor_id,
+            );
+            Self::draw_labeled_wide_singleline(
+                ui,
+                "出現 preset 名",
+                &mut self.entrance_preset_editor_name,
+            );
             ui.horizontal(|ui| {
                 if ui.button("追加保存").clicked() {
                     self.save_user_entrance_preset(false);
@@ -5124,17 +5146,35 @@ impl eframe::App for DesktopApp {
                     .and_then(|playback| playback.media.duration())
                 {
                     let mut current_ms = self.session.current_time().ticks as f64;
+                    let time_label = format!(
+                        "{:.2} / {:.2} 秒",
+                        current_ms / 1000.0,
+                        duration.ticks as f64 / 1000.0
+                    );
+                    let time_label_width = ui.fonts_mut(|fonts| {
+                        fonts
+                            .layout_no_wrap(
+                                time_label.clone(),
+                                egui::TextStyle::Body.resolve(ui.style()),
+                                ui.visuals().text_color(),
+                            )
+                            .size()
+                            .x
+                    });
                     let response = ui.add_sized(
-                        [ui.available_width().max(240.0), 0.0],
+                        [
+                            inline_wide_control_width(
+                                ui.available_width(),
+                                time_label_width + ui.spacing().item_spacing.x,
+                                180.0,
+                            ),
+                            0.0,
+                        ],
                         egui::Slider::new(&mut current_ms, 0.0..=duration.ticks as f64)
                             .text("シーク")
                             .show_value(false),
                     );
-                    ui.label(format!(
-                        "{:.2} / {:.2} 秒",
-                        current_ms / 1000.0,
-                        duration.ticks as f64 / 1000.0
-                    ));
+                    ui.label(time_label);
                     if response.changed() {
                         self.seek_transport(pauseink_domain::MediaTime::from_millis(
                             current_ms.round() as i64,
@@ -7629,6 +7669,19 @@ mod tests {
         assert_eq!(step_template_slot_index(1, 3, -1), 0);
         assert_eq!(step_template_slot_index(1, 3, 1), 2);
         assert_eq!(step_template_slot_index(2, 3, 1), 2);
+    }
+
+    #[test]
+    fn inline_wide_control_width_grows_with_available_space() {
+        let narrow = inline_wide_control_width(260.0, 80.0, 120.0);
+        let wide = inline_wide_control_width(520.0, 80.0, 120.0);
+
+        assert!(wide > narrow);
+    }
+
+    #[test]
+    fn inline_wide_control_width_respects_minimum() {
+        assert_eq!(inline_wide_control_width(180.0, 120.0, 140.0), 140.0);
     }
 
     #[test]
