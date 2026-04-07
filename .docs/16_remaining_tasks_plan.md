@@ -69,6 +69,8 @@
 - `FUT-05`: GPU export compositor
 - `FUT-06`: optional codec-pack 取得ツール
 - `FUT-07`: arbitrary effect scripting
+- `FUT-08`: object 選択時の preview/canvas ハイライト
+- `FUT-09`: `Esc` による template 配置 / guide の解除
 
 ### 1.3 Future work 参照 ID
 
@@ -81,6 +83,8 @@
 | FUT-05 | GPU export compositor | correctness 優先で CPU-safe baseline を維持するため |
 | FUT-06 | optional codec-pack 取得ツール | provenance / compliance が mainline と別問題のため |
 | FUT-07 | effect scripting | v1.0 は built-in effect + declarative preset に限定 |
+| FUT-08 | object 選択時の preview/canvas ハイライト | 視認性と編集導線には有用だが、誤って常時強い装飾を出すと preview のデザイン可読性を壊しやすいため |
+| FUT-09 | `Esc` による template 配置 / guide の解除 | 便利な editor shortcut だが、既存の keyboard shortcut と衝突しない解除優先順位を先に整理してから入れた方が安全なため |
 
 ## 2. 依存関係マップ
 
