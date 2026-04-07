@@ -10,6 +10,7 @@
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
 - 現在の即時マイルストーン: `V1-14 metrics-based template alignment` を完了。次候補は `V1-02 reveal-head effect`。
 - 最新の確認事項:
+  - `test_timeline_01.md` を追加し、V1-05 の object selection / multi-select / group / ungroup / z-order / batch style-entrance / undo-redo / save-reopen と、V1-09〜V1-14 の簡易確認手順を日本語で整理した
   - `AGENTS.md` と `.docs/` を全件読了
   - `README.md`、`progress.md`、`manual/`、`presets/`、`samples/`、`docs/implementation_report_v1.0.0.md` を確認
   - `develop` ブランチで作業継続

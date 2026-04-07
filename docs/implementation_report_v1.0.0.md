@@ -48,6 +48,12 @@
 
 ## 4. 決定ログ
 
+- 2026-04-07T12:32:33+09:00
+  - 決定: `test_timeline_01.md` を repository 直下へ追加し、V1-05 の object selection / multi-select / group / ungroup / z-order / batch style-entrance / undo-redo / save-reopen と、V1-09〜V1-14 の簡易確認手順を 1 ファイルへ集約する。
+  - 検討した代替案: `manual/` へ断片的に追記する。
+  - 理由: 既存 manual は利用ガイドであり、手動 QA の回し順をそこへ混ぜると運用者向け手順が埋もれるため。
+  - 影響: 以後の GUI 回帰確認は `test_timeline_01.md` を起点に回せる。
+
 - 2026-04-04T23:56:59+09:00
   - 決定: 文書と UI は日本語を正とし、既存の英語記述も実装に合わせて日本語へ更新する。
   - 検討した代替案: コードのみ先行して docs 翻訳を最後にまとめる。
