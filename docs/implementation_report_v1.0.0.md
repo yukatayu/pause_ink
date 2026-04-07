@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了済み。template/UI 系の追加 task `V1-09` 〜 `V1-13` をこのバッチで順に実装中で、現在は `V1-11` を完了し、`V1-12 template slot UI removal` に着手した。
+- 現在のフェーズ: Phase 18 完了。`V1-05 selection / group / z-order foundation` を完了済み。template/UI 系の追加 task `V1-09` 〜 `V1-13` をこのバッチで順に実装中で、現在は `V1-12` を完了し、`V1-13 Esc cancel for transient modes` に着手した。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -189,6 +189,12 @@
   - 結果: `inline_wide_control_width()` を追加し、transport bar の seek slider、template text editor、style/entrance の preset ID/名 text field を `available_width - reserved_inline_width` 基準へ統一した。play/pause button や短い control は fixed のまま残し、panel 幅を広げたときだけ primary input が伸びる構成にした。
   - 検証: `cargo fmt --all`、`cargo test -p pauseink-app --bin pauseink-app inline_wide_control_ -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app side_panel_scroll_body_ -- --nocapture`、`cargo check -p pauseink-app --all-targets`
   - 次の一手: `V1-12` として template UI から `前スロット/次スロット` と current slot 可視化を外し、guide/grid の挙動へ波及しないよう整理する。
+- 2026-04-07T02:20:00+09:00
+  - 実施内容: `V1-12 template slot UI removal` を実装し、template の slot 概念を UI から引っ込めた。
+  - 変更ファイル: `crates/app/src/main.rs`, `manual/user_guide.md`, `manual/developer_guide.md`, `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: 左ペインの `前スロット/次スロット` ボタン、preview 上の current slot 強調、`スロット x/y` 表示を削除した。internal の `current_slot_index` は commit 対象決定にだけ残し、guide/grid の geometry や capture semantics には触れていない。
+  - 検証: `cargo fmt --all`、`cargo test -p pauseink-app --bin pauseink-app template_ -- --nocapture`、`cargo check -p pauseink-app --all-targets`
+  - 次の一手: `V1-13` として `Esc` で template placement / guide capture / guide overlay を安全に閉じる cancel 経路を追加する。
 - 2026-04-06T00:00:00+09:00
   - 実施内容: paused batch preview / cross-object effect order / workspace 設定復元 / 再生中入力禁止の bugfix バッチを開始し、即時マイルストーンを更新した。
   - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`

@@ -2100,16 +2100,6 @@ impl DesktopApp {
         }
     }
 
-    fn move_template_slot(&mut self, delta: isize) {
-        let slot_len = self.template.placed_slots.as_ref().map_or(0, Vec::len);
-        let next_index =
-            step_template_slot_index(self.template.current_slot_index, slot_len, delta);
-        if next_index != self.template.current_slot_index {
-            self.template.current_slot_index = next_index;
-            self.mark_project_ui_dirty();
-        }
-    }
-
     fn reset_template_slots(&mut self) {
         self.template.placed_origin = None;
         self.template.placed_slots = None;
@@ -3076,7 +3066,7 @@ impl DesktopApp {
 
         if let Some(slots) = slots {
             let angle = -self.template.settings.slope_degrees.to_radians();
-            for (index, slot) in slots.iter().enumerate() {
+            for slot in &slots {
                 let rect = Rect::from_min_size(
                     Pos2::new(
                         frame_rect.left() + slot.origin.x,
@@ -3084,13 +3074,8 @@ impl DesktopApp {
                     ),
                     Vec2::new(slot.width.max(12.0), slot.height.max(12.0)),
                 );
-                let highlight = self.template.placed_slots.is_some()
-                    && index == self.template.current_slot_index;
-                let stroke = if highlight {
-                    EguiStroke::new(2.0, Color32::from_rgb(255, 200, 60))
-                } else {
-                    EguiStroke::new(1.0, Color32::from_rgba_unmultiplied(180, 220, 255, 160))
-                };
+                let stroke =
+                    EguiStroke::new(1.0, Color32::from_rgba_unmultiplied(180, 220, 255, 160));
 
                 if matches!(
                     self.template.settings.underlay_mode,
@@ -4100,12 +4085,6 @@ impl DesktopApp {
             if ui.button("テンプレート配置").clicked() {
                 self.template.placement_armed = true;
                 self.reset_template_slots();
-            }
-            if ui.button("前スロット").clicked() {
-                self.move_template_slot(-1);
-            }
-            if ui.button("次スロット").clicked() {
-                self.move_template_slot(1);
             }
             if ui.button("テンプレート解除").clicked() {
                 self.template.placement_armed = false;
@@ -5346,23 +5325,6 @@ impl eframe::App for DesktopApp {
             self.draw_live_stroke_preview(&painter, frame_rect, frame_width, frame_height);
             self.draw_guide_overlay(&painter, frame_rect, frame_width, frame_height);
 
-            if let Some(slots) = &self.template.placed_slots {
-                if let Some(slot) = slots.get(self.template.current_slot_index) {
-                    painter.text(
-                        frame_rect.left_top() + egui::vec2(12.0, 12.0),
-                        egui::Align2::LEFT_TOP,
-                        format!(
-                            "スロット {}/{}: {}",
-                            self.template.current_slot_index + 1,
-                            slots.len(),
-                            slot.grapheme
-                        ),
-                        egui::FontId::proportional(14.0),
-                        Color32::from_rgb(255, 232, 120),
-                    );
-                }
-            }
-
             if self.canvas_drag_active {
                 if let Some(pointer_position) = response.interact_pointer_pos() {
                     if frame_rect.contains(pointer_position) {
@@ -5852,20 +5814,6 @@ fn live_preview_dot_radius(stroke_width: f32) -> f32 {
 fn draft_preview_color(style: &pauseink_domain::StyleSnapshot) -> Color32 {
     let alpha = ((style.color.a as f32) * style.opacity.clamp(0.0, 1.0)).round() as u8;
     Color32::from_rgba_unmultiplied(style.color.r, style.color.g, style.color.b, alpha)
-}
-
-fn step_template_slot_index(current: usize, slot_len: usize, delta: isize) -> usize {
-    if slot_len == 0 {
-        return 0;
-    }
-
-    if delta.is_negative() {
-        current.saturating_sub(delta.unsigned_abs())
-    } else {
-        current
-            .saturating_add(delta as usize)
-            .min(slot_len.saturating_sub(1))
-    }
 }
 
 fn merge_bounds(
@@ -7663,20 +7611,23 @@ mod tests {
     }
 
     #[test]
-    fn template_slot_stepper_supports_previous_and_next_without_overflow() {
-        assert_eq!(step_template_slot_index(0, 0, -1), 0);
-        assert_eq!(step_template_slot_index(0, 3, -1), 0);
-        assert_eq!(step_template_slot_index(1, 3, -1), 0);
-        assert_eq!(step_template_slot_index(1, 3, 1), 2);
-        assert_eq!(step_template_slot_index(2, 3, 1), 2);
-    }
-
-    #[test]
     fn inline_wide_control_width_grows_with_available_space() {
         let narrow = inline_wide_control_width(260.0, 80.0, 120.0);
         let wide = inline_wide_control_width(520.0, 80.0, 120.0);
 
         assert!(wide > narrow);
+    }
+
+    #[test]
+    fn template_slot_ui_controls_are_removed_from_main_ui_source() {
+        let source = include_str!("main.rs");
+        let previous_button = ["前", "スロット"].concat();
+        let next_button = ["次", "スロット"].concat();
+        let slot_status = ["スロット ", "{}/{}", ":"].concat();
+
+        assert!(!source.contains(&previous_button));
+        assert!(!source.contains(&next_button));
+        assert!(!source.contains(&slot_status));
     }
 
     #[test]
