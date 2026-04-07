@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -905,6 +906,247 @@ impl Default for ExportState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutlineStrokeNode {
+    id: pauseink_domain::StrokeId,
+    created_at: pauseink_domain::MediaTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutlineObjectNode {
+    id: pauseink_domain::GlyphObjectId,
+    stroke_count: usize,
+    page_index: usize,
+    z_index: i32,
+    selected: bool,
+    alive: bool,
+    strokes: Vec<OutlineStrokeNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutlineGroupNode {
+    id: pauseink_domain::GroupId,
+    name: Option<String>,
+    selected: bool,
+    object_count: usize,
+    alive: bool,
+    objects: Vec<OutlineObjectNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutlinePageNode {
+    page_index: usize,
+    is_current_page: bool,
+    has_alive_content: bool,
+    has_selection: bool,
+    groups: Vec<OutlineGroupNode>,
+    ungrouped_objects: Vec<OutlineObjectNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageEventClearNode {
+    id: pauseink_domain::ClearEventId,
+    time: pauseink_domain::MediaTime,
+    kind: pauseink_domain::ClearKind,
+    duration_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageEventSectionNode {
+    page_index: usize,
+    is_current_page: bool,
+    start_time: pauseink_domain::MediaTime,
+    closing_clear: Option<PageEventClearNode>,
+}
+
+fn build_outline_pages(
+    project: &pauseink_domain::AnnotationProject,
+    current_time: pauseink_domain::MediaTime,
+    selected_object_ids: &[pauseink_domain::GlyphObjectId],
+    selected_group_ids: &[pauseink_domain::GroupId],
+    current_page_only: bool,
+) -> Vec<OutlinePageNode> {
+    let current_page_index =
+        pauseink_domain::page_index_for_time(&project.clear_events, current_time);
+    let selected_objects = selected_object_ids.iter().cloned().collect::<HashSet<_>>();
+    let selected_groups = selected_group_ids.iter().cloned().collect::<HashSet<_>>();
+    let grouped_object_ids = project
+        .groups
+        .iter()
+        .flat_map(|group| group.glyph_object_ids.iter().cloned())
+        .collect::<HashSet<_>>();
+
+    let mut page_indices = project
+        .glyph_objects
+        .iter()
+        .map(|object| object.page_index(&project.clear_events))
+        .collect::<Vec<_>>();
+    page_indices.push(current_page_index);
+    page_indices.sort_unstable();
+    page_indices.dedup();
+
+    if current_page_only {
+        page_indices.retain(|page_index| *page_index == current_page_index);
+    }
+
+    page_indices
+        .into_iter()
+        .map(|page_index| {
+            let mut groups = project
+                .groups
+                .iter()
+                .filter_map(|group| {
+                    let objects = group
+                        .glyph_object_ids
+                        .iter()
+                        .filter_map(|object_id| {
+                            project
+                                .glyph_objects
+                                .iter()
+                                .find(|object| object.id == *object_id)
+                                .filter(|object| {
+                                    object.page_index(&project.clear_events) == page_index
+                                })
+                                .map(|object| {
+                                    outline_object_node(
+                                        project,
+                                        object,
+                                        page_index,
+                                        current_page_index,
+                                        current_time,
+                                        &selected_objects,
+                                    )
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    if objects.is_empty() {
+                        return None;
+                    }
+                    Some(OutlineGroupNode {
+                        id: group.id.clone(),
+                        name: group.name.clone(),
+                        selected: selected_groups.contains(&group.id),
+                        object_count: objects.len(),
+                        alive: objects.iter().any(|object| object.alive),
+                        objects,
+                    })
+                })
+                .collect::<Vec<_>>();
+            groups.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+
+            let ungrouped_objects = project
+                .glyph_objects
+                .iter()
+                .filter(|object| {
+                    object.page_index(&project.clear_events) == page_index
+                        && !grouped_object_ids.contains(&object.id)
+                })
+                .map(|object| {
+                    outline_object_node(
+                        project,
+                        object,
+                        page_index,
+                        current_page_index,
+                        current_time,
+                        &selected_objects,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            let has_alive_content = groups.iter().any(|group| group.alive)
+                || ungrouped_objects.iter().any(|object| object.alive);
+            let has_selection = groups.iter().any(|group| group.selected)
+                || groups
+                    .iter()
+                    .flat_map(|group| group.objects.iter())
+                    .any(|object| object.selected)
+                || ungrouped_objects.iter().any(|object| object.selected);
+
+            OutlinePageNode {
+                page_index,
+                is_current_page: page_index == current_page_index,
+                has_alive_content,
+                has_selection,
+                groups,
+                ungrouped_objects,
+            }
+        })
+        .collect()
+}
+
+fn outline_object_node(
+    project: &pauseink_domain::AnnotationProject,
+    object: &pauseink_domain::GlyphObject,
+    page_index: usize,
+    current_page_index: usize,
+    current_time: pauseink_domain::MediaTime,
+    selected_objects: &HashSet<pauseink_domain::GlyphObjectId>,
+) -> OutlineObjectNode {
+    let alive = page_index == current_page_index && object.created_at <= current_time;
+    let strokes = object
+        .stroke_ids
+        .iter()
+        .filter_map(|stroke_id| {
+            project
+                .strokes
+                .iter()
+                .find(|stroke| stroke.id == *stroke_id)
+                .map(|stroke| OutlineStrokeNode {
+                    id: stroke.id.clone(),
+                    created_at: stroke.created_at,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    OutlineObjectNode {
+        id: object.id.clone(),
+        stroke_count: object.stroke_ids.len(),
+        page_index,
+        z_index: object.ordering.z_index,
+        selected: selected_objects.contains(&object.id),
+        alive,
+        strokes,
+    }
+}
+
+fn build_page_event_sections(
+    project: &pauseink_domain::AnnotationProject,
+    current_time: pauseink_domain::MediaTime,
+    current_page_only: bool,
+) -> Vec<PageEventSectionNode> {
+    let current_page_index =
+        pauseink_domain::page_index_for_time(&project.clear_events, current_time);
+    let mut sections = Vec::new();
+
+    for page_index in 0..=project.clear_events.len() {
+        if current_page_only && page_index != current_page_index {
+            continue;
+        }
+        let start_time = if page_index == 0 {
+            pauseink_domain::MediaTime::default()
+        } else {
+            project.clear_events[page_index - 1].time
+        };
+        let closing_clear = project
+            .clear_events
+            .get(page_index)
+            .map(|clear| PageEventClearNode {
+                id: clear.id.clone(),
+                time: clear.time,
+                kind: clear.kind,
+                duration_ms: media_duration_to_millis(clear.duration),
+            });
+        sections.push(PageEventSectionNode {
+            page_index,
+            is_current_page: page_index == current_page_index,
+            start_time,
+            closing_clear,
+        });
+    }
+
+    sections
+}
+
 struct DesktopApp {
     session: AppSession,
     asset_root: PathBuf,
@@ -939,6 +1181,9 @@ struct DesktopApp {
     last_committed_object_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     pending_guide_character_bounds: Option<(pauseink_domain::Point2, pauseink_domain::Point2)>,
     bottom_tab: BottomTab,
+    outline_auto_follow: bool,
+    outline_current_page_only: bool,
+    page_events_current_page_only: bool,
     preview_texture: Option<egui::TextureHandle>,
     preview_key: Option<(PathBuf, i64, u32, u32)>,
     overlay_texture: Option<egui::TextureHandle>,
@@ -1065,6 +1310,9 @@ impl DesktopApp {
             last_committed_object_bounds: None,
             pending_guide_character_bounds: None,
             bottom_tab: BottomTab::Outline,
+            outline_auto_follow: true,
+            outline_current_page_only: false,
+            page_events_current_page_only: false,
             preview_texture: None,
             preview_key: None,
             overlay_texture: None,
@@ -3963,212 +4211,276 @@ impl DesktopApp {
 
     fn draw_bottom_tab_contents(&mut self, ui: &mut egui::Ui) {
         match self.bottom_tab {
-            BottomTab::Outline => {
-                let selected_object_count = self.session.selected_object_ids().len();
-                let selected_group_count = self.session.selected_group_ids().len();
-                let selected_groupable_object_count = self.session.selected_groupable_object_count();
-                let has_selected_targets = !(self.session.selected_object_ids().is_empty()
-                    && self.session.selected_group_ids().is_empty());
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(format!(
-                        "選択: object {} / group {}",
-                        selected_object_count, selected_group_count
-                    ));
-                    if ui
-                        .add_enabled(
-                            selected_groupable_object_count >= 2,
-                            egui::Button::new("グループ化"),
-                        )
-                        .clicked()
-                    {
-                        match self.session.group_selected_objects() {
-                            Ok(Some(_)) => {}
-                            Ok(None) => {}
-                            Err(error) => self.push_log(format!("group 化失敗: {error:#}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(selected_group_count > 0, egui::Button::new("グループ解除"))
-                        .clicked()
-                    {
-                        match self.session.ungroup_selected_groups() {
-                            Ok(true) => {}
-                            Ok(false) => {}
-                            Err(error) => self.push_log(format!("group 解除失敗: {error:#}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(has_selected_targets, egui::Button::new("背面へ"))
-                        .clicked()
-                    {
-                        match self.session.move_selected_objects_to_back() {
-                            Ok(true) => self.overlay_key = None,
-                            Ok(false) => {}
-                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(has_selected_targets, egui::Button::new("一つ後ろ"))
-                        .clicked()
-                    {
-                        match self.session.move_selected_objects_backward_one() {
-                            Ok(true) => self.overlay_key = None,
-                            Ok(false) => {}
-                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(has_selected_targets, egui::Button::new("一つ前"))
-                        .clicked()
-                    {
-                        match self.session.move_selected_objects_forward_one() {
-                            Ok(true) => self.overlay_key = None,
-                            Ok(false) => {}
-                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
-                        }
-                    }
-                    if ui
-                        .add_enabled(has_selected_targets, egui::Button::new("前面へ"))
-                        .clicked()
-                    {
-                        match self.session.move_selected_objects_to_front() {
-                            Ok(true) => self.overlay_key = None,
-                            Ok(false) => {}
-                            Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
-                        }
-                    }
-                });
-                ui.separator();
-
-                let toggle_multi =
-                    ui.input(|input| input.modifiers.command || input.modifiers.ctrl);
-                let groups = self
-                    .session
-                    .project
-                    .groups
-                    .iter()
-                    .map(|group| {
-                        (
-                            group.id.clone(),
-                            group.name.clone(),
-                            group.glyph_object_ids.clone(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let grouped_object_ids = groups
-                    .iter()
-                    .flat_map(|(_, _, object_ids)| object_ids.iter().cloned())
-                    .collect::<std::collections::HashSet<_>>();
-
-                for (group_id, group_name, object_ids) in groups {
-                    let group_selected = self.session.is_group_selected(&group_id);
-                    let group_label = group_name
-                        .as_deref()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("グループ {}", group_id.0));
-                    let header = egui::CollapsingHeader::new(format!(
-                        "{}{} / object:{}",
-                        if group_selected { "● " } else { "" },
-                        group_label,
-                        object_ids.len()
-                    ))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        for object_id in object_ids {
-                            if let Some(object) = self
-                                .session
-                                .project
-                                .glyph_objects
-                                .iter()
-                                .find(|object| object.id == object_id)
-                            {
-                                let selected = self.session.is_object_selected(&object.id);
-                                let response = ui.selectable_label(
-                                    selected,
-                                    format!(
-                                        "  {} / stroke:{} / page:{} / z:{}",
-                                        object.id.0,
-                                        object.stroke_ids.len(),
-                                        object.page_index(&self.session.project.clear_events),
-                                        object.ordering.z_index
-                                    ),
-                                );
-                                if response.clicked() {
-                                    if toggle_multi {
-                                        self.session.toggle_object_selection(object.id.clone());
-                                    } else {
-                                        self.session
-                                            .replace_object_selection(vec![object.id.clone()]);
-                                    }
-                                }
-                            }
-                        }
-                    });
-                    if header.header_response.clicked() {
-                        if toggle_multi {
-                            self.session.toggle_group_selection(group_id.clone());
-                        } else {
-                            self.session.replace_group_selection(vec![group_id.clone()]);
-                        }
-                    }
-                }
-
-                let ungrouped_objects = self
-                    .session
-                    .project
-                    .glyph_objects
-                    .iter()
-                    .filter(|object| !grouped_object_ids.contains(&object.id))
-                    .map(|object| {
-                        (
-                            object.id.clone(),
-                            object.stroke_ids.len(),
-                            object.page_index(&self.session.project.clear_events),
-                            object.ordering.z_index,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                for (object_id, stroke_count, page_index, z_index) in ungrouped_objects {
-                    let selected = self.session.is_object_selected(&object_id);
-                    let response = ui.selectable_label(
-                        selected,
-                        format!(
-                            "{} / stroke:{} / page:{} / z:{}",
-                            object_id.0, stroke_count, page_index, z_index
-                        ),
-                    );
-                    if response.clicked() {
-                        if toggle_multi {
-                            self.session.toggle_object_selection(object_id.clone());
-                        } else {
-                            self.session
-                                .replace_object_selection(vec![object_id.clone()]);
-                        }
-                    }
-                }
-
-                if self.session.project.glyph_objects.is_empty()
-                    && self.session.project.groups.is_empty()
-                {
-                    ui.label("オブジェクトはまだありません。");
-                }
-            }
-            BottomTab::PageEvents => {
-                for clear in &self.session.project.clear_events {
-                    ui.label(format!(
-                        "{} / t={} / {:?}",
-                        clear.id.0, clear.time.ticks, clear.kind
-                    ));
-                }
-                if self.session.project.clear_events.is_empty() {
-                    ui.label("clear event はまだありません。");
-                }
-            }
+            BottomTab::Outline => self.draw_outline_tab(ui),
+            BottomTab::PageEvents => self.draw_page_events_tab(ui),
             BottomTab::ExportQueue => self.draw_export_queue_tab(ui),
             BottomTab::Logs => {
                 for message in &self.logs {
                     ui.label(message);
                 }
+            }
+        }
+    }
+
+    fn draw_outline_tab(&mut self, ui: &mut egui::Ui) {
+        let selected_object_count = self.session.selected_object_ids().len();
+        let selected_group_count = self.session.selected_group_ids().len();
+        let selected_groupable_object_count = self.session.selected_groupable_object_count();
+        let has_selected_targets = !(self.session.selected_object_ids().is_empty()
+            && self.session.selected_group_ids().is_empty());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "選択: object {} / group {}",
+                selected_object_count, selected_group_count
+            ));
+            ui.checkbox(&mut self.outline_auto_follow, "auto-follow");
+            ui.checkbox(&mut self.outline_current_page_only, "現在 page のみ");
+            if ui
+                .add_enabled(
+                    selected_groupable_object_count >= 2,
+                    egui::Button::new("グループ化"),
+                )
+                .clicked()
+            {
+                match self.session.group_selected_objects() {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {}
+                    Err(error) => self.push_log(format!("group 化失敗: {error:#}")),
+                }
+            }
+            if ui
+                .add_enabled(selected_group_count > 0, egui::Button::new("グループ解除"))
+                .clicked()
+            {
+                match self.session.ungroup_selected_groups() {
+                    Ok(true) => {}
+                    Ok(false) => {}
+                    Err(error) => self.push_log(format!("group 解除失敗: {error:#}")),
+                }
+            }
+            if ui
+                .add_enabled(has_selected_targets, egui::Button::new("背面へ"))
+                .clicked()
+            {
+                match self.session.move_selected_objects_to_back() {
+                    Ok(true) => self.overlay_key = None,
+                    Ok(false) => {}
+                    Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                }
+            }
+            if ui
+                .add_enabled(has_selected_targets, egui::Button::new("一つ後ろ"))
+                .clicked()
+            {
+                match self.session.move_selected_objects_backward_one() {
+                    Ok(true) => self.overlay_key = None,
+                    Ok(false) => {}
+                    Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                }
+            }
+            if ui
+                .add_enabled(has_selected_targets, egui::Button::new("一つ前"))
+                .clicked()
+            {
+                match self.session.move_selected_objects_forward_one() {
+                    Ok(true) => self.overlay_key = None,
+                    Ok(false) => {}
+                    Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                }
+            }
+            if ui
+                .add_enabled(has_selected_targets, egui::Button::new("前面へ"))
+                .clicked()
+            {
+                match self.session.move_selected_objects_to_front() {
+                    Ok(true) => self.overlay_key = None,
+                    Ok(false) => {}
+                    Err(error) => self.push_log(format!("z-order 更新失敗: {error:#}")),
+                }
+            }
+        });
+        ui.separator();
+
+        let pages = build_outline_pages(
+            &self.session.project,
+            self.session.current_time(),
+            &self.session.selected_object_ids(),
+            &self.session.selected_group_ids(),
+            self.outline_current_page_only,
+        );
+        if pages.is_empty() {
+            ui.label("オブジェクトはまだありません。");
+            return;
+        }
+
+        let toggle_multi = ui.input(|input| input.modifiers.command || input.modifiers.ctrl);
+        for page in pages {
+            let page_label = format!(
+                "{}ページ / group:{} / ungrouped:{}{}{}",
+                page.page_index + 1,
+                page.groups.len(),
+                page.ungrouped_objects.len(),
+                if page.is_current_page {
+                    " / 現在"
+                } else {
+                    ""
+                },
+                if page.has_alive_content {
+                    " / 生存中あり"
+                } else {
+                    ""
+                }
+            );
+            let page_header = egui::CollapsingHeader::new(page_label)
+                .default_open(page.is_current_page || page.has_selection)
+                .show(ui, |ui| {
+                    for group in &page.groups {
+                        let group_label = group
+                            .name
+                            .as_deref()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("グループ {}", group.id.0));
+                        let group_header = egui::CollapsingHeader::new(format!(
+                            "{}{} / object:{}{}",
+                            if group.selected { "● " } else { "" },
+                            group_label,
+                            group.object_count,
+                            if group.alive { " / 生存中" } else { "" }
+                        ))
+                        .default_open(group.selected || page.is_current_page)
+                        .show(ui, |ui| {
+                            for object in &group.objects {
+                                self.draw_outline_object_node(ui, object, toggle_multi);
+                            }
+                        });
+                        if group_header.header_response.clicked() {
+                            if toggle_multi {
+                                self.session.toggle_group_selection(group.id.clone());
+                            } else {
+                                self.session.replace_group_selection(vec![group.id.clone()]);
+                            }
+                        }
+                        if self.outline_auto_follow && group.selected {
+                            group_header
+                                .header_response
+                                .scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
+
+                    if !page.ungrouped_objects.is_empty() {
+                        let ungrouped_header = egui::CollapsingHeader::new(format!(
+                            "未グループ object / {} 件",
+                            page.ungrouped_objects.len()
+                        ))
+                        .default_open(page.is_current_page || page.has_selection)
+                        .show(ui, |ui| {
+                            for object in &page.ungrouped_objects {
+                                self.draw_outline_object_node(ui, object, toggle_multi);
+                            }
+                        });
+                        if self.outline_auto_follow
+                            && page.ungrouped_objects.iter().any(|object| object.selected)
+                        {
+                            ungrouped_header
+                                .header_response
+                                .scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
+                });
+            if self.outline_auto_follow && (page.is_current_page || page.has_selection) {
+                page_header
+                    .header_response
+                    .scroll_to_me(Some(egui::Align::Center));
+            }
+        }
+    }
+
+    fn draw_outline_object_node(
+        &mut self,
+        ui: &mut egui::Ui,
+        object: &OutlineObjectNode,
+        toggle_multi: bool,
+    ) {
+        let object_header = egui::CollapsingHeader::new(format!(
+            "{}{} / stroke:{} / z:{}{}",
+            if object.selected { "● " } else { "" },
+            object.id.0,
+            object.stroke_count,
+            object.z_index,
+            if object.alive { " / 生存中" } else { "" }
+        ))
+        .default_open(object.selected)
+        .show(ui, |ui| {
+            for stroke in &object.strokes {
+                ui.small(format!(
+                    "stroke {} / t={}",
+                    stroke.id.0, stroke.created_at.ticks
+                ));
+            }
+        });
+        if object_header.header_response.clicked() {
+            if toggle_multi {
+                self.session.toggle_object_selection(object.id.clone());
+            } else {
+                self.session
+                    .replace_object_selection(vec![object.id.clone()]);
+            }
+        }
+        if self.outline_auto_follow && object.selected {
+            object_header
+                .header_response
+                .scroll_to_me(Some(egui::Align::Center));
+        }
+    }
+
+    fn draw_page_events_tab(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.page_events_current_page_only, "現在 page のみ");
+            ui.label("各 page の開始位置と、page を閉じる clear event を表示します。");
+        });
+        ui.separator();
+
+        let sections = build_page_event_sections(
+            &self.session.project,
+            self.session.current_time(),
+            self.page_events_current_page_only,
+        );
+        if sections.is_empty() {
+            ui.label("clear event はまだありません。");
+            return;
+        }
+
+        for section in sections {
+            let header = egui::CollapsingHeader::new(format!(
+                "{}ページ / 開始 t={}{}",
+                section.page_index + 1,
+                section.start_time.ticks,
+                if section.is_current_page {
+                    " / 現在"
+                } else {
+                    ""
+                }
+            ))
+            .default_open(section.is_current_page)
+            .show(ui, |ui| {
+                if let Some(clear) = &section.closing_clear {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!(
+                            "clear {} / kind:{:?} / duration:{}ms / t={}",
+                            clear.id.0, clear.kind, clear.duration_ms, clear.time.ticks
+                        ));
+                        if ui.button("この時刻へ移動").clicked() {
+                            self.seek_transport(clear.time);
+                        }
+                    });
+                } else {
+                    ui.small("この page を閉じる clear event はまだありません。");
+                }
+            });
+            if section.is_current_page {
+                header
+                    .header_response
+                    .scroll_to_me(Some(egui::Align::Center));
             }
         }
     }
@@ -6180,7 +6492,7 @@ fn merge_bounds(
 mod tests {
     use super::*;
     use eframe::egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
-    use pauseink_domain::{GlyphObjectId, MediaTime, Point2};
+    use pauseink_domain::{ClearKind, GlyphObjectId, MediaTime, Point2};
     use pauseink_media::{ImportedMedia, MediaProbe, MediaSupport, PlaybackState};
     use pauseink_portable_fs::{load_settings_from_file, PortablePaths, Settings};
     use tempfile::tempdir;
@@ -6225,7 +6537,8 @@ mod tests {
         end: Point2,
         at_ms: i64,
     ) -> GlyphObjectId {
-        app.session.begin_stroke(start, MediaTime::from_millis(at_ms));
+        app.session
+            .begin_stroke(start, MediaTime::from_millis(at_ms));
         app.session
             .append_stroke_point(end, MediaTime::from_millis(at_ms + 10));
         app.session
@@ -8278,6 +8591,126 @@ mod tests {
             app.session.project.groups.is_empty(),
             "template reset は auto-group chain を切ってほしい"
         );
+    }
+
+    #[test]
+    fn outline_pages_group_objects_by_page_and_flat_group() {
+        let mut session = AppSession::default();
+        for (start_x, red, at_ms) in [(0.0, 255, 0), (40.0, 128, 40), (120.0, 64, 620)] {
+            session.active_style.color = pauseink_domain::RgbaColor::new(red, 255, 255, 255);
+            session.begin_stroke(Point2 { x: start_x, y: 0.0 }, MediaTime::from_millis(at_ms));
+            session.append_stroke_point(
+                Point2 {
+                    x: start_x + 20.0,
+                    y: 20.0,
+                },
+                MediaTime::from_millis(at_ms + 10),
+            );
+            session
+                .commit_stroke(false)
+                .expect("stroke commit should succeed");
+        }
+        session.project.clear_events = vec![pauseink_domain::ClearEvent {
+            id: pauseink_domain::ClearEventId::new("clear-1"),
+            time: MediaTime::from_millis(500),
+            kind: ClearKind::Instant,
+            ..pauseink_domain::ClearEvent::default()
+        }];
+        let object_ids = session
+            .project
+            .glyph_objects
+            .iter()
+            .map(|object| object.id.clone())
+            .collect::<Vec<_>>();
+        session.replace_object_selection(vec![object_ids[0].clone(), object_ids[1].clone()]);
+        let grouped_id = session
+            .group_selected_objects()
+            .expect("grouping should succeed")
+            .expect("group id");
+        session.replace_group_selection(vec![grouped_id]);
+
+        let pages = build_outline_pages(
+            &session.project,
+            MediaTime::from_millis(650),
+            &session.selected_object_ids(),
+            &session.selected_group_ids(),
+            false,
+        );
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].groups.len(), 1);
+        assert_eq!(pages[0].groups[0].objects.len(), 2);
+        assert!(pages[0].groups[0].selected);
+        assert_eq!(pages[1].ungrouped_objects.len(), 1);
+    }
+
+    #[test]
+    fn outline_pages_mark_alive_objects_only_on_current_page() {
+        let mut session = AppSession::default();
+        session.begin_stroke(Point2 { x: 0.0, y: 0.0 }, MediaTime::from_millis(0));
+        session.append_stroke_point(Point2 { x: 20.0, y: 20.0 }, MediaTime::from_millis(10));
+        session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed");
+        session.project.clear_events = vec![pauseink_domain::ClearEvent {
+            id: pauseink_domain::ClearEventId::new("clear-1"),
+            time: MediaTime::from_millis(500),
+            kind: ClearKind::Instant,
+            ..pauseink_domain::ClearEvent::default()
+        }];
+        session.begin_stroke(Point2 { x: 40.0, y: 0.0 }, MediaTime::from_millis(600));
+        session.append_stroke_point(Point2 { x: 60.0, y: 20.0 }, MediaTime::from_millis(610));
+        session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed");
+
+        let pages = build_outline_pages(
+            &session.project,
+            MediaTime::from_millis(650),
+            &[],
+            &[],
+            false,
+        );
+
+        assert!(!pages[0].has_alive_content);
+        assert!(pages[1].has_alive_content);
+        assert!(pages[1].is_current_page);
+        assert!(pages[1].ungrouped_objects[0].alive);
+    }
+
+    #[test]
+    fn page_event_sections_follow_page_boundaries() {
+        let project = pauseink_domain::AnnotationProject {
+            clear_events: vec![
+                pauseink_domain::ClearEvent {
+                    id: pauseink_domain::ClearEventId::new("clear-1"),
+                    time: MediaTime::from_millis(500),
+                    kind: ClearKind::Instant,
+                    ..pauseink_domain::ClearEvent::default()
+                },
+                pauseink_domain::ClearEvent {
+                    id: pauseink_domain::ClearEventId::new("clear-2"),
+                    time: MediaTime::from_millis(1_200),
+                    kind: ClearKind::DissolveOut,
+                    ..pauseink_domain::ClearEvent::default()
+                },
+            ],
+            ..pauseink_domain::AnnotationProject::default()
+        };
+
+        let sections = build_page_event_sections(&project, MediaTime::from_millis(700), false);
+
+        assert_eq!(sections.len(), 3);
+        assert!(sections[1].is_current_page);
+        assert_eq!(
+            sections[0].closing_clear.as_ref().map(|clear| clear.kind),
+            Some(ClearKind::Instant)
+        );
+        assert_eq!(
+            sections[1].closing_clear.as_ref().map(|clear| clear.kind),
+            Some(ClearKind::DissolveOut)
+        );
+        assert!(sections[2].closing_clear.is_none());
     }
 
     #[test]

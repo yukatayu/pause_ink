@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 継続。`V1-16 flat auto-group semantics / merge grouping` を完了し、次候補は `V1-06 page-first outline / page events`。
+- 現在のフェーズ: Phase 20 継続。`V1-06 page-first outline / page events` を完了し、次候補は `V1-15 gradient color / coordinate space / repeat`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -25,6 +25,16 @@
     - `cargo test -p pauseink-app --bin pauseink-app capture_guide_from_object_breaks_auto_group_chain -- --nocapture`
     - `cargo test -p pauseink-app --bin pauseink-app reset_template_slots_breaks_auto_group_chain -- --nocapture`
   - 結果: すべて exit 0。flat auto-group、group merge、guide/template break、manual grouping undo/redo を回帰固定した。
+- 2026-04-07:
+  - Task: `V1-06 page-first outline / page events`
+  - 実施内容: `crates/app/src/main.rs` に `OutlinePageNode / OutlineGroupNode / OutlineObjectNode / OutlineStrokeNode / PageEventSectionNode` を追加し、下部 panel の `オブジェクト一覧` を `page -> group -> object -> stroke` の tree へ切り替えた。`ページイベント` は page ごとの開始時刻と closing clear を見る section 表示へ更新し、各 clear から `この時刻へ移動` で seek できるようにした。
+  - UI 連携: `auto-follow` と `現在 page のみ` を outline / page events に追加し、current page と selection を見失いにくくした。group は flat merge 前提のまま表示し、user 向け UI から `run` は出していない。
+  - test-first 修正: clear 時刻を playback 依存にしない pure view model test へ寄せ、page index 判定と flat group 表示を `build_outline_pages` / `build_page_event_sections` の unit test で固定した。
+  - 実行コマンド:
+    - `cargo test -p pauseink-app --bin pauseink-app outline_pages_ -- --nocapture`
+    - `cargo test -p pauseink-app --bin pauseink-app page_event_sections_follow_page_boundaries -- --nocapture`
+    - `cargo test -p pauseink-app --lib --bins --no-run`
+  - 結果: すべて exit 0。page-first tree、alive/current page 判定、page event section、app 全体の test compile を確認した。
 
 ## 2. 環境
 

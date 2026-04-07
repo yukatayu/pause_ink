@@ -167,10 +167,11 @@ entrance sequencing は page 全体 1 本の queue ではなく、同じ `create
 - group は flat です。v1.0 では入れ子を許さず、1 object が複数 group へ属する workflow も想定しません
 - group 化は `InsertGroupCommand`、group 解除は `RemoveGroupCommand` を履歴へ積みます
 - `UpdateGroupMembershipCommand` は member 更新を history-safe に扱うための土台で、今後の outline 強化でも使い回せます
+- `V1-16` 以降は same page・同一 style / entrance の連続 commit を `AutoGroupContext` で flat group へ寄せます。guide 基準更新、guide 解除、template reset / 配置確定、clear、undo / redo は明示 break です
 - z-order は renderer と同じく `(z_index, capture_order, id)` を基準に解釈し、UI 操作時は dense な `z_index` に正規化します
 - 前後移動は選択 object の相対順を保ったまま `NormalizeZOrderCommand` を積む形です
 - undo / redo 後は `repair_selection_after_project_change()` で selection を prune し、直前の group/ungroup 文脈が残っていれば group 選択または member object 選択へ復元します
-- 現 UI は outline panel 起点の最小導線です。canvas 直接選択、複雑な tree 編集、group style editor は `V1-06` 以降の範囲です
+- 現 UI は下部 panel の `page -> group -> object -> stroke` tree から操作します。canvas 直接選択、group style editor、より重い timeline UI は future work です
 
 ## 6.6 `Esc` cancel の優先順位
 
