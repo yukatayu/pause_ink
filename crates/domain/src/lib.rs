@@ -891,6 +891,39 @@ mod tests {
     }
 
     #[test]
+    fn style_snapshot_keeps_linear_gradient_fields() {
+        let style = StyleSnapshot {
+            color_mode: ColorMode::LinearGradient,
+            gradient: Some(LinearGradientStyle {
+                scope: GradientSpace::GlyphObject,
+                repeat: GradientRepeat::Mirror,
+                angle_degrees: 35.0,
+                span_ratio: 1.8,
+                offset_ratio: -0.24,
+                stops: vec![
+                    ColorStop {
+                        position: 0.0,
+                        color: RgbaColor::new(255, 120, 80, 255),
+                    },
+                    ColorStop {
+                        position: 1.0,
+                        color: RgbaColor::new(80, 140, 255, 255),
+                    },
+                ],
+            }),
+            ..StyleSnapshot::default()
+        };
+
+        assert_eq!(style.color_mode, ColorMode::LinearGradient);
+        let gradient = style.gradient.expect("gradient should be present");
+        assert_eq!(gradient.scope, GradientSpace::GlyphObject);
+        assert_eq!(gradient.repeat, GradientRepeat::Mirror);
+        assert!((gradient.angle_degrees - 35.0).abs() < 0.001);
+        assert!((gradient.span_ratio - 1.8).abs() < 0.001);
+        assert_eq!(gradient.stops.len(), 2);
+    }
+
+    #[test]
     fn stroke_and_glyph_page_index_follow_creation_anchor() {
         let clears = vec![ClearEvent {
             id: ClearEventId::new("clear-1"),

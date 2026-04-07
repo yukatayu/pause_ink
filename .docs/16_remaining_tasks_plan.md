@@ -120,10 +120,11 @@
 - `reveal hot-trail accent` は domain に型があるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
 - `post-action chain` も domain に型だけあり、app / renderer / preset へ未接続。
 - clear event は domain と renderer に最小 primitive があるが、app 側は `全消去 -> Instant clear 挿入` のみで、`kind / duration / granularity / ordering` の編集 UI と preset 導線が無い。
-- `V1-01`, `V1-05`, `V1-07`〜`V1-14` は develop で完了済み。以後の未着手は `V1-02`, `V1-03`, `V1-04`, `V1-06`, `V1-15`, `V1-16`, `PKG-*`, `QA-01` が中心。
-- outline panel は flat list のままで、page-first tree、alive highlight、auto-follow、page events 強化はまだ入っていない。
-- group は explicit 操作でしか作られず、「同じ page で連続して書いたまとまり」を flat group として扱う規則は未実装。
-- gradient color は未実装で、base style は単色前提のまま。
+- `V1-01`, `V1-02`, `V1-05`〜`V1-16` は develop で完了済み。以後の中心は `V1-03`, `V1-04`, `PKG-*`, `QA-01`。
+- outline / page events panel は `page -> group -> object -> stroke` の page-first tree、alive highlight、auto-follow、current page filter まで接続済み。
+- group は explicit 操作に加えて same page / same style / same entrance の連続筆記を flat auto-group として扱い、group 同士の group 化は nested ではなく member merge へ寄せてある。
+- gradient color は `linear` のみ、base stroke のみ、`stroke/object/canvas` scope、`repeat/mirror`、2〜4 stop で実装済み。
+- gradient 有効中も `StyleSnapshot.color` は単色モードへ戻す fallback 色として保持し、reveal-head の `StrokeColor` は gradient stop の代表色を使う。
 - sidecar runtime の packaging / provenance は未完了で、runtime 選択も `best-capable runtime` policy まで固まっていない。
 - FFmpeg sidecar は discovery までで、release asset への bundling / provenance / notices / CI upload が未完了。
 - GitHub Release workflow は app binary archive の build/upload までは済んでいるが、sidecar / notices / manifest 同梱は未完了。
@@ -1096,22 +1097,43 @@
 
 **設計**
 
-- v1.0 は `linear gradient` のみに絞る。radial / conic は future work。
-- `color_mode = solid | gradient` を base style に追加する。
-- gradient は次を持つ。
+- v1.0 は `linear gradient` のみに絞る。radial / conic / path-follow gradient は future work。
+- `StyleSnapshot` は既存の `color` を壊さず、optional な `gradient` を追加する。
+  - `gradient = None` のときは従来どおり単色。
+  - `gradient = Some(...)` のときだけ base stroke を gradient で描く。
+  - 既存の `color` は「単色モードへ戻したときの色」を保持し続ける。gradient 有効中に outline / glow / reveal-head が使う代表色は、`style.color` ではなく gradient stop から導く。
+- gradient schema は次で固定する。
   - `scope`: `stroke | object | canvas`
   - `repeat_mode`: `none | repeat | mirror`
-  - `angle_deg`
-  - `span`
-  - `offset`
-  - `stops` 2〜4 個
-- effect への適用は v1.0 では広げすぎない。まず base stroke だけ gradient を許し、outline / shadow / glow / head accent は `ink 由来の代表色` を引く。
+  - `angle_deg`: `0` は左→右、`90` は上→下
+  - `span_ratio`: gradient 1 周期の長さ。scope ごとの基準長に対する倍率で持つ
+  - `offset_ratio`: 周期単位の位相ずらし。`1.0` でちょうど 1 周期ぶん送る
+  - `stops`: 2〜4 個。各 stop は `position: 0.0..=1.0` と `color`
+- `span_ratio` と `offset_ratio` の基準は scope ごとに統一する。
+  - `stroke`: その stroke の transformed bbox を gradient 軸へ射影した長さ
+  - `object`: その glyph object 全体の transformed bbox を gradient 軸へ射影した長さ
+  - `canvas`: source media frame (`source_width/source_height`) の bbox を gradient 軸へ射影した長さ
+- gradient の `0.0` 位置は各 scope bbox を gradient 軸へ射影した最小端に置き、`offset_ratio * projected_length` だけ軸方向へ送る。これにより「object を動かすと object-scope gradient も一緒に動く」「canvas-scope gradient は画面に貼り付く」を簡潔に実現する。
+- effect への適用は v1.0 では広げすぎない。
+  - base stroke だけ gradient を許す
+  - outline / shadow / glow は従来どおり単色
+  - reveal-head accent は gradient の stop から得た `代表色` を使う
+  - `代表色` は stop を position 順に正規化したうえで、中点 `0.5` の補間色を使う
+- `StyleSnapshot.color` は gradient の代表色キャッシュには使わず、「単色モードへ戻したときの fallback 色」として保持する。
+- inspector UI は次で固定する。
+  - `色モード`: `単色 | グラデーション`
+  - gradient 時のみ `scope / repeat / angle / 幅倍率 / 位相`
+  - stop editor は 2〜4 stop、`追加` / `削除` と各 stop の `位置` / `色`
+  - 初回 gradient 有効化時は current solid color から 2-stop の穏やかな初期値を作る
+  - style preset の `presetへ戻す` は gradient の有無も含めて戻す
 
 **着手前に決めるべきこと**
 
-- `span` を px で持つか、scope ごとの正規化比率で持つか。後から変えると preset 値の意味が変わる。
-- `canvas scope` を media frame 基準にするか preview rect 基準にするか。export と preview 一致に直結する。
-- stroke path に沿った gradient を v1.0 に入れるかどうか。入れると path parameterization が増えて一気に重くなる。
+- `span` と `offset` は px ではなく比率で持つ。ここを固定しないと preset の意味が解像度や object size に引きずられる。
+- `canvas scope` は preview rect ではなく source media frame 基準にする。ここを曖昧にすると preview/export 一致を崩す。
+- gradient stop 数は 2〜4 に固定し、v1.0 では free-form stop editor にしすぎない。stop 数を無制限にすると preset/UI/renderer test が一気に重くなる。
+- `style.color` を gradient 有効中の effect 色 source として使わない。代表色 helper を別に持たないと、gradient 編集後に head accent の色が stale になる。
+- path-follow gradient は今回は入れない。linear axis + bbox projection に絞る。
 
 **変更ファイル**
 
@@ -1124,18 +1146,22 @@
 
 **実装ステップ**
 
-1. domain / preset / save format に gradient schema を追加する。
-2. renderer に `scope` ごとの gradient sampler を追加する。
-3. inspector に gradient editor を追加する。
-4. project save / reopen と preset 反映を接続する。
-5. export / preview 一致の回帰 test を追加する。
+1. plan/report/progress に上記仕様を固定し、renderer 側の代表色・scope 基準を明文化する。
+2. domain / preset / save format に gradient schema を追加する。
+3. renderer に `scope` ごとの linear gradient shader と代表色 helper を追加する。
+4. inspector に `色モード` + gradient editor を追加する。
+5. project save / reopen、preset save/load、preset reset を接続する。
+6. preview/export 一致と repeat/mirror の回帰 test を追加する。
 
 **必要テスト**
 
 - `renderer`: `object scope` の gradient が object 移動で相対位置を保つ
-- `renderer`: `canvas scope` の gradient が export と preview で一致する
-- `renderer`: `repeat` / `mirror` が期待通りに繰り返す
-- `app`: gradient style が save/reopen と preset で戻る
+- `renderer`: `canvas scope` の gradient が object 移動に追随せず画面側へ貼り付く
+- `renderer`: `repeat` / `mirror` が edge sample で期待通りに繰り返す
+- `renderer`: reveal-head accent の `StrokeColor` が gradient の代表色を使う
+- `presets_core`: gradient 付き style preset が json5 save/load で roundtrip する
+- `app`: gradient style が project save/reopen と settings relaunch で戻る
+- `app`: preset reset が gradient の有無も含めて戻す
 
 **完了条件**
 

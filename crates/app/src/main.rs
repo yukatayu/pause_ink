@@ -385,6 +385,7 @@ impl StoredTemplateUiState {
 #[serde(default)]
 struct StylePresetBindingState {
     inherit_color: bool,
+    inherit_gradient: bool,
     inherit_thickness: bool,
     inherit_opacity: bool,
     inherit_outline: bool,
@@ -398,6 +399,7 @@ impl StylePresetBindingState {
     fn inherit_all_from_preset(preset: &BaseStylePreset) -> Self {
         Self {
             inherit_color: preset.color_rgba.is_some(),
+            inherit_gradient: true,
             inherit_thickness: preset.thickness.is_some(),
             inherit_opacity: preset.opacity.is_some() || preset.color_rgba.is_some(),
             inherit_outline: preset.outline.is_some(),
@@ -1610,6 +1612,14 @@ impl DesktopApp {
                 self.session.active_style.color.b,
                 255,
             ]),
+            color_mode: Some(self.session.active_style.color_mode),
+            gradient: if self.session.active_style.color_mode
+                == pauseink_domain::ColorMode::LinearGradient
+            {
+                self.session.active_style.gradient.clone()
+            } else {
+                None
+            },
             opacity: Some(self.session.active_style.opacity),
             outline: Some(self.session.active_style.outline.clone()),
             drop_shadow: Some(self.session.active_style.drop_shadow.clone()),
@@ -1833,6 +1843,16 @@ impl DesktopApp {
                 self.session.active_style.color = rgba_color_from_bytes(color);
             }
         }
+        if self.style_binding.inherit_gradient {
+            self.session.active_style.color_mode = preset.color_mode.unwrap_or_else(|| {
+                if preset.gradient.is_some() {
+                    pauseink_domain::ColorMode::LinearGradient
+                } else {
+                    pauseink_domain::ColorMode::Solid
+                }
+            });
+            self.session.active_style.gradient = preset.gradient.clone();
+        }
         if self.style_binding.inherit_opacity {
             if let Some(opacity) = preset.opacity {
                 self.session.active_style.opacity = opacity;
@@ -1941,6 +1961,20 @@ impl DesktopApp {
     fn clear_entrance_preset_binding(&mut self) {
         self.bound_entrance_preset_id = None;
         self.entrance_binding = EntrancePresetBindingState::default();
+        self.mark_project_ui_dirty();
+    }
+
+    fn ensure_active_gradient(&mut self) -> &mut pauseink_domain::LinearGradientStyle {
+        let seed = self.session.active_style.color;
+        self.session
+            .active_style
+            .gradient
+            .get_or_insert_with(|| default_linear_gradient_style(seed))
+    }
+
+    fn mark_gradient_dirty(&mut self) {
+        self.style_binding.inherit_gradient = false;
+        self.sync_active_style_to_current_object();
         self.mark_project_ui_dirty();
     }
 
@@ -4703,46 +4737,255 @@ impl DesktopApp {
         }
         ui.label("基本スタイル");
 
-        let mut color = [
-            self.session.active_style.color.r,
-            self.session.active_style.color.g,
-            self.session.active_style.color.b,
-        ];
-        if ui.color_edit_button_srgb(&mut color).changed() {
-            self.session.active_style.color = pauseink_domain::RgbaColor::new(
-                color[0],
-                color[1],
-                color[2],
-                self.session.active_style.color.a,
-            );
-            self.style_binding.inherit_color = false;
-            self.sync_active_style_to_current_object();
-            self.mark_project_ui_dirty();
-        }
-        if self
-            .bound_style_preset()
-            .and_then(|preset| preset.color_rgba)
-            .is_some()
-        {
-            ui.horizontal(|ui| {
-                ui.small(if self.style_binding.inherit_color {
-                    "色: preset 継承中"
-                } else {
-                    "色: 上書き中"
+        let mut next_color_mode = self.session.active_style.color_mode;
+        ui.horizontal(|ui| {
+            ui.label("色モード");
+            egui::ComboBox::from_id_salt("ink_color_mode")
+                .selected_text(match next_color_mode {
+                    pauseink_domain::ColorMode::Solid => "単色",
+                    pauseink_domain::ColorMode::LinearGradient => "グラデーション",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut next_color_mode,
+                        pauseink_domain::ColorMode::Solid,
+                        "単色",
+                    );
+                    ui.selectable_value(
+                        &mut next_color_mode,
+                        pauseink_domain::ColorMode::LinearGradient,
+                        "グラデーション",
+                    );
                 });
-                if ui
-                    .add_enabled(
-                        !self.style_binding.inherit_color,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.style_binding.inherit_color = true;
-                    self.refresh_bound_style_fields();
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
+        });
+        if next_color_mode != self.session.active_style.color_mode {
+            self.session.active_style.color_mode = next_color_mode;
+            if matches!(next_color_mode, pauseink_domain::ColorMode::LinearGradient) {
+                self.ensure_active_gradient();
+            }
+            self.mark_gradient_dirty();
+        }
+
+        if matches!(
+            self.session.active_style.color_mode,
+            pauseink_domain::ColorMode::Solid
+        ) {
+            let mut color = [
+                self.session.active_style.color.r,
+                self.session.active_style.color.g,
+                self.session.active_style.color.b,
+            ];
+            if ui.color_edit_button_srgb(&mut color).changed() {
+                self.session.active_style.color = pauseink_domain::RgbaColor::new(
+                    color[0],
+                    color[1],
+                    color[2],
+                    self.session.active_style.color.a,
+                );
+                self.style_binding.inherit_color = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.color_rgba)
+                .is_some()
+            {
+                ui.horizontal(|ui| {
+                    ui.small(if self.style_binding.inherit_color {
+                        "色: preset 継承中"
+                    } else {
+                        "色: 上書き中"
+                    });
+                    if ui
+                        .add_enabled(
+                            !self.style_binding.inherit_color,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        self.style_binding.inherit_color = true;
+                        self.refresh_bound_style_fields();
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+            }
+        } else {
+            ui.small("グラデーション有効中。単色へ戻すと、保存済みの単色設定に戻ります。");
+            let mut gradient_changed = false;
+            let mut add_stop = false;
+            let mut remove_stop = None;
+            {
+                let gradient = self.ensure_active_gradient();
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("基準");
+                        egui::ComboBox::from_id_salt("gradient_scope")
+                            .selected_text(match gradient.scope {
+                                pauseink_domain::GradientSpace::Stroke => "各 stroke",
+                                pauseink_domain::GradientSpace::GlyphObject => "object",
+                                pauseink_domain::GradientSpace::Canvas => "画面全体",
+                            })
+                            .show_ui(ui, |ui| {
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.scope,
+                                        pauseink_domain::GradientSpace::Stroke,
+                                        "各 stroke",
+                                    )
+                                    .changed();
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.scope,
+                                        pauseink_domain::GradientSpace::GlyphObject,
+                                        "object",
+                                    )
+                                    .changed();
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.scope,
+                                        pauseink_domain::GradientSpace::Canvas,
+                                        "画面全体",
+                                    )
+                                    .changed();
+                            });
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("繰り返し");
+                        egui::ComboBox::from_id_salt("gradient_repeat")
+                            .selected_text(match gradient.repeat {
+                                pauseink_domain::GradientRepeat::None => "なし",
+                                pauseink_domain::GradientRepeat::Repeat => "反復",
+                                pauseink_domain::GradientRepeat::Mirror => "ミラー",
+                            })
+                            .show_ui(ui, |ui| {
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.repeat,
+                                        pauseink_domain::GradientRepeat::None,
+                                        "なし",
+                                    )
+                                    .changed();
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.repeat,
+                                        pauseink_domain::GradientRepeat::Repeat,
+                                        "反復",
+                                    )
+                                    .changed();
+                                gradient_changed |= ui
+                                    .selectable_value(
+                                        &mut gradient.repeat,
+                                        pauseink_domain::GradientRepeat::Mirror,
+                                        "ミラー",
+                                    )
+                                    .changed();
+                            });
+                    });
+                    gradient_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut gradient.angle_degrees, -180.0..=180.0)
+                                .text("角度"),
+                        )
+                        .changed();
+                    gradient_changed |= ui
+                        .add(egui::Slider::new(&mut gradient.span_ratio, 0.05..=4.0).text("幅倍率"))
+                        .changed();
+                    gradient_changed |= ui
+                        .add(egui::Slider::new(&mut gradient.offset_ratio, -2.0..=2.0).text("位相"))
+                        .changed();
+                    ui.separator();
+                    ui.label("stop");
+                    let can_remove_stop = gradient.stops.len() > 2;
+                    for (index, stop) in gradient.stops.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.small(format!("#{}", index + 1));
+                            let mut stop_color = rgba_to_color32(stop.color);
+                            if ui.color_edit_button_srgba(&mut stop_color).changed() {
+                                stop.color = color32_to_rgba(stop_color);
+                                gradient_changed = true;
+                            }
+                            gradient_changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut stop.position, 0.0..=1.0)
+                                        .show_value(true)
+                                        .text("位置"),
+                                )
+                                .changed();
+                            if can_remove_stop && ui.button("削除").clicked() {
+                                remove_stop = Some(index);
+                            }
+                        });
+                    }
+                    if gradient.stops.len() < 4 && ui.button("stop追加").clicked() {
+                        add_stop = true;
+                    }
+                });
+            }
+            if add_stop {
+                let fallback_color = self.session.active_style.color;
+                let gradient = self.ensure_active_gradient();
+                let insert_position = gradient
+                    .stops
+                    .windows(2)
+                    .find_map(|pair| {
+                        let left = &pair[0];
+                        let right = &pair[1];
+                        let gap = right.position - left.position;
+                        (gap > 0.05).then(|| {
+                            let position = (left.position + right.position) * 0.5;
+                            pauseink_domain::ColorStop {
+                                position,
+                                color: interpolate_rgba(left.color, right.color, 0.5),
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| pauseink_domain::ColorStop {
+                        position: 0.5,
+                        color: fallback_color,
+                    });
+                gradient.stops.push(insert_position);
+                gradient_changed = true;
+            }
+            if let Some(index) = remove_stop {
+                self.ensure_active_gradient().stops.remove(index);
+                gradient_changed = true;
+            }
+            if gradient_changed {
+                sanitize_linear_gradient_editor(self.ensure_active_gradient());
+                self.mark_gradient_dirty();
+            }
+            if self.bound_style_preset().is_some() {
+                ui.horizontal(|ui| {
+                    let preset_label = if self.style_binding.inherit_gradient {
+                        if self
+                            .bound_style_preset()
+                            .and_then(|preset| preset.gradient.as_ref())
+                            .is_some()
+                        {
+                            "グラデーション: preset 継承中"
+                        } else {
+                            "グラデーション: preset では無効"
+                        }
+                    } else {
+                        "グラデーション: 上書き中"
+                    };
+                    ui.small(preset_label);
+                    if ui
+                        .add_enabled(
+                            !self.style_binding.inherit_gradient,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        self.style_binding.inherit_gradient = true;
+                        self.refresh_bound_style_fields();
+                        self.sync_active_style_to_current_object();
+                        self.mark_project_ui_dirty();
+                    }
+                });
+            }
         }
         if ui
             .add(
@@ -6385,6 +6628,104 @@ fn default_reveal_head_effect() -> pauseink_domain::RevealHeadEffect {
     }
 }
 
+fn default_linear_gradient_style(
+    seed: pauseink_domain::RgbaColor,
+) -> pauseink_domain::LinearGradientStyle {
+    let secondary = if relative_luminance(seed) < 0.72 {
+        interpolate_rgba(
+            seed,
+            pauseink_domain::RgbaColor::new(255, 255, 255, seed.a),
+            0.35,
+        )
+    } else {
+        interpolate_rgba(
+            seed,
+            pauseink_domain::RgbaColor::new(24, 24, 32, seed.a),
+            0.18,
+        )
+    };
+    pauseink_domain::LinearGradientStyle {
+        scope: pauseink_domain::GradientSpace::GlyphObject,
+        repeat: pauseink_domain::GradientRepeat::None,
+        angle_degrees: 0.0,
+        span_ratio: 1.0,
+        offset_ratio: 0.0,
+        stops: vec![
+            pauseink_domain::ColorStop {
+                position: 0.0,
+                color: seed,
+            },
+            pauseink_domain::ColorStop {
+                position: 1.0,
+                color: secondary,
+            },
+        ],
+    }
+}
+
+fn sanitize_linear_gradient_editor(gradient: &mut pauseink_domain::LinearGradientStyle) {
+    gradient.span_ratio = gradient.span_ratio.clamp(0.05, 4.0);
+    gradient.offset_ratio = gradient.offset_ratio.clamp(-2.0, 2.0);
+    for stop in &mut gradient.stops {
+        stop.position = stop.position.clamp(0.0, 1.0);
+    }
+    gradient.stops.sort_by(|left, right| {
+        left.position
+            .partial_cmp(&right.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    if gradient.stops.is_empty() {
+        gradient.stops = default_linear_gradient_style(pauseink_domain::RgbaColor::default()).stops;
+    }
+    if gradient.stops.len() == 1 {
+        let cloned = gradient.stops[0].clone();
+        gradient.stops.push(pauseink_domain::ColorStop {
+            position: 1.0,
+            color: cloned.color,
+        });
+    }
+    if gradient.stops.len() > 4 {
+        gradient.stops.truncate(4);
+    }
+    if let Some(first) = gradient.stops.first_mut() {
+        first.position = 0.0;
+    }
+    if let Some(last) = gradient.stops.last_mut() {
+        last.position = 1.0;
+    }
+}
+
+fn interpolate_rgba(
+    left: pauseink_domain::RgbaColor,
+    right: pauseink_domain::RgbaColor,
+    t: f32,
+) -> pauseink_domain::RgbaColor {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |a: u8, b: u8| -> u8 {
+        ((a as f32) + ((b as f32) - (a as f32)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    pauseink_domain::RgbaColor::new(
+        lerp(left.r, right.r),
+        lerp(left.g, right.g),
+        lerp(left.b, right.b),
+        lerp(left.a, right.a),
+    )
+}
+
+fn relative_luminance(color: pauseink_domain::RgbaColor) -> f32 {
+    let linear = |channel: u8| -> f32 {
+        let srgb = channel as f32 / 255.0;
+        if srgb <= 0.04045 {
+            srgb / 12.92
+        } else {
+            ((srgb + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
 fn underlay_mode_key(mode: UnderlayMode) -> &'static str {
     match mode {
         UnderlayMode::Outline => "outline",
@@ -6707,6 +7048,28 @@ mod tests {
         let template_font_family = selectable_template_font_for_tests(&app);
         app.selected_style_preset_id = "marker_highlight".to_owned();
         app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(pauseink_domain::LinearGradientStyle {
+            scope: pauseink_domain::GradientSpace::GlyphObject,
+            repeat: pauseink_domain::GradientRepeat::Mirror,
+            angle_degrees: 28.0,
+            span_ratio: 1.4,
+            offset_ratio: -0.25,
+            stops: vec![
+                pauseink_domain::ColorStop {
+                    position: 0.0,
+                    color: pauseink_domain::RgbaColor::new(255, 180, 80, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 0.6,
+                    color: pauseink_domain::RgbaColor::new(255, 64, 160, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 1.0,
+                    color: pauseink_domain::RgbaColor::new(64, 96, 255, 255),
+                },
+            ],
+        });
         app.session.active_style.thickness = 13.0;
         app.session.active_style.opacity = 0.42;
         app.session.active_style.outline.enabled = true;
@@ -6761,6 +7124,27 @@ mod tests {
             reopened.session.active_style.color,
             pauseink_domain::RgbaColor::new(240, 32, 64, 255)
         );
+        assert_eq!(
+            reopened.session.active_style.color_mode,
+            pauseink_domain::ColorMode::LinearGradient
+        );
+        let reopened_gradient = reopened
+            .session
+            .active_style
+            .gradient
+            .as_ref()
+            .expect("gradient should restore from project");
+        assert_eq!(
+            reopened_gradient.scope,
+            pauseink_domain::GradientSpace::GlyphObject
+        );
+        assert_eq!(
+            reopened_gradient.repeat,
+            pauseink_domain::GradientRepeat::Mirror
+        );
+        assert!((reopened_gradient.span_ratio - 1.4).abs() < 0.001);
+        assert!((reopened_gradient.offset_ratio - -0.25).abs() < 0.001);
+        assert_eq!(reopened_gradient.stops.len(), 3);
         assert_eq!(
             reopened.session.active_entrance.kind,
             pauseink_domain::EntranceKind::PathTrace
@@ -6817,6 +7201,24 @@ mod tests {
         let template_font_family = selectable_template_font_for_tests(&app);
         app.selected_style_preset_id = "marker_highlight".to_owned();
         app.session.active_style.color = pauseink_domain::RgbaColor::new(240, 32, 64, 255);
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(pauseink_domain::LinearGradientStyle {
+            scope: pauseink_domain::GradientSpace::Canvas,
+            repeat: pauseink_domain::GradientRepeat::Repeat,
+            angle_degrees: -18.0,
+            span_ratio: 0.75,
+            offset_ratio: 0.5,
+            stops: vec![
+                pauseink_domain::ColorStop {
+                    position: 0.0,
+                    color: pauseink_domain::RgbaColor::new(32, 180, 255, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 1.0,
+                    color: pauseink_domain::RgbaColor::new(255, 255, 255, 255),
+                },
+            ],
+        });
         app.session.active_style.thickness = 13.0;
         app.session.active_style.opacity = 0.42;
         app.session.active_style.outline.enabled = true;
@@ -6876,6 +7278,26 @@ mod tests {
             reopened.session.active_style.color,
             pauseink_domain::RgbaColor::new(240, 32, 64, 255)
         );
+        assert_eq!(
+            reopened.session.active_style.color_mode,
+            pauseink_domain::ColorMode::LinearGradient
+        );
+        let reopened_gradient = reopened
+            .session
+            .active_style
+            .gradient
+            .as_ref()
+            .expect("gradient should restore from settings");
+        assert_eq!(
+            reopened_gradient.scope,
+            pauseink_domain::GradientSpace::Canvas
+        );
+        assert_eq!(
+            reopened_gradient.repeat,
+            pauseink_domain::GradientRepeat::Repeat
+        );
+        assert!((reopened_gradient.span_ratio - 0.75).abs() < 0.001);
+        assert!((reopened_gradient.offset_ratio - 0.5).abs() < 0.001);
         assert_eq!(
             reopened.session.active_entrance.kind,
             pauseink_domain::EntranceKind::PathTrace
@@ -7400,6 +7822,24 @@ mod tests {
 
         app.preset_editor_id = "custom_marker".to_owned();
         app.preset_editor_name = "Custom Marker".to_owned();
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(pauseink_domain::LinearGradientStyle {
+            scope: pauseink_domain::GradientSpace::GlyphObject,
+            repeat: pauseink_domain::GradientRepeat::Repeat,
+            angle_degrees: 42.0,
+            span_ratio: 1.25,
+            offset_ratio: -0.4,
+            stops: vec![
+                pauseink_domain::ColorStop {
+                    position: 0.0,
+                    color: pauseink_domain::RgbaColor::new(255, 220, 120, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 1.0,
+                    color: pauseink_domain::RgbaColor::new(255, 80, 180, 255),
+                },
+            ],
+        });
         app.session.active_style.thickness = 11.0;
         app.session.active_style.opacity = 0.28;
         app.session.active_style.stabilization_strength = 0.66;
@@ -7414,6 +7854,11 @@ mod tests {
         assert_eq!(saved.source, StylePresetSource::User);
         assert_eq!(saved.thickness, Some(11.0));
         assert_eq!(saved.opacity, Some(0.28));
+        assert_eq!(
+            saved.color_mode,
+            Some(pauseink_domain::ColorMode::LinearGradient)
+        );
+        assert!(saved.gradient.is_some());
 
         app.selected_style_preset_id = "custom_marker".to_owned();
         app.session.active_style.thickness = 19.0;
@@ -7490,6 +7935,91 @@ mod tests {
             .entrance_presets
             .iter()
             .any(|preset| preset.id == "custom_trace" && preset.source == StylePresetSource::User));
+    }
+
+    #[test]
+    fn gradient_mode_toggle_preserves_solid_return_color() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let solid_fallback = pauseink_domain::RgbaColor::new(24, 200, 140, 255);
+        app.session.active_style.color = solid_fallback;
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(pauseink_domain::LinearGradientStyle {
+            scope: pauseink_domain::GradientSpace::GlyphObject,
+            repeat: pauseink_domain::GradientRepeat::None,
+            angle_degrees: 12.0,
+            span_ratio: 1.0,
+            offset_ratio: 0.0,
+            stops: vec![
+                pauseink_domain::ColorStop {
+                    position: 0.0,
+                    color: pauseink_domain::RgbaColor::new(255, 120, 40, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 1.0,
+                    color: pauseink_domain::RgbaColor::new(80, 120, 255, 255),
+                },
+            ],
+        });
+
+        app.mark_gradient_dirty();
+
+        assert_eq!(
+            app.session.active_style.color, solid_fallback,
+            "gradient 編集後も単色へ戻すための fallback color は保持したい"
+        );
+    }
+
+    #[test]
+    fn saving_gradient_preset_does_not_overwrite_solid_fallback_color() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        let solid_fallback = pauseink_domain::RgbaColor::new(60, 210, 150, 255);
+
+        app.session.active_style.color = solid_fallback;
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(pauseink_domain::LinearGradientStyle {
+            scope: pauseink_domain::GradientSpace::Canvas,
+            repeat: pauseink_domain::GradientRepeat::Repeat,
+            angle_degrees: -25.0,
+            span_ratio: 0.9,
+            offset_ratio: 0.3,
+            stops: vec![
+                pauseink_domain::ColorStop {
+                    position: 0.0,
+                    color: pauseink_domain::RgbaColor::new(255, 230, 140, 255),
+                },
+                pauseink_domain::ColorStop {
+                    position: 1.0,
+                    color: pauseink_domain::RgbaColor::new(120, 110, 255, 255),
+                },
+            ],
+        });
+        app.mark_gradient_dirty();
+        app.preset_editor_id = "gradient_keep_solid".to_owned();
+        app.preset_editor_name = "Gradient Keep Solid".to_owned();
+
+        app.save_user_style_preset(false);
+
+        let saved = app
+            .style_presets
+            .iter()
+            .find(|preset| preset.id == "gradient_keep_solid")
+            .expect("saved gradient preset");
+        assert_eq!(
+            saved.color_rgba,
+            Some([
+                solid_fallback.r,
+                solid_fallback.g,
+                solid_fallback.b,
+                solid_fallback.a,
+            ]),
+            "gradient preset 保存でも単色へ戻す fallback color を潰したくない"
+        );
     }
 
     #[test]
@@ -7591,6 +8121,87 @@ mod tests {
         assert!(
             app.session.active_entrance.head_effect.is_none(),
             "preset に head effect が無い場合は presetへ戻す で無効化したい"
+        );
+    }
+
+    #[test]
+    fn resetting_gradient_to_preset_restores_or_disables_it() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        std::fs::write(
+            portable_paths
+                .user_style_presets_dir()
+                .join("gradient_soft.json5"),
+            r#"
+            {
+              id: "gradient_soft",
+              display_name: "Gradient Soft",
+              base_style: {
+                color_mode: "linear_gradient",
+                gradient: {
+                  scope: "glyph_object",
+                  repeat: "mirror",
+                  angle_degrees: 18.0,
+                  span_ratio: 1.3,
+                  offset_ratio: -0.2,
+                  stops: [
+                    { position: 0.0, color_rgba: [1.0, 0.95, 0.7, 1.0] },
+                    { position: 0.55, color_rgba: [1.0, 0.55, 0.75, 1.0] },
+                    { position: 1.0, color_rgba: [0.45, 0.6, 1.0, 1.0] },
+                  ],
+                },
+              },
+            }
+            "#,
+        )
+        .expect("gradient preset file");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.selected_style_preset_id = "gradient_soft".to_owned();
+        app.apply_selected_style_preset();
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::Solid;
+        app.session.active_style.gradient = None;
+        app.style_binding.inherit_gradient = false;
+
+        app.style_binding.inherit_gradient = true;
+        app.refresh_bound_style_fields();
+
+        assert_eq!(
+            app.session.active_style.color_mode,
+            pauseink_domain::ColorMode::LinearGradient
+        );
+        let restored_gradient = app
+            .session
+            .active_style
+            .gradient
+            .as_ref()
+            .expect("presetへ戻す で gradient を再適用したい");
+        assert_eq!(
+            restored_gradient.repeat,
+            pauseink_domain::GradientRepeat::Mirror
+        );
+        assert_eq!(restored_gradient.stops.len(), 3);
+
+        app.selected_style_preset_id = "marker_highlight".to_owned();
+        app.apply_selected_style_preset();
+        app.session.active_style.color_mode = pauseink_domain::ColorMode::LinearGradient;
+        app.session.active_style.gradient = Some(default_linear_gradient_style(
+            pauseink_domain::RgbaColor::new(255, 220, 0, 255),
+        ));
+        app.style_binding.inherit_gradient = false;
+
+        app.style_binding.inherit_gradient = true;
+        app.refresh_bound_style_fields();
+
+        assert_eq!(
+            app.session.active_style.color_mode,
+            pauseink_domain::ColorMode::Solid,
+            "gradient を持たない presetへ戻す と単色へ戻したい"
+        );
+        assert!(
+            app.session.active_style.gradient.is_none(),
+            "gradient を持たない presetへ戻す と gradient editor 状態も外したい"
         );
     }
 

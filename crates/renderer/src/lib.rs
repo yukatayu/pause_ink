@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use pauseink_domain::{
-    AnnotationProject, BlendMode, ClearKind, DerivedStrokePath, GeometryTransform, GlyphObject,
-    MediaTime, Point2, RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke,
+    AnnotationProject, BlendMode, ClearKind, ColorMode, ColorStop, DerivedStrokePath,
+    GeometryTransform, GlyphObject, GradientRepeat, GradientSpace, LinearGradientStyle, MediaTime,
+    Point2, RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke,
     StrokeSample, StyleSnapshot, TimeBase,
 };
 use tiny_skia::{
-    BlendMode as SkBlendMode, Paint, PathBuilder, Pixmap, Stroke as SkStroke, Transform,
+    BlendMode as SkBlendMode, GradientStop as SkGradientStop, LinearGradient, Paint, PathBuilder,
+    Pixmap, Point as SkPoint, Shader, SpreadMode, Stroke as SkStroke, Transform,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +41,21 @@ struct RenderScale {
     x: f32,
     y: f32,
     stroke: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RectBounds {
+    min: Point2,
+    max: Point2,
+}
+
+impl RectBounds {
+    fn center(self) -> Point2 {
+        Point2 {
+            x: (self.min.x + self.max.x) * 0.5,
+            y: (self.min.y + self.max.y) * 0.5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -207,6 +224,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
 
                 render_stroke_layer(
                     &mut pixmap,
+                    request,
+                    Some(object),
                     stroke,
                     &object.style,
                     &object.transform,
@@ -233,6 +252,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
 
             render_stroke_layer(
                 &mut pixmap,
+                request,
+                None,
                 stroke,
                 &stroke.style,
                 &GeometryTransform::default(),
@@ -259,6 +280,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
             for layer in body_layers {
                 render_stroke_layer(
                     &mut pixmap,
+                    request,
+                    Some(object),
                     stroke,
                     &object.style,
                     &object.transform,
@@ -285,6 +308,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
         for layer in body_layers {
             render_stroke_layer(
                 &mut pixmap,
+                request,
+                None,
                 stroke,
                 &stroke.style,
                 &GeometryTransform::default(),
@@ -553,6 +578,8 @@ enum StrokeRenderLayer {
 
 fn render_stroke_layer(
     pixmap: &mut Pixmap,
+    request: &RenderRequest<'_>,
+    object: Option<&GlyphObject>,
     stroke: &Stroke,
     style: &StyleSnapshot,
     transform: &GeometryTransform,
@@ -561,7 +588,8 @@ fn render_stroke_layer(
     render_scale: RenderScale,
     layer: StrokeRenderLayer,
 ) {
-    let points = transformed_visible_points(stroke, transform, visibility.path_fraction)
+    let full_points = transformed_visible_points(stroke, transform, 1.0);
+    let points = partial_polyline_range(&full_points, 0.0, visibility.path_fraction)
         .into_iter()
         .map(|point| scale_point(point, render_scale))
         .collect::<Vec<_>>();
@@ -619,14 +647,57 @@ fn render_stroke_layer(
             }
         }
         StrokeRenderLayer::Base => {
-            draw_stroked_path(
-                pixmap,
-                &path,
-                (style.thickness * render_scale.stroke).max(1.0),
-                style.color,
-                style.opacity * visibility.alpha,
-                style.blend_mode,
-            );
+            if let Some(gradient) = style
+                .gradient
+                .as_ref()
+                .filter(|_| matches!(style.color_mode, ColorMode::LinearGradient))
+            {
+                let stroke_bounds = bounds_from_points(&full_points);
+                let object_bounds = object
+                    .and_then(|object| object_bounds_in_source_space(request.project, object));
+                let canvas_bounds = RectBounds {
+                    min: Point2 { x: 0.0, y: 0.0 },
+                    max: Point2 {
+                        x: request.source_width as f32,
+                        y: request.source_height as f32,
+                    },
+                };
+                if let Some(shader) = gradient_shader(
+                    style,
+                    gradient,
+                    stroke_bounds,
+                    object_bounds,
+                    canvas_bounds,
+                    style.opacity * visibility.alpha,
+                    render_scale,
+                ) {
+                    draw_stroked_path_with_shader(
+                        pixmap,
+                        &path,
+                        (style.thickness * render_scale.stroke).max(1.0),
+                        shader,
+                        style.blend_mode,
+                    );
+                } else {
+                    draw_stroked_path(
+                        pixmap,
+                        &path,
+                        (style.thickness * render_scale.stroke).max(1.0),
+                        representative_ink_color(style),
+                        style.opacity * visibility.alpha,
+                        style.blend_mode,
+                    );
+                }
+            } else {
+                draw_stroked_path(
+                    pixmap,
+                    &path,
+                    (style.thickness * render_scale.stroke).max(1.0),
+                    representative_ink_color(style),
+                    style.opacity * visibility.alpha,
+                    style.blend_mode,
+                );
+            }
         }
         StrokeRenderLayer::HeadHalo => {
             render_recent_ink_accent_layer(
@@ -702,6 +773,237 @@ fn apply_transform(point: Point2, transform: &GeometryTransform) -> Point2 {
         x: scaled_x * cos - scaled_y * sin + transform.translation.x,
         y: scaled_x * sin + scaled_y * cos + transform.translation.y,
     }
+}
+
+fn bounds_from_points(points: &[Point2]) -> Option<RectBounds> {
+    let mut iter = points.iter().copied();
+    let first = iter.next()?;
+    let mut min = first;
+    let mut max = first;
+    for point in iter {
+        min.x = min.x.min(point.x);
+        min.y = min.y.min(point.y);
+        max.x = max.x.max(point.x);
+        max.y = max.y.max(point.y);
+    }
+    Some(RectBounds { min, max })
+}
+
+fn object_bounds_in_source_space(
+    project: &AnnotationProject,
+    object: &GlyphObject,
+) -> Option<RectBounds> {
+    let mut points = Vec::new();
+    for stroke_id in &object.stroke_ids {
+        let Some(stroke) = project
+            .strokes
+            .iter()
+            .find(|stroke| stroke.id == *stroke_id)
+        else {
+            continue;
+        };
+        points.extend(transformed_visible_points(stroke, &object.transform, 1.0));
+    }
+    bounds_from_points(&points)
+}
+
+fn representative_ink_color(style: &StyleSnapshot) -> RgbaColor {
+    if !matches!(style.color_mode, ColorMode::LinearGradient) {
+        return style.color;
+    }
+
+    style
+        .gradient
+        .as_ref()
+        .map(sample_representative_gradient_color)
+        .unwrap_or(style.color)
+}
+
+fn sample_representative_gradient_color(gradient: &LinearGradientStyle) -> RgbaColor {
+    let stops = normalized_color_stops(gradient, RgbaColor::default());
+    sample_color_stops(&stops, 0.5)
+}
+
+fn normalized_color_stops(gradient: &LinearGradientStyle, fallback: RgbaColor) -> Vec<ColorStop> {
+    let mut stops = gradient
+        .stops
+        .iter()
+        .map(|stop| ColorStop {
+            position: stop.position.clamp(0.0, 1.0),
+            color: stop.color,
+        })
+        .collect::<Vec<_>>();
+    if stops.is_empty() {
+        return vec![
+            ColorStop {
+                position: 0.0,
+                color: fallback,
+            },
+            ColorStop {
+                position: 1.0,
+                color: fallback,
+            },
+        ];
+    }
+    stops.sort_by(|left, right| {
+        left.position
+            .partial_cmp(&right.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    if stops.first().is_some_and(|stop| stop.position > 0.0) {
+        let color = stops[0].color;
+        stops.insert(
+            0,
+            ColorStop {
+                position: 0.0,
+                color,
+            },
+        );
+    }
+    if stops.last().is_some_and(|stop| stop.position < 1.0) {
+        let color = stops.last().map(|stop| stop.color).unwrap_or(fallback);
+        stops.push(ColorStop {
+            position: 1.0,
+            color,
+        });
+    }
+    if stops.len() == 1 {
+        stops.push(ColorStop {
+            position: 1.0,
+            color: stops[0].color,
+        });
+    }
+    stops
+}
+
+fn sample_color_stops(stops: &[ColorStop], position: f32) -> RgbaColor {
+    let position = position.clamp(0.0, 1.0);
+    let Some(first) = stops.first() else {
+        return RgbaColor::default();
+    };
+    if position <= first.position {
+        return first.color;
+    }
+    for segment in stops.windows(2) {
+        let left = &segment[0];
+        let right = &segment[1];
+        if position > right.position {
+            continue;
+        }
+        let span = (right.position - left.position).max(f32::EPSILON);
+        let t = ((position - left.position) / span).clamp(0.0, 1.0);
+        let lerp = |a: u8, b: u8| -> u8 {
+            ((a as f32) + ((b as f32) - (a as f32)) * t)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        return RgbaColor::new(
+            lerp(left.color.r, right.color.r),
+            lerp(left.color.g, right.color.g),
+            lerp(left.color.b, right.color.b),
+            lerp(left.color.a, right.color.a),
+        );
+    }
+    stops.last().map(|stop| stop.color).unwrap_or(first.color)
+}
+
+fn gradient_shader(
+    style: &StyleSnapshot,
+    gradient: &LinearGradientStyle,
+    stroke_bounds: Option<RectBounds>,
+    object_bounds: Option<RectBounds>,
+    canvas_bounds: RectBounds,
+    opacity_multiplier: f32,
+    render_scale: RenderScale,
+) -> Option<Shader<'static>> {
+    let bounds = match gradient.scope {
+        GradientSpace::Stroke => stroke_bounds.or(object_bounds).unwrap_or(canvas_bounds),
+        GradientSpace::GlyphObject => object_bounds.or(stroke_bounds).unwrap_or(canvas_bounds),
+        GradientSpace::Canvas => canvas_bounds,
+    };
+    let radians = gradient.angle_degrees.to_radians();
+    let direction = Point2 {
+        x: radians.cos(),
+        y: radians.sin(),
+    };
+    let perpendicular = Point2 {
+        x: -direction.y,
+        y: direction.x,
+    };
+    let center = bounds.center();
+    let corners = [
+        Point2 {
+            x: bounds.min.x,
+            y: bounds.min.y,
+        },
+        Point2 {
+            x: bounds.max.x,
+            y: bounds.min.y,
+        },
+        Point2 {
+            x: bounds.min.x,
+            y: bounds.max.y,
+        },
+        Point2 {
+            x: bounds.max.x,
+            y: bounds.max.y,
+        },
+    ];
+    let projected_length = (corners
+        .iter()
+        .map(|corner| dot(*corner, direction))
+        .fold(f32::NEG_INFINITY, f32::max)
+        - corners
+            .iter()
+            .map(|corner| dot(*corner, direction))
+            .fold(f32::INFINITY, f32::min))
+    .max(1.0);
+    let span = (projected_length * gradient.span_ratio.max(0.01)).max(1.0);
+    let min_projection = corners
+        .iter()
+        .map(|corner| dot(*corner, direction))
+        .fold(f32::INFINITY, f32::min);
+    let start_projection = min_projection + projected_length * gradient.offset_ratio;
+    let perpendicular_center = dot(center, perpendicular);
+    let start = scale_point(
+        Point2 {
+            x: direction.x * start_projection + perpendicular.x * perpendicular_center,
+            y: direction.y * start_projection + perpendicular.y * perpendicular_center,
+        },
+        render_scale,
+    );
+    let end = scale_point(
+        Point2 {
+            x: direction.x * (start_projection + span) + perpendicular.x * perpendicular_center,
+            y: direction.y * (start_projection + span) + perpendicular.y * perpendicular_center,
+        },
+        render_scale,
+    );
+    let stops = normalized_color_stops(gradient, representative_ink_color(style))
+        .into_iter()
+        .map(|stop| {
+            SkGradientStop::new(
+                stop.position,
+                tiny_skia::Color::from_rgba8(
+                    stop.color.r,
+                    stop.color.g,
+                    stop.color.b,
+                    ((stop.color.a as f32) * opacity_multiplier.clamp(0.0, 1.0)).round() as u8,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    LinearGradient::new(
+        SkPoint::from_xy(start.x, start.y),
+        SkPoint::from_xy(end.x, end.y),
+        stops,
+        match gradient.repeat {
+            GradientRepeat::None => SpreadMode::Pad,
+            GradientRepeat::Repeat => SpreadMode::Repeat,
+            GradientRepeat::Mirror => SpreadMode::Reflect,
+        },
+        Transform::identity(),
+    )
 }
 
 fn partial_polyline_range(
@@ -979,7 +1281,7 @@ fn resolve_head_tail_length(
 
 fn resolve_head_effect_color(style: &StyleSnapshot, head: &RevealHeadEffect) -> RgbaColor {
     match &head.color_source {
-        RevealHeadColorSource::StrokeColor => style.color,
+        RevealHeadColorSource::StrokeColor => representative_ink_color(style),
         RevealHeadColorSource::Custom(color) => *color,
         RevealHeadColorSource::PresetAccent => {
             if style.glow.enabled {
@@ -989,7 +1291,7 @@ fn resolve_head_effect_color(style: &StyleSnapshot, head: &RevealHeadEffect) -> 
             } else if style.drop_shadow.enabled {
                 style.drop_shadow.color
             } else {
-                style.color
+                representative_ink_color(style)
             }
         }
     }
@@ -1054,6 +1356,10 @@ fn distance(left: Point2, right: Point2) -> f32 {
     (dx * dx + dy * dy).sqrt()
 }
 
+fn dot(left: Point2, right: Point2) -> f32 {
+    left.x * right.x + left.y * right.y
+}
+
 fn is_corner(raw_samples: &[StrokeSample], index: usize, cosine_threshold: f32) -> bool {
     if index == 0 || index + 1 >= raw_samples.len() {
         return false;
@@ -1111,6 +1417,28 @@ fn draw_stroked_path(
     pixmap.stroke_path(path, &paint, &stroke, Transform::identity(), None);
 }
 
+fn draw_stroked_path_with_shader(
+    pixmap: &mut Pixmap,
+    path: &tiny_skia::Path,
+    width: f32,
+    shader: Shader<'static>,
+    blend_mode: BlendMode,
+) {
+    let mut paint = Paint::default();
+    paint.shader = shader;
+    paint.anti_alias = true;
+    paint.blend_mode = to_tiny_blend_mode(blend_mode);
+
+    let stroke = SkStroke {
+        width: width.max(1.0),
+        line_cap: tiny_skia::LineCap::Round,
+        line_join: tiny_skia::LineJoin::Round,
+        ..SkStroke::default()
+    };
+
+    pixmap.stroke_path(path, &paint, &stroke, Transform::identity(), None);
+}
+
 fn color_to_tiny(color: RgbaColor, alpha_multiplier: f32) -> tiny_skia::Color {
     tiny_skia::Color::from_rgba8(
         color.r,
@@ -1132,10 +1460,10 @@ fn to_tiny_blend_mode(blend_mode: BlendMode) -> SkBlendMode {
 #[cfg(test)]
 mod tests {
     use pauseink_domain::{
-        AnnotationProject, BlendMode, ClearEvent, ClearEventId, EntranceBehavior, EntranceKind,
-        GlyphObject, GlyphObjectId, MediaDuration, MediaTime, Point2, RevealHeadColorSource,
-        RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeId, StrokeSample,
-        StyleSnapshot,
+        AnnotationProject, BlendMode, ClearEvent, ClearEventId, ColorMode, ColorStop,
+        EntranceBehavior, EntranceKind, GlyphObject, GlyphObjectId, GradientRepeat, GradientSpace,
+        LinearGradientStyle, MediaDuration, MediaTime, Point2, RevealHeadColorSource,
+        RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeId, StrokeSample, StyleSnapshot,
     };
 
     use super::*;
@@ -1536,8 +1864,14 @@ mod tests {
             Point2 { x: 60.0, y: 4.0 },
             Point2 { x: 60.0, y: 36.0 },
         );
-        let mut low_object =
-            entrance_object("obj-low", "stroke-low", 0, 0, EntranceKind::PathTrace, 1_000);
+        let mut low_object = entrance_object(
+            "obj-low",
+            "stroke-low",
+            0,
+            0,
+            EntranceKind::PathTrace,
+            1_000,
+        );
         low_object.style.color = RgbaColor::new(40, 80, 220, 255);
         low_object.style.thickness = 12.0;
         low_object.ordering.z_index = 0;
@@ -1661,6 +1995,42 @@ mod tests {
         assert_eq!(
             resolve_head_effect_color(&style, &head),
             RgbaColor::new(100, 110, 120, 255)
+        );
+    }
+
+    #[test]
+    fn stroke_color_head_effect_prefers_gradient_representative_color() {
+        let style = StyleSnapshot {
+            color: RgbaColor::new(20, 240, 40, 255),
+            color_mode: ColorMode::LinearGradient,
+            gradient: Some(LinearGradientStyle {
+                scope: GradientSpace::GlyphObject,
+                repeat: GradientRepeat::None,
+                angle_degrees: 0.0,
+                span_ratio: 1.0,
+                offset_ratio: 0.0,
+                stops: vec![
+                    ColorStop {
+                        position: 0.0,
+                        color: RgbaColor::new(255, 0, 0, 255),
+                    },
+                    ColorStop {
+                        position: 1.0,
+                        color: RgbaColor::new(0, 0, 255, 255),
+                    },
+                ],
+            }),
+            ..StyleSnapshot::default()
+        };
+        let head = RevealHeadEffect {
+            color_source: RevealHeadColorSource::StrokeColor,
+            ..RevealHeadEffect::default()
+        };
+
+        assert_eq!(
+            resolve_head_effect_color(&style, &head),
+            RgbaColor::new(128, 0, 128, 255),
+            "gradient 有効時は stale な solid color ではなく中点色を使いたい"
         );
     }
 
@@ -2427,6 +2797,271 @@ mod tests {
         assert!(
             rgba[1] < 170 && rgba[2] < 170,
             "outline/shadow の黒成分で earlier body が潰れてはいけない: {rgba:?}"
+        );
+    }
+
+    #[test]
+    fn object_scope_gradient_moves_with_object_translation() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let gradient = LinearGradientStyle {
+            scope: GradientSpace::GlyphObject,
+            repeat: GradientRepeat::None,
+            angle_degrees: 0.0,
+            span_ratio: 1.0,
+            offset_ratio: 0.0,
+            stops: vec![
+                ColorStop {
+                    position: 0.0,
+                    color: RgbaColor::new(255, 64, 64, 255),
+                },
+                ColorStop {
+                    position: 1.0,
+                    color: RgbaColor::new(64, 96, 255, 255),
+                },
+            ],
+        };
+
+        let mut left = demo_object("stroke-1", 0);
+        left.style.color_mode = ColorMode::LinearGradient;
+        left.style.gradient = Some(gradient.clone());
+
+        let mut right = left.clone();
+        right.id = GlyphObjectId::new("obj-2");
+        right.transform.translation.x = 240.0;
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![stroke],
+                glyph_objects: vec![left, right],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(0),
+            preview_force_visible_batch: None,
+            width: 480,
+            height: 48,
+            source_width: 480,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let left_start = rgba_at(&image, 18, 20);
+        let right_start = rgba_at(&image, 258, 20);
+        assert!(
+            (left_start[0] as u16) > (left_start[2] as u16) + 50,
+            "left object start should be warm, got {left_start:?}"
+        );
+        assert!(
+            (right_start[0] as u16) > (right_start[2] as u16) + 50,
+            "object scope should move gradient with object, got {right_start:?}"
+        );
+    }
+
+    #[test]
+    fn canvas_scope_gradient_remains_global_when_object_moves() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let gradient = LinearGradientStyle {
+            scope: GradientSpace::Canvas,
+            repeat: GradientRepeat::None,
+            angle_degrees: 0.0,
+            span_ratio: 1.0,
+            offset_ratio: 0.0,
+            stops: vec![
+                ColorStop {
+                    position: 0.0,
+                    color: RgbaColor::new(255, 64, 64, 255),
+                },
+                ColorStop {
+                    position: 1.0,
+                    color: RgbaColor::new(64, 96, 255, 255),
+                },
+            ],
+        };
+
+        let mut left = demo_object("stroke-1", 0);
+        left.style.color_mode = ColorMode::LinearGradient;
+        left.style.gradient = Some(gradient.clone());
+
+        let mut right = left.clone();
+        right.id = GlyphObjectId::new("obj-2");
+        right.transform.translation.x = 240.0;
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![stroke],
+                glyph_objects: vec![left, right],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(0),
+            preview_force_visible_batch: None,
+            width: 480,
+            height: 48,
+            source_width: 480,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let left_start = rgba_at(&image, 18, 20);
+        let right_start = rgba_at(&image, 258, 20);
+        assert!(
+            (left_start[0] as u16) > (left_start[2] as u16) + 50,
+            "left object start should still be warm, got {left_start:?}"
+        );
+        assert!(
+            (right_start[2] as u16) > (left_start[2] as u16) + 40
+                && (right_start[0] as u16) + 20 < (left_start[0] as u16),
+            "canvas scope should keep global gradient so translated object becomes cooler than the left one, left={left_start:?} right={right_start:?}"
+        );
+    }
+
+    #[test]
+    fn repeat_and_mirror_gradient_modes_change_sampling_pattern() {
+        let stroke_repeat = line_stroke(
+            "stroke-repeat",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let stroke_mirror = line_stroke(
+            "stroke-mirror",
+            0,
+            Point2 { x: 10.0, y: 34.0 },
+            Point2 { x: 110.0, y: 34.0 },
+        );
+        let make_object = |id: &str, stroke_id: &str, repeat: GradientRepeat| {
+            let mut object = demo_object(stroke_id, 0);
+            object.id = GlyphObjectId::new(id);
+            object.style.color_mode = ColorMode::LinearGradient;
+            object.style.gradient = Some(LinearGradientStyle {
+                scope: GradientSpace::GlyphObject,
+                repeat,
+                angle_degrees: 0.0,
+                span_ratio: 0.2,
+                offset_ratio: 0.0,
+                stops: vec![
+                    ColorStop {
+                        position: 0.0,
+                        color: RgbaColor::new(255, 64, 64, 255),
+                    },
+                    ColorStop {
+                        position: 1.0,
+                        color: RgbaColor::new(64, 96, 255, 255),
+                    },
+                ],
+            });
+            object
+        };
+
+        let repeat_object = make_object("repeat", "stroke-repeat", GradientRepeat::Repeat);
+        let mirror_object = make_object("mirror", "stroke-mirror", GradientRepeat::Mirror);
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![stroke_repeat, stroke_mirror],
+                glyph_objects: vec![repeat_object, mirror_object],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(0),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 60,
+            source_width: 160,
+            source_height: 60,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let repeat_a = rgba_at(&image, 12, 20);
+        let repeat_b = rgba_at(&image, 52, 20);
+        assert!(
+            (repeat_a[0] as u16) > (repeat_a[2] as u16) + 50
+                && (repeat_b[0] as u16) > (repeat_b[2] as u16) + 50,
+            "repeat は 1 周後に同じ色相へ戻ってほしい: {repeat_a:?} {repeat_b:?}"
+        );
+
+        let mirror_a = rgba_at(&image, 12, 34);
+        let mirror_b = rgba_at(&image, 32, 34);
+        assert!(
+            (mirror_a[0] as u16) > (mirror_a[2] as u16) + 50
+                && (mirror_b[2] as u16) > (mirror_b[0] as u16) + 20,
+            "mirror は折り返し後に逆側の色相へ行ってほしい: {mirror_a:?} {mirror_b:?}"
+        );
+    }
+
+    #[test]
+    fn gradient_affects_base_stroke_but_effect_layers_remain_solid() {
+        let stroke = line_stroke(
+            "stroke-gradient-outline",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let mut object = demo_object("stroke-gradient-outline", 0);
+        object.style.color_mode = ColorMode::LinearGradient;
+        object.style.gradient = Some(LinearGradientStyle {
+            scope: GradientSpace::GlyphObject,
+            repeat: GradientRepeat::None,
+            angle_degrees: 0.0,
+            span_ratio: 1.0,
+            offset_ratio: 0.0,
+            stops: vec![
+                ColorStop {
+                    position: 0.0,
+                    color: RgbaColor::new(255, 64, 64, 255),
+                },
+                ColorStop {
+                    position: 1.0,
+                    color: RgbaColor::new(64, 96, 255, 255),
+                },
+            ],
+        });
+        object.style.outline = pauseink_domain::OutlineStyle {
+            enabled: true,
+            width: 4.0,
+            color: RgbaColor::new(12, 12, 12, 255),
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &AnnotationProject {
+                strokes: vec![stroke],
+                glyph_objects: vec![object],
+                ..AnnotationProject::default()
+            },
+            time: MediaTime::from_millis(0),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let outline_rgba = rgba_at(&image, 60, 14);
+        let body_left = rgba_at(&image, 20, 20);
+        let body_right = rgba_at(&image, 100, 20);
+        assert!(
+            outline_rgba[0] < 60 && outline_rgba[1] < 60 && outline_rgba[2] < 60,
+            "outline は gradient ではなく単色のままでいてほしい: {outline_rgba:?}"
+        );
+        assert!(
+            (body_left[0] as u16) > (body_left[2] as u16) + 30,
+            "body 左側は warm tone の gradient を保ってほしい: {body_left:?}"
+        );
+        assert!(
+            (body_right[2] as u16) > (body_right[0] as u16) + 30,
+            "body 右側は cool tone の gradient を保ってほしい: {body_right:?}"
         );
     }
 }

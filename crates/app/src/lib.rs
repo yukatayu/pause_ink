@@ -517,7 +517,8 @@ impl AppSession {
                 .find(|group| group.id == anchor_group_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("anchor group not found: {}", anchor_group_id.0))?;
-            let mut commands: Vec<Box<dyn pauseink_domain::Command<AnnotationProject>>> = Vec::new();
+            let mut commands: Vec<Box<dyn pauseink_domain::Command<AnnotationProject>>> =
+                Vec::new();
             if anchor_group.glyph_object_ids != object_ids {
                 commands.push(Box::new(UpdateGroupMembershipCommand {
                     group_id: anchor_group_id.clone(),
@@ -823,10 +824,8 @@ impl AppSession {
                 }),
             ];
             commands.extend(auto_group_plan.commands);
-            self.history.apply(
-                &mut self.project,
-                Box::new(CommandBatch::new(commands)),
-            )?;
+            self.history
+                .apply(&mut self.project, Box::new(CommandBatch::new(commands)))?;
             self.auto_group_context = auto_group_plan.next_context;
             object_id
         };
@@ -935,7 +934,8 @@ impl AppSession {
         new_object_id: &GlyphObjectId,
         created_at: MediaTime,
     ) -> AutoGroupPlan {
-        let page_index = pauseink_domain::page_index_for_time(&self.project.clear_events, created_at);
+        let page_index =
+            pauseink_domain::page_index_for_time(&self.project.clear_events, created_at);
         let pending_context = || AutoGroupContext::Pending {
             object_id: new_object_id.clone(),
             page_index,
@@ -949,8 +949,12 @@ impl AppSession {
                 next_context: Some(pending_context()),
             };
         };
-        if !auto_group_context_matches(&context, page_index, &self.active_style, &self.active_entrance)
-        {
+        if !auto_group_context_matches(
+            &context,
+            page_index,
+            &self.active_style,
+            &self.active_entrance,
+        ) {
             return AutoGroupPlan {
                 commands: Vec::new(),
                 next_context: Some(pending_context()),
@@ -993,14 +997,12 @@ impl AppSession {
                     }),
                 }
             }
-            AutoGroupContext::Active { group_id, .. } => {
-                self.plan_append_to_existing_group(
-                    &group_id,
-                    new_object_id,
-                    page_index,
-                    pending_context,
-                )
-            }
+            AutoGroupContext::Active { group_id, .. } => self.plan_append_to_existing_group(
+                &group_id,
+                new_object_id,
+                page_index,
+                pending_context,
+            ),
         }
     }
 
@@ -1014,7 +1016,12 @@ impl AppSession {
     where
         F: FnOnce() -> AutoGroupContext,
     {
-        let Some(group) = self.project.groups.iter().find(|group| group.id == *group_id) else {
+        let Some(group) = self
+            .project
+            .groups
+            .iter()
+            .find(|group| group.id == *group_id)
+        else {
             return AutoGroupPlan {
                 commands: Vec::new(),
                 next_context: Some(pending_context()),
@@ -1479,11 +1486,7 @@ fn auto_group_context_matches(
             style: context_style,
             entrance: context_entrance,
             ..
-        } => {
-            *context_page == page_index
-                && context_style == style
-                && context_entrance == entrance
-        }
+        } => *context_page == page_index && context_style == style && context_entrance == entrance,
     }
 }
 
@@ -2369,8 +2372,7 @@ mod tests {
         assert_eq!(merged_group_id, first_group_id);
         assert_eq!(session.project.groups.len(), 1);
         assert_eq!(
-            session.project.groups[0].glyph_object_ids,
-            object_ids,
+            session.project.groups[0].glyph_object_ids, object_ids,
             "group 同士の group 化は flat merge にしたい"
         );
         assert_eq!(session.selected_group_ids(), vec![merged_group_id]);
@@ -2527,7 +2529,7 @@ mod tests {
     #[test]
     fn ungroup_selected_groups_restores_object_selection() {
         let mut session = AppSession::default();
-        for start_x in [0.0, 40.0] {
+        for (index, start_x) in [0.0, 40.0].into_iter().enumerate() {
             session.begin_stroke(
                 Point2 { x: start_x, y: 0.0 },
                 MediaTime::from_millis(start_x as i64),
@@ -2542,6 +2544,9 @@ mod tests {
             session
                 .commit_stroke(false)
                 .expect("stroke commit should succeed");
+            if index == 0 {
+                session.note_auto_group_break();
+            }
         }
         let object_ids = session
             .project

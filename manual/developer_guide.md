@@ -132,6 +132,8 @@ project には mutable preset file そのものではなく、`project.presets.b
 
 - thickness
 - color_rgba
+- color_mode
+- gradient
 - opacity
 - outline
 - drop_shadow
@@ -149,6 +151,30 @@ project には mutable preset file そのものではなく、`project.presets.b
 renderer 側には outline / drop shadow / glow に加えて timed entrance 用の `head accent` 描画処理があり、現在は object-first ではなく layer-first の multi-pass compositor にしてあります。これにより、後から描いた object の outer effect も含めて、先にある body を不自然に覆いにくくしています。`head accent` は detached な発光点ではなく、visible front 直後の短い path 区間を `HeadHalo -> HeadCore` で再描画する CPU-safe モデルです。出現時間は `fixed_total_duration` と `proportional_to_stroke_length` の 2 モードを持ち、後者は 600px を基準長として `speed_scalar` を掛けています。
 entrance sequencing は page 全体 1 本の queue ではなく、同じ `created_at` を持つ paused batch lane ごとに計算します。`Instant` object は lane の先頭時刻から即表示され、timed entrance だけが同じ lane 内の前の timed object 完了を待ちます。preview では current paused batch だけ `fully visible` override を掛け、`再生` / `保存` / `書き出し` では lane 本来の reveal へ戻します。
 `RevealHeadColorSource::PresetAccent` は v1.0 では独立 accent palette を持たず、Glow / Outline / DropShadow の代表色を優先し、無ければ stroke color へ fall back します。未接続の残項目は post-action chain、clear / combo preset の専用 UI です。
+
+## 6.3 gradient color mode
+
+- v1.0 の gradient は `linear` のみです。radial / conic / path-follow は future work です
+- `StyleSnapshot` は `color_mode` と `gradient` を持ちます
+  - `Solid` のときは従来どおり `style.color`
+  - `LinearGradient` のときは base stroke だけ gradient shader で描きます
+  - `style.color` は gradient の代表色キャッシュではなく、単色モードへ戻したときの fallback 色として保持します
+- gradient schema:
+  - `scope`: `stroke | glyph_object | canvas`
+  - `repeat`: `none | repeat | mirror`
+  - `angle_degrees`
+  - `span_ratio`
+  - `offset_ratio`
+  - `stops(2..=4)`
+- `span_ratio` と `offset_ratio` は px ではなく scope bbox の gradient 軸射影長に対する比率です
+- gradient の `0.0` 位置は scope bbox を gradient 軸へ射影した最小端です。`offset_ratio` はそこから周期単位で送ります
+- `canvas` scope は preview rect ではなく source media frame (`source_width/source_height`) 基準です。preview/export 一致のため、この基準は固定です
+- `object` scope は object と一緒に動き、`canvas` scope は object を動かしても画面側へ貼り付きます
+- `repeat` は `tiny-skia::SpreadMode::Repeat`、`mirror` は `Reflect` に対応します
+- stop の正規化と代表色計算は renderer 側 helper で行います。`StrokeColor` の reveal-head accent は `style.color` ではなく gradient の中点色を使います
+- つまり reveal-head の色は「先端位置の厳密色」ではなく「gradient 全体の代表色」です。v1.0 では見た目の安定性を優先してこの簡略化を採っています
+- outline / drop shadow / glow は v1.0 では単色のままです。gradient を effect 全部へ波及させないことで UI と export の複雑化を避けています
+- preset save/load は `pauseink-presets-core` の `ColorModeFile` / `LinearGradientStyleFile` を通し、user preset overlay でも gradient を roundtrip します
 
 ## 6.4 template alignment
 

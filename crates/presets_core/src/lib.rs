@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use pauseink_domain::{
-    BlendMode, ClearKind, ClearOrdering, ClearTargetGranularity, DropShadowStyle, EntranceBehavior,
-    EntranceDurationMode, EntranceKind, GlowStyle, MediaDuration, OutlineStyle,
+    BlendMode, ClearKind, ClearOrdering, ClearTargetGranularity, ColorMode, ColorStop,
+    DropShadowStyle, EntranceBehavior, EntranceDurationMode, EntranceKind, GlowStyle,
+    GradientRepeat, GradientSpace, LinearGradientStyle, MediaDuration, OutlineStyle,
     RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor,
 };
 use serde::{Deserialize, Serialize};
@@ -94,6 +95,8 @@ pub struct BaseStylePreset {
     pub display_name: String,
     pub thickness: Option<f32>,
     pub color_rgba: Option<[u8; 4]>,
+    pub color_mode: Option<ColorMode>,
+    pub gradient: Option<LinearGradientStyle>,
     pub opacity: Option<f32>,
     pub outline: Option<OutlineStyle>,
     pub drop_shadow: Option<DropShadowStyle>,
@@ -976,6 +979,20 @@ impl BaseStylePresetFile {
             display_name: self.display_name,
             thickness: self.base_style.thickness,
             color_rgba,
+            color_mode: self
+                .base_style
+                .color_mode
+                .map(ColorModeFile::into_domain)
+                .or_else(|| {
+                    self.base_style
+                        .gradient
+                        .as_ref()
+                        .map(|_| ColorMode::LinearGradient)
+                }),
+            gradient: self
+                .base_style
+                .gradient
+                .map(LinearGradientStyleFile::into_domain),
             opacity,
             outline: self.base_style.outline.map(OutlineStyleFile::into_domain),
             drop_shadow: self
@@ -1023,6 +1040,11 @@ impl BaseStylePresetFile {
                     rgba[3] = preset.opacity.unwrap_or(rgba[3]).clamp(0.0, 1.0);
                     rgba
                 }),
+                color_mode: preset.color_mode.map(ColorModeFile::from_domain),
+                gradient: preset
+                    .gradient
+                    .as_ref()
+                    .map(LinearGradientStyleFile::from_domain),
                 opacity: preset.opacity,
                 outline: preset.outline.as_ref().map(OutlineStyleFile::from_domain),
                 drop_shadow: preset
@@ -1185,6 +1207,8 @@ impl ComboPresetFile {
 struct BaseStylePresetStyleFile {
     thickness: Option<f32>,
     color_rgba: Option<[f32; 4]>,
+    color_mode: Option<ColorModeFile>,
+    gradient: Option<LinearGradientStyleFile>,
     opacity: Option<f32>,
     outline: Option<OutlineStyleFile>,
     drop_shadow: Option<DropShadowStyleFile>,
@@ -1314,6 +1338,163 @@ impl BlendModeFile {
             BlendMode::Multiply => Self::Multiply,
             BlendMode::Screen => Self::Screen,
             BlendMode::Additive => Self::Additive,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ColorModeFile {
+    Solid,
+    LinearGradient,
+}
+
+impl ColorModeFile {
+    fn into_domain(self) -> ColorMode {
+        match self {
+            Self::Solid => ColorMode::Solid,
+            Self::LinearGradient => ColorMode::LinearGradient,
+        }
+    }
+
+    fn from_domain(mode: ColorMode) -> Self {
+        match mode {
+            ColorMode::Solid => Self::Solid,
+            ColorMode::LinearGradient => Self::LinearGradient,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GradientSpaceFile {
+    Stroke,
+    GlyphObject,
+    Canvas,
+}
+
+impl GradientSpaceFile {
+    fn into_domain(self) -> GradientSpace {
+        match self {
+            Self::Stroke => GradientSpace::Stroke,
+            Self::GlyphObject => GradientSpace::GlyphObject,
+            Self::Canvas => GradientSpace::Canvas,
+        }
+    }
+
+    fn from_domain(scope: GradientSpace) -> Self {
+        match scope {
+            GradientSpace::Stroke => Self::Stroke,
+            GradientSpace::GlyphObject => Self::GlyphObject,
+            GradientSpace::Canvas => Self::Canvas,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GradientRepeatFile {
+    None,
+    Repeat,
+    Mirror,
+}
+
+impl GradientRepeatFile {
+    fn into_domain(self) -> GradientRepeat {
+        match self {
+            Self::None => GradientRepeat::None,
+            Self::Repeat => GradientRepeat::Repeat,
+            Self::Mirror => GradientRepeat::Mirror,
+        }
+    }
+
+    fn from_domain(repeat: GradientRepeat) -> Self {
+        match repeat {
+            GradientRepeat::None => Self::None,
+            GradientRepeat::Repeat => Self::Repeat,
+            GradientRepeat::Mirror => Self::Mirror,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct ColorStopFile {
+    position: f32,
+    color_rgba: Option<[f32; 4]>,
+}
+
+impl ColorStopFile {
+    fn into_domain(self) -> ColorStop {
+        ColorStop {
+            position: self.position,
+            color: self
+                .color_rgba
+                .map(normalize_color_rgba)
+                .map(rgba_color_from_bytes)
+                .unwrap_or_default(),
+        }
+    }
+
+    fn from_domain(stop: &ColorStop) -> Self {
+        Self {
+            position: stop.position,
+            color_rgba: Some(float_color_rgba(rgba_color_to_bytes(stop.color))),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct LinearGradientStyleFile {
+    scope: Option<GradientSpaceFile>,
+    repeat: Option<GradientRepeatFile>,
+    angle_degrees: Option<f32>,
+    span_ratio: Option<f32>,
+    offset_ratio: Option<f32>,
+    stops: Vec<ColorStopFile>,
+}
+
+impl LinearGradientStyleFile {
+    fn into_domain(self) -> LinearGradientStyle {
+        let mut gradient = LinearGradientStyle::default();
+        if let Some(scope) = self.scope {
+            gradient.scope = scope.into_domain();
+        }
+        if let Some(repeat) = self.repeat {
+            gradient.repeat = repeat.into_domain();
+        }
+        if let Some(angle_degrees) = self.angle_degrees {
+            gradient.angle_degrees = angle_degrees;
+        }
+        if let Some(span_ratio) = self.span_ratio {
+            gradient.span_ratio = span_ratio;
+        }
+        if let Some(offset_ratio) = self.offset_ratio {
+            gradient.offset_ratio = offset_ratio;
+        }
+        if !self.stops.is_empty() {
+            gradient.stops = self
+                .stops
+                .into_iter()
+                .map(ColorStopFile::into_domain)
+                .collect();
+        }
+        gradient
+    }
+
+    fn from_domain(gradient: &LinearGradientStyle) -> Self {
+        Self {
+            scope: Some(GradientSpaceFile::from_domain(gradient.scope)),
+            repeat: Some(GradientRepeatFile::from_domain(gradient.repeat)),
+            angle_degrees: Some(gradient.angle_degrees),
+            span_ratio: Some(gradient.span_ratio),
+            offset_ratio: Some(gradient.offset_ratio),
+            stops: gradient
+                .stops
+                .iter()
+                .map(ColorStopFile::from_domain)
+                .collect(),
         }
     }
 }
@@ -2359,6 +2540,28 @@ mod tests {
             display_name: "Custom Soft Marker".to_owned(),
             thickness: Some(9.5),
             color_rgba: Some([32, 200, 255, 255]),
+            color_mode: Some(ColorMode::LinearGradient),
+            gradient: Some(LinearGradientStyle {
+                scope: GradientSpace::Canvas,
+                repeat: GradientRepeat::Mirror,
+                angle_degrees: 24.0,
+                span_ratio: 0.8,
+                offset_ratio: -0.35,
+                stops: vec![
+                    ColorStop {
+                        position: 0.0,
+                        color: RgbaColor::new(255, 200, 120, 255),
+                    },
+                    ColorStop {
+                        position: 0.55,
+                        color: RgbaColor::new(255, 96, 180, 255),
+                    },
+                    ColorStop {
+                        position: 1.0,
+                        color: RgbaColor::new(96, 128, 255, 255),
+                    },
+                ],
+            }),
             opacity: Some(0.35),
             outline: Some(OutlineStyle {
                 enabled: true,
@@ -2390,6 +2593,13 @@ mod tests {
         assert_eq!(loaded.display_name, "Custom Soft Marker");
         assert_eq!(loaded.thickness, Some(9.5));
         assert_eq!(loaded.opacity, Some(0.35));
+        assert_eq!(loaded.color_mode, Some(ColorMode::LinearGradient));
+        let loaded_gradient = loaded.gradient.as_ref().expect("gradient should load");
+        assert_eq!(loaded_gradient.scope, GradientSpace::Canvas);
+        assert_eq!(loaded_gradient.repeat, GradientRepeat::Mirror);
+        assert!((loaded_gradient.span_ratio - 0.8).abs() < 0.001);
+        assert!((loaded_gradient.offset_ratio - -0.35).abs() < 0.001);
+        assert_eq!(loaded_gradient.stops.len(), 3);
         assert_eq!(loaded.stabilization_strength, Some(0.8));
         assert_eq!(loaded.blend_mode, Some(BlendMode::Screen));
         assert!(loaded

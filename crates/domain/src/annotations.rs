@@ -118,10 +118,102 @@ impl Default for GlowStyle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorMode {
+    Solid,
+    LinearGradient,
+}
+
+impl Default for ColorMode {
+    fn default() -> Self {
+        Self::Solid
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientSpace {
+    Stroke,
+    GlyphObject,
+    Canvas,
+}
+
+impl Default for GradientSpace {
+    fn default() -> Self {
+        Self::GlyphObject
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientRepeat {
+    None,
+    Repeat,
+    Mirror,
+}
+
+impl Default for GradientRepeat {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorStop {
+    pub position: f32,
+    pub color: RgbaColor,
+}
+
+impl Default for ColorStop {
+    fn default() -> Self {
+        Self {
+            position: 0.0,
+            color: RgbaColor::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinearGradientStyle {
+    pub scope: GradientSpace,
+    pub repeat: GradientRepeat,
+    pub angle_degrees: f32,
+    pub span_ratio: f32,
+    pub offset_ratio: f32,
+    pub stops: Vec<ColorStop>,
+}
+
+impl Default for LinearGradientStyle {
+    fn default() -> Self {
+        Self {
+            scope: GradientSpace::default(),
+            repeat: GradientRepeat::default(),
+            angle_degrees: 0.0,
+            span_ratio: 1.0,
+            offset_ratio: 0.0,
+            stops: vec![
+                ColorStop {
+                    position: 0.0,
+                    color: RgbaColor::new(255, 255, 255, 255),
+                },
+                ColorStop {
+                    position: 1.0,
+                    color: RgbaColor::new(160, 220, 255, 255),
+                },
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StyleSnapshot {
     pub color: RgbaColor,
+    pub color_mode: ColorMode,
+    pub gradient: Option<LinearGradientStyle>,
     pub fill_color: Option<RgbaColor>,
     pub thickness: f32,
     pub opacity: f32,
@@ -136,6 +228,8 @@ impl Default for StyleSnapshot {
     fn default() -> Self {
         Self {
             color: RgbaColor::new(255, 255, 255, 255),
+            color_mode: ColorMode::Solid,
+            gradient: None,
             fill_color: None,
             thickness: 6.0,
             opacity: 1.0,
@@ -152,6 +246,8 @@ impl Default for StyleSnapshot {
 #[serde(default)]
 pub struct StyleDelta {
     pub color: Option<RgbaColor>,
+    pub color_mode: Option<ColorMode>,
+    pub gradient: Option<Option<LinearGradientStyle>>,
     pub fill_color: Option<Option<RgbaColor>>,
     pub thickness: Option<f32>,
     pub opacity: Option<f32>,

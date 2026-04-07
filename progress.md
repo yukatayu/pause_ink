@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、flat auto-group semantics / merge grouping、page-first outline / page events、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
-- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは post-action chain、clear/combo preset の専用 UI、page-first outline tree、gradient color、portable sidecar packaging が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-06 page-first outline / page events` を完了。次は `V1-15 gradient color / coordinate space / repeat` に進む。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、flat auto-group semantics / merge grouping、page-first outline / page events、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、linear gradient color mode まで反映済み。
+- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは post-action chain、clear/combo preset の専用 UI、portable sidecar packaging が残っているため 100% から巻き戻して管理する。
+- 現在の即時マイルストーン: `V1-15 gradient color / coordinate space / repeat` を完了。次の主対象は `V1-03 post-action chain`、`V1-04 clear effect / clear preset / combo preset`、`PKG-01 portable FFmpeg sidecar packaging`。
 - 最新の確認事項:
   - `.docs/16_remaining_tasks_plan.md` を見直し、`V1-02` を「編集時の視認性」ではなく再生 / export 向けの `reveal hot-trail accent effect` として再定義した
   - `V1-06` は `page-first tree` 前提へ設計変更し、その前提を固める task として `V1-16 flat auto-group semantics / merge grouping` を新設した
@@ -18,7 +18,12 @@
   - `V1-06` を完了し、下部 `オブジェクト一覧` を `page -> group -> object -> stroke` の page-first tree へ切り替え、`ページイベント` も page 単位の開始位置と closing clear を見る形へ再編した
   - `オブジェクト一覧` には `auto-follow` と `現在 page のみ` を追加し、current page / alive object / selection を見失いにくくした
   - `cargo test -p pauseink-app --bin pauseink-app outline_pages_ -- --nocapture`、`cargo test -p pauseink-app --bin pauseink-app page_event_sections_follow_page_boundaries -- --nocapture` を通した
-  - `V1-15 gradient color / coordinate space / repeat` を追加し、gradient は `linear`・`stroke/object/canvas` 基準・`repeat/mirror` の仕様詰め task として切り出した
+  - `V1-15 gradient color / coordinate space / repeat` は `linear` のみ、`stroke/object/canvas` 基準、`span_ratio` / `offset_ratio` の比率指定、`repeat/mirror`、2〜4 stop に固定した
+  - gradient は base stroke のみに適用し、outline / shadow / glow は単色維持、reveal-head accent は gradient stop の中点から計算した代表色を使う設計にした
+  - preview/export 一致のため、`canvas` scope は preview rect ではなく source media frame 基準で評価する方針を固定した
+  - `StyleSnapshot.color` は gradient 代表色のキャッシュに使わず、単色モードへ戻す fallback 色として保持する方針へ修正した
+  - V1-16 の auto-group 導入で既存 test `ungroup_selected_groups_restores_object_selection` が no-op group になっていたため、manual group を検証する形へ test を補正した
+  - `cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`git diff --check` を再通過し、V1-15 の保存/再読込/preset reset/renderer pixel sample を含めて green を確認した
   - `PKG-01` は portable sidecar 同梱に加え、sidecar のせいで system runtime より機能が落ちない `best-capable runtime` 選択を要件へ加えた
   - future work に `Premiere Pro 風の統合 timeline UI` を追加した
   - `test_timeline_01.md` を追加し、V1-05 の object selection / multi-select / group / ungroup / z-order / batch style-entrance / undo-redo / save-reopen と、V1-09〜V1-14 の簡易確認手順を日本語で整理した

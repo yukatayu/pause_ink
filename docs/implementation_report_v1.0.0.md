@@ -1542,3 +1542,52 @@
   - 検証:
     - `git diff --check`
       - 結果: exit 0。計画書・進捗・レポートの docs-only 更新に whitespace error が無いことを確認。
+- 2026-04-07T19:35:00+09:00
+  - 直近マイルストーン: `V1-15 gradient color / coordinate space / repeat`
+  - 方針:
+    - gradient は v1.0 では `linear` のみに絞り、base stroke だけへ適用する。
+    - schema は `scope`, `repeat_mode`, `angle_deg`, `span_ratio`, `offset_ratio`, `stops(2..=4)` で固定する。
+    - `span_ratio` は scope bbox を gradient 軸へ射影した長さに対する倍率、`offset_ratio` は 1 周期単位の位相ずらしとして扱う。
+    - `canvas` scope は preview rect ではなく `source_width/source_height` 基準に固定し、preview/export 一致を守る。
+    - outline / drop shadow / glow は単色のまま据え置き、reveal-head accent の `StrokeColor` は gradient stop の中点色を代表色として使う。
+    - `StyleSnapshot.color` は単色モードへ戻したときの色として残し、gradient 有効中の effect 色 source には使わない。
+  - 着手前確認:
+    - `.docs/16_remaining_tasks_plan.md` の `V1-15` を更新し、ratio 基準・代表色・UI 仕様を固定した。
+    - `crates/domain/src/annotations.rs` の `StyleSnapshot` と `RevealHeadEffect`、`crates/renderer/src/lib.rs` の `draw_stroked_path` / `resolve_head_effect_color` を読み直した。
+    - `crates/presets_core/src/lib.rs` の `BaseStylePresetFile` / `OutlineStyleFile` / `GlowStyleFile` と、`crates/app/src/main.rs` の style inspector / save-reopen test を再確認した。
+  - テスト方針:
+    - renderer では `object scope`, `canvas scope`, `repeat/mirror`, `head accent representative color` を pixel sample test で先に固定する。
+    - app/preset では `save and reopen`, `style preset roundtrip`, `preset reset` を compile-fail から起こす。
+- 2026-04-07T23:40:00+09:00
+  - 直近マイルストーン: `V1-15 gradient color / coordinate space / repeat` を完了し、docs/test/report を同期する。
+  - sub-agent review:
+    - `Boole` の sanity review を反映した。採用した主な指摘は 2 点。
+      - `StyleSnapshot.color` を gradient の代表色キャッシュに使わず、単色モードへ戻す fallback 色として保持する。
+      - gradient 軸の位相基準を plan と renderer で揃え、`scope bbox の gradient 軸投影最小端 + offset_ratio * projected_length` へ固定する。
+    - `RevealHeadColorSource::StrokeColor` が先端位置の厳密色ではなく代表色を使う点は v1.0 の既知簡略化として採用し、manual/developer guide へ明記した。
+  - red:
+    - `cargo test -q -p pauseink-app gradient_mode_toggle_preserves_solid_return_color -- --nocapture`
+      - 結果: fail。gradient 編集後に `active_style.color` が代表色へ上書きされ、単色 fallback 色を失うことを確認。
+    - `cargo test -q -p pauseink-app saving_gradient_preset_does_not_overwrite_solid_fallback_color -- --nocapture`
+      - 結果: fail。user style preset 保存時に `color_rgba` が代表色へ化けることを確認。
+  - 実施内容:
+    - `crates/domain/src/annotations.rs` / `crates/presets_core/src/lib.rs` / `crates/renderer/src/lib.rs` の gradient schema と test を整理し、`color_mode + gradient` を project/preset/renderer まで通した。
+    - `crates/app/src/main.rs` に `色モード`、scope/repeat/angle/幅倍率/位相、2〜4 stop editor を追加した。
+    - style preset 保存/再読込/settings 復元/user preset CRUD に gradient を接続した。
+    - `StylePresetBindingState::inherit_all_from_preset()` の `inherit_color` を `color_rgba` のみに限定し、gradient preset が単色 fallback 色を勝手に bind しないようにした。
+    - `refresh_bound_style_fields()` と `mark_gradient_dirty()` から `active_style.color` への代表色書き戻しを除去した。
+    - renderer に `gradient_affects_base_stroke_but_effect_layers_remain_solid` を追加し、base stroke のみ gradient、outline は単色維持を pixel sample で固定した。
+    - `crates/app/src/lib.rs` の `ungroup_selected_groups_restores_object_selection` は、V1-16 の auto-group で既に group 化されるようになったため、manual group を検証する形へ test を補正した。
+    - `README.md`、`manual/user_guide.md`、`manual/developer_guide.md`、`test_timeline_01.md`、`.docs/16_remaining_tasks_plan.md`、`progress.md` を gradient 実装後の現実へ更新した。
+  - green:
+    - `cargo fmt --all`
+    - `cargo test -q -p pauseink-app gradient_mode_toggle_preserves_solid_return_color -- --nocapture`
+    - `cargo test -q -p pauseink-app saving_gradient_preset_does_not_overwrite_solid_fallback_color -- --nocapture`
+    - `cargo test -q -p pauseink-app resetting_gradient_to_preset_restores_or_disables_it -- --nocapture`
+    - `cargo test -q -p pauseink-renderer gradient_affects_base_stroke_but_effect_layers_remain_solid -- --nocapture`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+    - `git diff --check`
+  - 結果:
+    - exit 0。workspace test 全通、`pauseink-app --all-targets` check 通過、whitespace error なし。
+    - `gradient_mode_toggle_preserves_solid_return_color`、`saving_gradient_preset_does_not_overwrite_solid_fallback_color`、`resetting_gradient_to_preset_restores_or_disables_it`、`gradient_affects_base_stroke_but_effect_layers_remain_solid` を追加し、V1-15 の app/renderer 回帰を固定した。
