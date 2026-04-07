@@ -7,7 +7,7 @@
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
 - 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
-- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
+- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは post-action chain、clear/combo preset の専用 UI、page-first outline tree、gradient color、portable sidecar packaging が残っているため 100% から巻き戻して管理する。
 - 現在の即時マイルストーン: `V1-02 reveal hot-trail accent effect` を完了。次は `V1-16 flat auto-group semantics / merge grouping` に進む。
 - 最新の確認事項:
   - `.docs/16_remaining_tasks_plan.md` を見直し、`V1-02` を「編集時の視認性」ではなく再生 / export 向けの `reveal hot-trail accent effect` として再定義した
@@ -195,7 +195,7 @@
   - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
   - Windows 実機での console 点滅解消確認と macOS 実機での runtime 実行確認は、この Linux host では未実施
   - GUI 実機での「保存済み project open 後に media が即復元されるか」の目視確認は、この Linux host では未実施
-  - reveal-head effect と post-action chain は domain 型までで、renderer / inspector UI は未接続
+  - post-action chain は domain 型までで、renderer / inspector UI は未接続
   - clear / combo preset の専用 UI は未接続
   - headless host では GUI 実表示 smoke を実行できない
 
@@ -217,7 +217,7 @@
 | Phase 11 | 完了 | 100% | free ink capture と stabilization | GUI 経由の free ink / grouping / undo-redo と smoke を実装 |
 | Phase 12 | 完了 | 100% | guide system | guide capture と editor-only guide 表示を v1.0 範囲で実装 |
 | Phase 13 | 完了 | 100% | outline / groups / page events | object/page event track を v1.0 最小線で実装 |
-| Phase 14 | 進行中 | 92% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save は接続済み。reveal-head effect と post-action chain が残る |
+| Phase 14 | 進行中 | 96% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save に加え reveal head accent まで接続済み。残りは post-action chain と clear/combo preset |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
 | Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
@@ -226,5 +226,5 @@
 ## 次の具体的な一手
 
 1. display server がある Linux または実機 Windows で、outline 起点の複数選択 / group / z-order、effect editor、出現速度 editor、template 字詰め、guide 進行を目視確認する。
-2. `.docs/16_remaining_tasks_plan.md` に従って `V1-09` から `V1-14` までの template/UI 系バッチを順に進める。
-3. その後 `V1-02 reveal-head effect`、`V1-04 clear/combo preset`、`V1-06`、`V1-03 post-action chain`、packaging / QA の順で閉じる。
+2. `.docs/16_remaining_tasks_plan.md` に従って `V1-16 flat auto-group semantics / merge grouping`、`V1-06 page-first outline / page events`、`V1-15 gradient color` の順で閉じる。
+3. その後 `V1-04 clear/combo preset`、`V1-03 post-action chain`、packaging / QA の順で仕上げる。

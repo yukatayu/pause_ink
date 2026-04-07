@@ -7189,6 +7189,71 @@ mod tests {
     }
 
     #[test]
+    fn save_settings_and_restart_restore_head_effect_binding_override() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+
+        app.selected_entrance_preset_id = "white_pen_fastwrite".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_entrance.head_effect = None;
+        app.entrance_binding.inherit_head_effect = false;
+
+        app.save_settings();
+
+        let loaded = load_settings_from_file(&portable_paths).expect("settings load");
+        let reopened = DesktopApp::new(portable_paths, loaded, None, None);
+
+        assert_eq!(
+            reopened.bound_entrance_preset_id.as_deref(),
+            Some("white_pen_fastwrite")
+        );
+        assert!(
+            !reopened.entrance_binding.inherit_head_effect,
+            "preset 継承を外した head effect 状態を保持したい"
+        );
+        assert!(
+            reopened.session.active_entrance.head_effect.is_none(),
+            "settings 再起動後も head effect override を維持したい"
+        );
+    }
+
+    #[test]
+    fn resetting_head_effect_to_preset_restores_or_disables_it() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.selected_entrance_preset_id = "white_pen_fastwrite".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_entrance.head_effect = None;
+        app.entrance_binding.inherit_head_effect = false;
+
+        app.entrance_binding.inherit_head_effect = true;
+        app.refresh_bound_entrance_fields();
+
+        assert!(
+            app.session.active_entrance.head_effect.is_some(),
+            "presetへ戻す で head effect を再適用したい"
+        );
+
+        app.selected_entrance_preset_id = "marker_highlight".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_entrance.head_effect = Some(default_reveal_head_effect());
+        app.entrance_binding.inherit_head_effect = false;
+
+        app.entrance_binding.inherit_head_effect = true;
+        app.refresh_bound_entrance_fields();
+
+        assert!(
+            app.session.active_entrance.head_effect.is_none(),
+            "preset に head effect が無い場合は presetへ戻す で無効化したい"
+        );
+    }
+
+    #[test]
     fn guide_overlay_state_can_advance_vertical_guides_without_moving_horizontal_origin() {
         let mut state = GuideOverlayState::from_reference_bounds(
             pauseink_domain::Point2 { x: 100.0, y: 200.0 },

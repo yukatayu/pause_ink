@@ -5,7 +5,7 @@
 ## 1. 要約
 
 - 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 完了。`V1-14 metrics-based template alignment` を完了し、次候補は `V1-02 reveal hot-trail accent effect`。
+- 現在のフェーズ: Phase 20 継続。`V1-02 reveal hot-trail accent effect` を完了し、次候補は `V1-16 flat auto-group semantics / merge grouping`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -1321,7 +1321,7 @@
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in / user style preset は base style に加えて `outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar` を読み書きできる。clear / combo preset の専用 UI はまだ無い。
-- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱えるが、reveal-head effect と post-action chain は未接続。
+- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱え、recent segment の `head accent` も `HeadHalo / HeadCore` pass で接続済み。未接続の残項目は post-action chain と clear / combo preset 専用 UI。
 - Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。

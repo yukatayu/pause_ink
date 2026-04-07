@@ -43,8 +43,8 @@ struct RenderScale {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RecentInkAccentState {
-    start_fraction: f32,
     front_fraction: f32,
+    tail_length: f32,
     fade: f32,
     color: RgbaColor,
     kind: RevealHeadKind,
@@ -153,10 +153,12 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
     let mut pixmap =
         Pixmap::new(request.width, request.height).ok_or(RenderError::InvalidCanvasSize)?;
     pixmap.fill(color_to_tiny(request.background, 1.0));
-    let layers = [
+    let outer_layers = [
         StrokeRenderLayer::DropShadow,
         StrokeRenderLayer::Glow,
         StrokeRenderLayer::Outline,
+    ];
+    let body_layers = [
         StrokeRenderLayer::Base,
         StrokeRenderLayer::HeadHalo,
         StrokeRenderLayer::HeadCore,
@@ -191,7 +193,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
         })
         .collect::<HashSet<_>>();
 
-    for layer in layers {
+    for layer in outer_layers {
         for object in &objects {
             for stroke_id in &object.stroke_ids {
                 let Some(stroke) = strokes_by_id.get(stroke_id.0.as_str()).copied() else {
@@ -217,7 +219,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
         }
     }
 
-    for layer in layers {
+    for layer in outer_layers {
         for stroke in request
             .project
             .strokes
@@ -229,6 +231,58 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 continue;
             }
 
+            render_stroke_layer(
+                &mut pixmap,
+                stroke,
+                &stroke.style,
+                &GeometryTransform::default(),
+                visibility,
+                None,
+                render_scale,
+                layer,
+            );
+        }
+    }
+
+    for object in &objects {
+        for stroke_id in &object.stroke_ids {
+            let Some(stroke) = strokes_by_id.get(stroke_id.0.as_str()).copied() else {
+                continue;
+            };
+
+            let visibility = evaluate_visibility(request, Some(object), stroke, request.time);
+            if !visibility.is_visible() {
+                continue;
+            }
+
+            let accent = recent_ink_accent_state(request, object, stroke, &object.style);
+            for layer in body_layers {
+                render_stroke_layer(
+                    &mut pixmap,
+                    stroke,
+                    &object.style,
+                    &object.transform,
+                    visibility,
+                    accent,
+                    render_scale,
+                    layer,
+                );
+            }
+        }
+    }
+
+    for stroke in request
+        .project
+        .strokes
+        .iter()
+        .filter(|stroke| !referenced_strokes.contains(&stroke.id.0))
+    {
+        let visibility = evaluate_visibility(request, None, stroke, request.time);
+        if !visibility.is_visible() {
+            continue;
+        }
+
+        for layer in body_layers {
             render_stroke_layer(
                 &mut pixmap,
                 stroke,
@@ -730,6 +784,25 @@ fn partial_polyline_range(
     }
 }
 
+fn partial_polyline_length_range(
+    points: &[Point2],
+    start_length: f32,
+    end_length: f32,
+) -> Vec<Point2> {
+    let total_length = polyline_length(points);
+    if total_length <= f32::EPSILON {
+        return points.to_vec();
+    }
+
+    let start_length = start_length.clamp(0.0, total_length);
+    let end_length = end_length.clamp(0.0, total_length);
+    partial_polyline_range(
+        points,
+        start_length / total_length,
+        end_length / total_length,
+    )
+}
+
 fn push_unique_point(points: &mut Vec<Point2>, point: Point2) {
     let should_push = points
         .last()
@@ -757,9 +830,6 @@ fn render_recent_ink_accent_layer(
     let Some(accent) = accent else {
         return;
     };
-    if accent.front_fraction <= accent.start_fraction {
-        return;
-    }
 
     let (profiles, base_color, width_multiplier, blur_scale, blend_mode) = match layer {
         RecentInkAccentLayer::Halo => (
@@ -778,18 +848,28 @@ fn render_recent_ink_accent_layer(
         ),
     };
 
-    for (coverage, opacity) in profiles {
-        let start_fraction =
-            accent.front_fraction - (accent.front_fraction - accent.start_fraction) * coverage;
-        let points = transformed_visible_points_range(
-            stroke,
-            transform,
-            start_fraction,
-            accent.front_fraction,
-        )
+    let visible_points = transformed_visible_points(stroke, transform, accent.front_fraction)
         .into_iter()
         .map(|point| scale_point(point, render_scale))
         .collect::<Vec<_>>();
+    if visible_points.len() < 2 {
+        return;
+    }
+    let total_visible_length = polyline_length(&visible_points);
+    let tail_length = (accent.tail_length * render_scale.stroke)
+        .max(style.thickness * render_scale.stroke)
+        .min(total_visible_length);
+    if tail_length <= f32::EPSILON {
+        return;
+    }
+
+    for (coverage, opacity) in profiles {
+        let segment_length = (tail_length * coverage).clamp(0.0, total_visible_length);
+        let points = partial_polyline_length_range(
+            &visible_points,
+            (total_visible_length - segment_length).max(0.0),
+            total_visible_length,
+        );
         if points.len() < 2 {
             continue;
         }
@@ -860,16 +940,15 @@ fn recent_ink_accent_state(
         1.0 - smoothstep(linger)
     };
 
-    let total_length = polyline_length(&stroke_source_points(stroke));
+    let total_length = polyline_length(&transformed_visible_points(stroke, &object.transform, 1.0));
     if total_length <= f32::EPSILON {
         return None;
     }
     let tail_length = resolve_head_tail_length(head, style, total_length);
-    let start_fraction = (front_fraction - (tail_length / total_length)).clamp(0.0, front_fraction);
 
     Some(RecentInkAccentState {
-        start_fraction,
         front_fraction,
+        tail_length,
         fade,
         color: resolve_head_effect_color(style, head),
         kind: head.kind,
@@ -1055,7 +1134,8 @@ mod tests {
     use pauseink_domain::{
         AnnotationProject, BlendMode, ClearEvent, ClearEventId, EntranceBehavior, EntranceKind,
         GlyphObject, GlyphObjectId, MediaDuration, MediaTime, Point2, RevealHeadColorSource,
-        RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeId, StrokeSample, StyleSnapshot,
+        RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeId, StrokeSample,
+        StyleSnapshot,
     };
 
     use super::*;
@@ -1439,6 +1519,115 @@ mod tests {
         assert!(
             rgb_energy_at(&lingering, 107, 20) > rgb_energy_at(&expired, 107, 20) + 20,
             "persistence 中は終端近傍の accent が残り、期限後は base に戻るべき"
+        );
+    }
+
+    #[test]
+    fn reveal_head_effect_does_not_draw_over_higher_z_base_stroke() {
+        let low_stroke = line_stroke(
+            "stroke-low",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let high_stroke = line_stroke(
+            "stroke-high",
+            0,
+            Point2 { x: 60.0, y: 4.0 },
+            Point2 { x: 60.0, y: 36.0 },
+        );
+        let mut low_object =
+            entrance_object("obj-low", "stroke-low", 0, 0, EntranceKind::PathTrace, 1_000);
+        low_object.style.color = RgbaColor::new(40, 80, 220, 255);
+        low_object.style.thickness = 12.0;
+        low_object.ordering.z_index = 0;
+        low_object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 180, 100, 255)),
+            size_multiplier: 1.4,
+            blur_radius: 8.0,
+            tail_length: 24.0,
+            persistence: 0.15,
+            blend_mode: BlendMode::Screen,
+        });
+        let mut high_object =
+            entrance_object("obj-high", "stroke-high", 0, 1, EntranceKind::Instant, 0);
+        high_object.style.color = RgbaColor::new(20, 220, 60, 255);
+        high_object.style.thickness = 14.0;
+        high_object.ordering.z_index = 1;
+
+        let project = AnnotationProject {
+            strokes: vec![low_stroke, high_stroke],
+            glyph_objects: vec![low_object, high_object],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let crossing = rgba_at(&image, 60, 20);
+        assert!(
+            crossing[1] > crossing[0] + 40,
+            "高 z object の body が head accent より前に出てほしい, rgba={crossing:?}"
+        );
+    }
+
+    #[test]
+    fn reveal_head_effect_tail_length_uses_transformed_screen_space() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::PathTrace, 1_000);
+        object.style.color = RgbaColor::new(32, 96, 224, 255);
+        object.style.thickness = 12.0;
+        object.transform.scale_x = 2.0;
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::SolidHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 160, 120, 255)),
+            size_multiplier: 1.25,
+            blur_radius: 0.0,
+            tail_length: 20.0,
+            persistence: 0.0,
+            blend_mode: BlendMode::Screen,
+        });
+        let project = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![object.clone()],
+            ..AnnotationProject::default()
+        };
+        let accent = recent_ink_accent_state(
+            &RenderRequest {
+                project: &project,
+                time: MediaTime::from_millis(500),
+                preview_force_visible_batch: None,
+                width: 240,
+                height: 48,
+                source_width: 240,
+                source_height: 48,
+                background: RgbaColor::new(0, 0, 0, 0),
+            },
+            &object,
+            &project.strokes[0],
+            &object.style,
+        )
+        .expect("head accent should exist");
+
+        assert!(
+            (accent.tail_length - 20.0).abs() < 0.02,
+            "tail_length=20px なら transform 後 length でも UI 指定どおり 20px を保ってほしい, got {:?}",
+            accent
         );
     }
 

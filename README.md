@@ -52,7 +52,7 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - optional codec pack の正式導線
 - Windows 向け release packaging
 - clear / combo preset の専用 UI 適用
-- reveal-head effect と post-action chain
+- post-action chain
 - partial clear
 - pen pressure
 
