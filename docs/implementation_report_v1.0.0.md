@@ -73,6 +73,16 @@
   - 検討した代替案: effect と同時に拡張した多様な gradient、radial / conic を含む広い仕様。
   - 理由: 見た目の自由度は上がるが、座標系・保存・effect との責務を先に固定しないと手戻りが大きいため。
   - 影響: `V1-15` を task 台帳へ追加し、`PKG-01` も `best-capable runtime` 選択を要件へ加える形で計画を更新した。
+- 2026-04-07T13:45:00+09:00
+  - 決定: `V1-02` の reveal accent は detached な head point ではなく、visible front 直後の短い path 区間を `hot core + bloom halo` で再描画する CPU-safe モデルで固定する。
+  - 検討した代替案: 固定半径の発光点、static style としての glow 追加、tail 全体を長く残す comet-only 演出。
+  - 理由: user 要望は「光っている領域」と「今ちょうどインクが乗った部分」の境界をはっきりさせないことにあり、recent segment の滑らかな減衰が最も自然なため。
+  - 影響: renderer は path 区間抽出 helper を増やし、UI は `出現` 内の optional `先端アクセント` editor で preset / custom を切り替える前提になった。
+- 2026-04-07T13:45:00+09:00
+  - 決定: 今回の実装バッチは `V1-02 -> V1-16 -> V1-06 -> V1-15` の順に進め、`V1-06` の tree UI は `V1-16` の flat auto-group semantics 完了後に着手する。
+  - 検討した代替案: `V1-06` を先に flat list 拡張で進め、後から auto-group semantics を乗せる。
+  - 理由: group 境界と merge semantics が先に固まっていないと、outline panel の tree 表示を二度書き直す可能性が高いため。
+  - 影響: `V1-16` では group break 条件と merge undo/redo を優先し、その結果を `V1-06` の page-first tree へ流し込む。
 
 - 2026-04-04T23:56:59+09:00
   - 決定: 文書と UI は日本語を正とし、既存の英語記述も実装に合わせて日本語へ更新する。
@@ -196,6 +206,40 @@
   - 影響: このブロックでは `main.rs` は最小修正に留め、`app` lib と supporting crates の API を先に充足する方針に切り替えた。
 
 ## 5. 作業ログ
+
+- 2026-04-07T13:50:00+09:00
+  - 実施内容: `V1-02 reveal hot-trail accent effect` の実装に着手し、renderer / app / presets の現状接続を再確認した。
+  - 変更ファイル: `progress.md`, `docs/implementation_report_v1.0.0.md`
+  - 結果: domain と preset/save restore には `RevealHeadEffect` 系の型と保存経路が既に入っている一方、renderer は head accent を描画しておらず、inspector に `先端アクセント` editor も無いことを確認した。着手順は `renderer の赤テスト -> 描画 pass 実装 -> app inspector 接続 -> save/reopen 回帰` で固定した。
+  - 検証: `rg -n "RevealHead|head_effect"` による domain/app/preset 経路確認、`.docs/16_remaining_tasks_plan.md` の `V1-02/V1-16/V1-15` 設計再読
+  - 次の一手: `crates/renderer/src/lib.rs` に recent segment accent の failing test を追加し、`Instant` 無効・滑らか減衰・persistence を先に固定する。
+- 2026-04-07T14:40:00+09:00
+  - 実施内容: `V1-02 reveal hot-trail accent effect` を TDD で実装した。
+  - 変更ファイル: `crates/renderer/src/lib.rs`, `crates/app/src/main.rs`, `progress.md`, `docs/implementation_report_v1.0.0.md`, `README.md`, `manual/user_guide.md`, `manual/developer_guide.md`
+  - 方針:
+    - accent は detached な光点ではなく、visible front 直後の短い path 区間を複数 pass で再描画する。
+    - renderer の pass 順は `DropShadow -> Glow -> Outline -> Base -> HeadHalo -> HeadCore` とし、static effect と timed accent の責務を分ける。
+    - `Instant` / `Dissolve` では accent を出さず、`PathTrace / Wipe` のみで recent segment を再解釈する。
+    - `PresetAccent` は v1.0 では独立 accent palette を持たず、Glow / Outline / DropShadow の代表色を優先し、無ければ stroke color へ落とす。
+  - 赤テスト:
+    - `cargo test -p pauseink-renderer reveal_head_effect_ -- --nocapture`
+      - `reveal_head_effect_accents_recent_front_segment_without_tinting_old_ink` が `recent=[32, 96, 224, 255]` のまま変化せず失敗することを確認。
+  - 実装:
+    - renderer に `RecentInkAccentState`、`HeadHalo / HeadCore` pass、`partial_polyline_range()`、recent segment の color/opacity/width 解決 helper を追加した。
+    - `先端アクセント` editor を `出現` セクションへ追加し、`見た目 / 色 / 強さ / ぼかし / 追従長 / 残光 / 合成` を optional に編集できるようにした。
+    - project reopen / settings relaunch / user entrance preset roundtrip / style preset 適用保存の各 test に `head_effect` 往復確認を追加した。
+  - テスト:
+    - green:
+      - `cargo test -q -p pauseink-renderer reveal_head_effect_ -- --nocapture`
+      - `cargo test -q -p pauseink-app --bin pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`
+      - `cargo test -q -p pauseink-app --bin pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`
+      - `cargo test -q -p pauseink-app --bin pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture`
+      - `cargo test -q -p pauseink-app --bin pauseink-app user_entrance_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture`
+      - `cargo test -p pauseink-app --lib --bins --no-run`
+    - 結果:
+      - exit 0。renderer の recent accent、project/settings/preset roundtrip、app compile が通過。
+      - `reveal_head_effect_persists_briefly_after_completion` を追加し、reveal 完了直後だけ accent が残り、expiry 後に消えることを固定した。
+      - GUI の見た目確認はこの host が headless のため未実施。
 
 - 2026-04-07T00:35:00+09:00
   - 実施内容: `V1-09 template font switch crash fix` を TDD で実装し、template 表示中の font 切替 crash を修正した。

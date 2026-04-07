@@ -1696,6 +1696,24 @@ impl DesktopApp {
         self.mark_project_ui_dirty();
     }
 
+    fn enable_head_effect(&mut self) {
+        if self.session.active_entrance.head_effect.is_none() {
+            self.session.active_entrance.head_effect = Some(default_reveal_head_effect());
+        }
+        self.mark_head_effect_dirty();
+    }
+
+    fn disable_head_effect(&mut self) {
+        self.session.active_entrance.head_effect = None;
+        self.mark_head_effect_dirty();
+    }
+
+    fn mark_head_effect_dirty(&mut self) {
+        self.entrance_binding.inherit_head_effect = false;
+        self.sync_active_entrance_to_current_object();
+        self.mark_project_ui_dirty();
+    }
+
     fn persist_project_ui_state_into_document(&mut self) {
         let editor_state = serde_json::to_value(ProjectEditorUiState::capture(self))
             .expect("project editor ui state should serialize");
@@ -5006,6 +5024,175 @@ impl DesktopApp {
                 }
             });
         }
+        let bound_head_effect_exists = self
+            .bound_entrance_preset()
+            .and_then(|preset| preset.entrance.head_effect.as_ref())
+            .is_some();
+        let mut toggle_head_effect_to: Option<bool> = None;
+        let mut reset_head_effect_to_preset = false;
+        let mut head_effect_changed = false;
+        ui.collapsing("先端アクセント", |ui| {
+            let mut enabled = self.session.active_entrance.head_effect.is_some();
+            if ui.checkbox(&mut enabled, "有効").changed() {
+                toggle_head_effect_to = Some(enabled);
+            }
+
+            if let Some(head) = self.session.active_entrance.head_effect.as_mut() {
+                let mut kind = head.kind;
+                ui.horizontal(|ui| {
+                    ui.label("見た目");
+                    egui::ComboBox::from_id_salt("reveal_head_kind")
+                        .selected_text(reveal_head_kind_label(kind))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::RevealHeadKind::SolidHead,
+                                pauseink_domain::RevealHeadKind::GlowHead,
+                                pauseink_domain::RevealHeadKind::CometTail,
+                            ] {
+                                ui.selectable_value(
+                                    &mut kind,
+                                    candidate,
+                                    reveal_head_kind_label(candidate),
+                                );
+                            }
+                        });
+                });
+                if kind != head.kind {
+                    head.kind = kind;
+                    head_effect_changed = true;
+                }
+
+                let mut color_source = head.color_source.clone();
+                ui.horizontal(|ui| {
+                    ui.label("色");
+                    egui::ComboBox::from_id_salt("reveal_head_color_source")
+                        .selected_text(reveal_head_color_source_label(&color_source))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut color_source,
+                                pauseink_domain::RevealHeadColorSource::StrokeColor,
+                                reveal_head_color_source_label(
+                                    &pauseink_domain::RevealHeadColorSource::StrokeColor,
+                                ),
+                            );
+                            ui.selectable_value(
+                                &mut color_source,
+                                pauseink_domain::RevealHeadColorSource::PresetAccent,
+                                reveal_head_color_source_label(
+                                    &pauseink_domain::RevealHeadColorSource::PresetAccent,
+                                ),
+                            );
+                            ui.selectable_value(
+                                &mut color_source,
+                                pauseink_domain::RevealHeadColorSource::Custom(
+                                    pauseink_domain::RgbaColor::new(255, 240, 220, 255),
+                                ),
+                                reveal_head_color_source_label(
+                                    &pauseink_domain::RevealHeadColorSource::Custom(
+                                        pauseink_domain::RgbaColor::new(255, 240, 220, 255),
+                                    ),
+                                ),
+                            );
+                        });
+                });
+                if color_source != head.color_source {
+                    head.color_source = color_source;
+                    head_effect_changed = true;
+                }
+
+                if let pauseink_domain::RevealHeadColorSource::Custom(color) =
+                    &mut head.color_source
+                {
+                    let mut custom_color = rgba_to_color32(*color);
+                    if ui.color_edit_button_srgba(&mut custom_color).changed() {
+                        *color = color32_to_rgba(custom_color);
+                        head_effect_changed = true;
+                    }
+                } else if matches!(
+                    head.color_source,
+                    pauseink_domain::RevealHeadColorSource::PresetAccent
+                ) {
+                    ui.small(
+                        "preset アクセント色は Glow / Outline / DropShadow の代表色を優先します。",
+                    );
+                }
+
+                head_effect_changed |= ui
+                    .add(egui::Slider::new(&mut head.size_multiplier, 0.5..=3.0).text("強さ"))
+                    .changed();
+                head_effect_changed |= ui
+                    .add(egui::Slider::new(&mut head.blur_radius, 0.0..=32.0).text("ぼかし"))
+                    .changed();
+                head_effect_changed |= ui
+                    .add(egui::Slider::new(&mut head.tail_length, 0.0..=120.0).text("追従長 px"))
+                    .changed();
+                head_effect_changed |= ui
+                    .add(egui::Slider::new(&mut head.persistence, 0.0..=0.6).text("残光 秒"))
+                    .changed();
+
+                let mut blend_mode = head.blend_mode;
+                ui.horizontal(|ui| {
+                    ui.label("合成");
+                    egui::ComboBox::from_id_salt("reveal_head_blend_mode")
+                        .selected_text(blend_mode_label(blend_mode))
+                        .show_ui(ui, |ui| {
+                            for candidate in [
+                                pauseink_domain::BlendMode::Normal,
+                                pauseink_domain::BlendMode::Screen,
+                                pauseink_domain::BlendMode::Additive,
+                                pauseink_domain::BlendMode::Multiply,
+                            ] {
+                                ui.selectable_value(
+                                    &mut blend_mode,
+                                    candidate,
+                                    blend_mode_label(candidate),
+                                );
+                            }
+                        });
+                });
+                if blend_mode != head.blend_mode {
+                    head.blend_mode = blend_mode;
+                    head_effect_changed = true;
+                }
+            }
+
+            if self.bound_entrance_preset().is_some() {
+                ui.horizontal(|ui| {
+                    ui.small(if self.entrance_binding.inherit_head_effect {
+                        "先端アクセント: preset 継承中"
+                    } else {
+                        "先端アクセント: 上書き中"
+                    });
+                    if ui
+                        .add_enabled(
+                            !self.entrance_binding.inherit_head_effect,
+                            egui::Button::new("presetへ戻す"),
+                        )
+                        .clicked()
+                    {
+                        reset_head_effect_to_preset = true;
+                    }
+                });
+                if !bound_head_effect_exists && self.entrance_binding.inherit_head_effect {
+                    ui.small("この出現 preset では先端アクセントは無効です。");
+                }
+            }
+        });
+        if let Some(enabled) = toggle_head_effect_to {
+            if enabled {
+                self.enable_head_effect();
+            } else {
+                self.disable_head_effect();
+            }
+        } else if head_effect_changed {
+            self.mark_head_effect_dirty();
+        }
+        if reset_head_effect_to_preset {
+            self.entrance_binding.inherit_head_effect = true;
+            self.refresh_bound_entrance_fields();
+            self.sync_active_entrance_to_current_object();
+            self.mark_project_ui_dirty();
+        }
         ui.small(match self.session.active_entrance.duration_mode {
             pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
                 "固定時間モードでは、値が短いほど速く出現します。出現速度はこの時間に追加で倍率を掛けます。"
@@ -5845,6 +6032,34 @@ fn entrance_order_label(order: pauseink_domain::EffectOrder) -> &'static str {
     }
 }
 
+fn reveal_head_kind_label(kind: pauseink_domain::RevealHeadKind) -> &'static str {
+    match kind {
+        pauseink_domain::RevealHeadKind::SolidHead => "ソフト",
+        pauseink_domain::RevealHeadKind::GlowHead => "ネオン",
+        pauseink_domain::RevealHeadKind::CometTail => "残光",
+    }
+}
+
+fn reveal_head_color_source_label(source: &pauseink_domain::RevealHeadColorSource) -> &'static str {
+    match source {
+        pauseink_domain::RevealHeadColorSource::StrokeColor => "インク色",
+        pauseink_domain::RevealHeadColorSource::PresetAccent => "preset アクセント色",
+        pauseink_domain::RevealHeadColorSource::Custom(_) => "カスタム色",
+    }
+}
+
+fn default_reveal_head_effect() -> pauseink_domain::RevealHeadEffect {
+    pauseink_domain::RevealHeadEffect {
+        kind: pauseink_domain::RevealHeadKind::GlowHead,
+        color_source: pauseink_domain::RevealHeadColorSource::StrokeColor,
+        size_multiplier: 1.3,
+        blur_radius: 8.0,
+        tail_length: 24.0,
+        persistence: 0.12,
+        blend_mode: pauseink_domain::BlendMode::Screen,
+    }
+}
+
 fn underlay_mode_key(mode: UnderlayMode) -> &'static str {
     match mode {
         UnderlayMode::Outline => "outline",
@@ -6162,6 +6377,17 @@ mod tests {
             pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
+        app.session.active_entrance.head_effect = Some(pauseink_domain::RevealHeadEffect {
+            kind: pauseink_domain::RevealHeadKind::GlowHead,
+            color_source: pauseink_domain::RevealHeadColorSource::Custom(
+                pauseink_domain::RgbaColor::new(255, 240, 200, 255),
+            ),
+            size_multiplier: 1.4,
+            blur_radius: 9.0,
+            tail_length: 22.0,
+            persistence: 0.18,
+            blend_mode: pauseink_domain::BlendMode::Screen,
+        });
         app.template.text = "保存\n対象".to_owned();
         app.template.font_family = template_font_family.clone();
         app.template_text_editor_height = 148.0;
@@ -6207,6 +6433,18 @@ mod tests {
             900
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
+        let reopened_head = reopened
+            .session
+            .active_entrance
+            .head_effect
+            .as_ref()
+            .expect("head effect should restore from project");
+        assert_eq!(
+            reopened_head.kind,
+            pauseink_domain::RevealHeadKind::GlowHead
+        );
+        assert_eq!(reopened_head.blur_radius, 9.0);
+        assert!((reopened_head.persistence - 0.18).abs() < 0.001);
         assert_eq!(reopened.template.text, "保存\n対象");
         assert_eq!(reopened.template.font_family, template_font_family);
         assert_eq!(
@@ -6253,6 +6491,15 @@ mod tests {
             pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength;
         app.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(900);
         app.session.active_entrance.speed_scalar = 2.2;
+        app.session.active_entrance.head_effect = Some(pauseink_domain::RevealHeadEffect {
+            kind: pauseink_domain::RevealHeadKind::CometTail,
+            color_source: pauseink_domain::RevealHeadColorSource::StrokeColor,
+            size_multiplier: 1.6,
+            blur_radius: 11.0,
+            tail_length: 30.0,
+            persistence: 0.22,
+            blend_mode: pauseink_domain::BlendMode::Additive,
+        });
         app.template.text = "次回\n起動復元".to_owned();
         app.template.font_family = template_font_family.clone();
         app.template_text_editor_height = 132.0;
@@ -6301,6 +6548,21 @@ mod tests {
             900
         );
         assert!((reopened.session.active_entrance.speed_scalar - 2.2).abs() < 0.001);
+        let reopened_head = reopened
+            .session
+            .active_entrance
+            .head_effect
+            .as_ref()
+            .expect("head effect should restore from settings");
+        assert_eq!(
+            reopened_head.kind,
+            pauseink_domain::RevealHeadKind::CometTail
+        );
+        assert_eq!(
+            reopened_head.blend_mode,
+            pauseink_domain::BlendMode::Additive
+        );
+        assert!((reopened_head.tail_length - 30.0).abs() < 0.001);
         assert_eq!(reopened.template.text, "次回\n起動復元");
         assert_eq!(reopened.template.font_family, template_font_family);
         assert!((reopened.template_text_editor_height - 132.0).abs() < 0.01);
@@ -6604,6 +6866,15 @@ mod tests {
         app.entrance_preset_editor_name = "Custom Trace".to_owned();
         app.session.active_entrance.kind = pauseink_domain::EntranceKind::PathTrace;
         app.session.active_entrance.speed_scalar = 1.7;
+        app.session.active_entrance.head_effect = Some(pauseink_domain::RevealHeadEffect {
+            kind: pauseink_domain::RevealHeadKind::GlowHead,
+            color_source: pauseink_domain::RevealHeadColorSource::StrokeColor,
+            size_multiplier: 1.25,
+            blur_radius: 7.0,
+            tail_length: 20.0,
+            persistence: 0.14,
+            blend_mode: pauseink_domain::BlendMode::Screen,
+        });
         app.save_user_entrance_preset(false);
 
         assert!(preset_path.exists());
@@ -6618,6 +6889,7 @@ mod tests {
             pauseink_domain::EntranceKind::PathTrace
         );
         assert!((saved.entrance.speed_scalar - 1.7).abs() < 0.001);
+        assert!(saved.entrance.head_effect.is_some());
 
         app.selected_entrance_preset_id = "custom_trace".to_owned();
         app.session.active_entrance.kind = pauseink_domain::EntranceKind::Dissolve;
@@ -6721,6 +6993,15 @@ mod tests {
                 kind: "path_trace",
                 duration_mode: "length_proportional",
                 speed_scalar: 2.5,
+                head_effect: {
+                  kind: "glow",
+                  color_source: "stroke_color",
+                  size_multiplier: 1.35,
+                  blur_radius: 8.0,
+                  tail_length: 24.0,
+                  persistence: 0.12,
+                  blend_mode: "screen",
+                },
               },
             }
             "#,
@@ -6749,6 +7030,7 @@ mod tests {
             pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength
         );
         assert!((app.session.active_entrance.speed_scalar - 2.5).abs() < 0.001);
+        assert!(app.session.active_entrance.head_effect.is_some());
 
         let serialized = std::fs::read_to_string(project_path).expect("saved project");
         assert!(
@@ -6758,6 +7040,10 @@ mod tests {
         assert!(
             serialized.contains("\"path_trace\""),
             "preset 適用後の entrance kind を保存したい"
+        );
+        assert!(
+            serialized.contains("\"head_effect\""),
+            "先端アクセントも project 保存へ入れたい"
         );
     }
 

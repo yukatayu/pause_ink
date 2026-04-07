@@ -4,7 +4,7 @@
 プロジェクト拡張子: **`.pauseink`**
 
 この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
-現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD、outline 起点の複数選択 / group / z-order foundation まで接続されています。
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、`先端アクセント` editor、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD、outline 起点の複数選択 / group / z-order foundation まで接続されています。
 
 ## PauseInk とは
 
@@ -99,7 +99,7 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 2. アプリ上部の `メディア読込` で動画を開く
 3. 中央キャンバスへ直接描く
 4. `全消去` で page 境界を追加する
-5. 必要なら右ペインで style preset と entrance preset を個別に適用し、effect / 出現速度も調整してから user preset として保存する
+5. 必要なら右ペインで style preset と entrance preset を個別に適用し、effect / 出現速度 / 先端アクセントも調整してから user preset として保存する
 6. `保存` で `.pauseink` を保存する
 7. 上部直下の transport bar で再生 / 一時停止とシークを行う
 8. 右ペインの `書き出し` から family / profile を選び、transparent または composite export を実行する

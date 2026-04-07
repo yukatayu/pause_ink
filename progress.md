@@ -6,9 +6,9 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment まで反映済み。
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは reveal-head effect、post-action chain、clear/combo preset の専用 UI が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-14 metrics-based template alignment` を完了。次候補は `V1-02 reveal hot-trail accent effect`。
+- 現在の即時マイルストーン: `V1-02 reveal hot-trail accent effect` を完了。次は `V1-16 flat auto-group semantics / merge grouping` に進む。
 - 最新の確認事項:
   - `.docs/16_remaining_tasks_plan.md` を見直し、`V1-02` を「編集時の視認性」ではなく再生 / export 向けの `reveal hot-trail accent effect` として再定義した
   - `V1-06` は `page-first tree` 前提へ設計変更し、その前提を固める task として `V1-16 flat auto-group semantics / merge grouping` を新設した
@@ -41,6 +41,14 @@
   - `V1-14` を完了し、`pauseink-fonts` に `ttf-parser` ベースの vertical metrics 抽出を追加、`pauseink-template-layout` に vertical alignment helper を追加し、app 側の template slot も同じ helper を使うようにした
   - metrics が無い family では縮小英字を下揃えし、metrics がある family では `x-height / cap-height / descender` を使って `x` と `y` のような差を template underlay に反映するようにした
   - 仕上げ確認として `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過した
+  - `V1-02 -> V1-16 -> V1-06 -> V1-15` の実装バッチに着手し、`V1-02` は detached な光点ではなく `recent visible segment` を `hot core + bloom halo` で再描画する方針で TDD を開始した
+  - `V1-02` を完了し、renderer に recent segment の `HeadHalo / HeadCore` pass、`先端アクセント` の `見た目 / 色 / 強さ / ぼかし / 追従長 / 残光 / 合成` editor、project/settings/preset 往復の回帰 test を追加した
+  - `Instant` entrance では accent を出さず、`PathTrace / Wipe` の timed entrance にだけ recent segment を再描画する方針を code/test で固定した
+  - `PresetAccent` は v1.0 では Glow / Outline / DropShadow の代表色を優先し、無ければ stroke color へ fall back する扱いにした
+  - `cargo test -q -p pauseink-renderer reveal_head_effect_ -- --nocapture`、`cargo test -q -p pauseink-app --bin pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -q -p pauseink-app --bin pauseink-app save_and_relaunch_restores_style_template_and_effect_state_from_settings_file -- --nocapture`、`cargo test -q -p pauseink-app --bin pauseink-app style_preset_application_updates_effect_fields_and_persists_entrance_state -- --nocapture`、`cargo test -q -p pauseink-app --bin pauseink-app user_entrance_preset_save_overwrite_and_delete_roundtrip_updates_catalog -- --nocapture` を通過
+  - `V1-16` は same page の連続筆記を flat auto-group に寄せ、group 同士の group 化は入れ子ではなく merge にする方針を再確認した
+  - `V1-06` は `page -> group -> object -> stroke` の page-first tree を user 向け UI とし、`run` は内部 view model にのみ残す前提で進める
+  - `V1-15` は v1.0 を `linear gradient` 限定とし、`stroke/object/canvas` scope と `repeat/mirror` を base stroke のみへ先行実装する設計で着手準備に入った
   - `.docs/16_remaining_tasks_plan.md` の `V1-07` を `template / guide advanced controls` へ絞り直し、slot fit を計画から外した
   - guide 字間は `cell_width` 比、負値許可、guide slope と同じ保存経路で固定した
   - template 詳細は左ペインへ詰め込まず別ポップアップ前提にし、変更がリアルタイムで preview / placed slot へ反映される設計へ更新した

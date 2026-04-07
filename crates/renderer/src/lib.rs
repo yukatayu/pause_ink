@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use pauseink_domain::{
     AnnotationProject, BlendMode, ClearKind, DerivedStrokePath, GeometryTransform, GlyphObject,
-    MediaTime, Point2, RgbaColor, Stroke, StrokeSample, StyleSnapshot, TimeBase,
+    MediaTime, Point2, RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke,
+    StrokeSample, StyleSnapshot, TimeBase,
 };
 use tiny_skia::{
     BlendMode as SkBlendMode, Paint, PathBuilder, Pixmap, Stroke as SkStroke, Transform,
@@ -38,6 +39,18 @@ struct RenderScale {
     x: f32,
     y: f32,
     stroke: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RecentInkAccentState {
+    start_fraction: f32,
+    front_fraction: f32,
+    fade: f32,
+    color: RgbaColor,
+    kind: RevealHeadKind,
+    size_multiplier: f32,
+    blur_radius: f32,
+    blend_mode: BlendMode,
 }
 
 const DEFAULT_ENTRANCE_DURATION_SECONDS: f64 = 0.6;
@@ -145,6 +158,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
         StrokeRenderLayer::Glow,
         StrokeRenderLayer::Outline,
         StrokeRenderLayer::Base,
+        StrokeRenderLayer::HeadHalo,
+        StrokeRenderLayer::HeadCore,
     ];
 
     let mut objects = request.project.glyph_objects.iter().collect::<Vec<_>>();
@@ -194,6 +209,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                     &object.style,
                     &object.transform,
                     visibility,
+                    recent_ink_accent_state(request, object, stroke, &object.style),
                     render_scale,
                     layer,
                 );
@@ -219,6 +235,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 &stroke.style,
                 &GeometryTransform::default(),
                 visibility,
+                None,
                 render_scale,
                 layer,
             );
@@ -476,6 +493,8 @@ enum StrokeRenderLayer {
     Glow,
     Outline,
     Base,
+    HeadHalo,
+    HeadCore,
 }
 
 fn render_stroke_layer(
@@ -484,15 +503,13 @@ fn render_stroke_layer(
     style: &StyleSnapshot,
     transform: &GeometryTransform,
     visibility: VisibilityState,
+    accent: Option<RecentInkAccentState>,
     render_scale: RenderScale,
     layer: StrokeRenderLayer,
 ) {
     let points = transformed_visible_points(stroke, transform, visibility.path_fraction)
         .into_iter()
-        .map(|point| Point2 {
-            x: point.x * render_scale.x,
-            y: point.y * render_scale.y,
-        })
+        .map(|point| scale_point(point, render_scale))
         .collect::<Vec<_>>();
     if points.len() < 2 {
         return;
@@ -557,6 +574,28 @@ fn render_stroke_layer(
                 style.blend_mode,
             );
         }
+        StrokeRenderLayer::HeadHalo => {
+            render_recent_ink_accent_layer(
+                pixmap,
+                stroke,
+                style,
+                transform,
+                accent,
+                render_scale,
+                RecentInkAccentLayer::Halo,
+            );
+        }
+        StrokeRenderLayer::HeadCore => {
+            render_recent_ink_accent_layer(
+                pixmap,
+                stroke,
+                style,
+                transform,
+                accent,
+                render_scale,
+                RecentInkAccentLayer::Core,
+            );
+        }
     }
 }
 
@@ -565,7 +604,23 @@ fn transformed_visible_points(
     transform: &GeometryTransform,
     path_fraction: f32,
 ) -> Vec<Point2> {
-    let source = if !stroke.derived_path.points.is_empty() {
+    transformed_visible_points_range(stroke, transform, 0.0, path_fraction)
+}
+
+fn transformed_visible_points_range(
+    stroke: &Stroke,
+    transform: &GeometryTransform,
+    start_fraction: f32,
+    end_fraction: f32,
+) -> Vec<Point2> {
+    partial_polyline_range(&stroke_source_points(stroke), start_fraction, end_fraction)
+        .into_iter()
+        .map(|point| apply_transform(point, transform))
+        .collect()
+}
+
+fn stroke_source_points(stroke: &Stroke) -> Vec<Point2> {
+    if !stroke.derived_path.points.is_empty() {
         stroke.derived_path.points.clone()
     } else if !stroke.stabilized_samples.is_empty() {
         stroke
@@ -579,12 +634,7 @@ fn transformed_visible_points(
             .iter()
             .map(|sample| sample.position)
             .collect()
-    };
-
-    partial_polyline(&source, path_fraction)
-        .into_iter()
-        .map(|point| apply_transform(point, transform))
-        .collect()
+    }
 }
 
 fn apply_transform(point: Point2, transform: &GeometryTransform) -> Point2 {
@@ -600,14 +650,22 @@ fn apply_transform(point: Point2, transform: &GeometryTransform) -> Point2 {
     }
 }
 
-fn partial_polyline(points: &[Point2], fraction: f32) -> Vec<Point2> {
-    if points.is_empty() || fraction >= 1.0 {
-        return points.to_vec();
+fn partial_polyline_range(
+    points: &[Point2],
+    start_fraction: f32,
+    end_fraction: f32,
+) -> Vec<Point2> {
+    if points.is_empty() {
+        return Vec::new();
     }
 
-    let fraction = fraction.clamp(0.0, 1.0);
-    if fraction <= 0.0 {
+    let start_fraction = start_fraction.clamp(0.0, 1.0);
+    let end_fraction = end_fraction.clamp(0.0, 1.0);
+    if end_fraction <= start_fraction {
         return points[..1].to_vec();
+    }
+    if start_fraction <= 0.0 && end_fraction >= 1.0 {
+        return points.to_vec();
     }
 
     let total_length = polyline_length(points);
@@ -615,33 +673,293 @@ fn partial_polyline(points: &[Point2], fraction: f32) -> Vec<Point2> {
         return points.to_vec();
     }
 
-    let target_length = total_length * fraction;
+    let start_length = total_length * start_fraction;
+    let end_length = total_length * end_fraction;
     let mut accumulated = 0.0;
-    let mut partial = vec![points[0]];
+    let mut partial = Vec::new();
 
     for segment in points.windows(2) {
         let start = segment[0];
         let end = segment[1];
         let segment_length = distance(start, end);
-        if accumulated + segment_length >= target_length {
-            let remaining = (target_length - accumulated).max(0.0);
-            let t = if segment_length <= f32::EPSILON {
-                0.0
-            } else {
-                remaining / segment_length
-            };
-            partial.push(Point2 {
-                x: start.x + (end.x - start.x) * t,
-                y: start.y + (end.y - start.y) * t,
-            });
-            return partial;
+        if segment_length <= f32::EPSILON {
+            continue;
         }
 
-        accumulated += segment_length;
-        partial.push(end);
+        let segment_start_length = accumulated;
+        let segment_end_length = accumulated + segment_length;
+        if segment_end_length < start_length {
+            accumulated = segment_end_length;
+            continue;
+        }
+        if segment_start_length > end_length {
+            break;
+        }
+
+        let overlap_start = start_length.max(segment_start_length);
+        let overlap_end = end_length.min(segment_end_length);
+        if overlap_end < overlap_start {
+            accumulated = segment_end_length;
+            continue;
+        }
+
+        let start_t = ((overlap_start - segment_start_length) / segment_length).clamp(0.0, 1.0);
+        let end_t = ((overlap_end - segment_start_length) / segment_length).clamp(0.0, 1.0);
+        push_unique_point(
+            &mut partial,
+            Point2 {
+                x: start.x + (end.x - start.x) * start_t,
+                y: start.y + (end.y - start.y) * start_t,
+            },
+        );
+        push_unique_point(
+            &mut partial,
+            Point2 {
+                x: start.x + (end.x - start.x) * end_t,
+                y: start.y + (end.y - start.y) * end_t,
+            },
+        );
+
+        accumulated = segment_end_length;
     }
 
-    points.to_vec()
+    if partial.is_empty() {
+        points[..1].to_vec()
+    } else {
+        partial
+    }
+}
+
+fn push_unique_point(points: &mut Vec<Point2>, point: Point2) {
+    let should_push = points
+        .last()
+        .is_none_or(|last| distance(*last, point) > 0.01);
+    if should_push {
+        points.push(point);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecentInkAccentLayer {
+    Halo,
+    Core,
+}
+
+fn render_recent_ink_accent_layer(
+    pixmap: &mut Pixmap,
+    stroke: &Stroke,
+    style: &StyleSnapshot,
+    transform: &GeometryTransform,
+    accent: Option<RecentInkAccentState>,
+    render_scale: RenderScale,
+    layer: RecentInkAccentLayer,
+) {
+    let Some(accent) = accent else {
+        return;
+    };
+    if accent.front_fraction <= accent.start_fraction {
+        return;
+    }
+
+    let (profiles, base_color, width_multiplier, blur_scale, blend_mode) = match layer {
+        RecentInkAccentLayer::Halo => (
+            halo_profiles(accent.kind),
+            accent.color,
+            1.0 + (accent.size_multiplier.max(0.5) - 1.0) * 0.35,
+            1.0,
+            BlendMode::Screen,
+        ),
+        RecentInkAccentLayer::Core => (
+            core_profiles(accent.kind),
+            mix_towards_white(accent.color, core_white_mix(accent.kind)),
+            1.0 + (accent.size_multiplier.max(0.5) - 1.0) * 0.18,
+            0.35,
+            accent.blend_mode,
+        ),
+    };
+
+    for (coverage, opacity) in profiles {
+        let start_fraction =
+            accent.front_fraction - (accent.front_fraction - accent.start_fraction) * coverage;
+        let points = transformed_visible_points_range(
+            stroke,
+            transform,
+            start_fraction,
+            accent.front_fraction,
+        )
+        .into_iter()
+        .map(|point| scale_point(point, render_scale))
+        .collect::<Vec<_>>();
+        if points.len() < 2 {
+            continue;
+        }
+        let Some(path) = build_polyline_path(&points) else {
+            continue;
+        };
+        let blur_width = accent.blur_radius.max(0.0) * blur_scale;
+        let width = (style.thickness * width_multiplier + blur_width) * render_scale.stroke;
+        let alpha = style.opacity * accent.fade * opacity;
+        draw_stroked_path(
+            pixmap,
+            &path,
+            width.max(style.thickness * render_scale.stroke),
+            base_color,
+            alpha,
+            blend_mode,
+        );
+    }
+}
+
+fn recent_ink_accent_state(
+    request: &RenderRequest<'_>,
+    object: &GlyphObject,
+    stroke: &Stroke,
+    style: &StyleSnapshot,
+) -> Option<RecentInkAccentState> {
+    if request
+        .preview_force_visible_batch
+        .is_some_and(|batch_time| batch_time == object.created_at)
+    {
+        return None;
+    }
+
+    let head = object.entrance.head_effect.as_ref()?;
+    if !matches!(
+        object.entrance.kind,
+        pauseink_domain::EntranceKind::PathTrace | pauseink_domain::EntranceKind::Wipe
+    ) {
+        return None;
+    }
+
+    let current_seconds = media_time_seconds(request.time);
+    let start_seconds = effective_entrance_start_seconds(request.project, object);
+    if current_seconds < start_seconds {
+        return None;
+    }
+    let duration_seconds = entrance_duration_seconds(request.project, object);
+    let end_seconds = start_seconds + duration_seconds;
+    let persistence_seconds = head.persistence.max(0.0) as f64;
+    if current_seconds > end_seconds + persistence_seconds {
+        return None;
+    }
+
+    let front_fraction = normalized_progress_from_seconds(
+        start_seconds,
+        current_seconds.min(end_seconds),
+        duration_seconds,
+    );
+    if front_fraction <= 0.0 {
+        return None;
+    }
+
+    let fade = if current_seconds <= end_seconds || persistence_seconds <= f64::EPSILON {
+        1.0
+    } else {
+        let linger =
+            (((current_seconds - end_seconds) / persistence_seconds) as f32).clamp(0.0, 1.0);
+        1.0 - smoothstep(linger)
+    };
+
+    let total_length = polyline_length(&stroke_source_points(stroke));
+    if total_length <= f32::EPSILON {
+        return None;
+    }
+    let tail_length = resolve_head_tail_length(head, style, total_length);
+    let start_fraction = (front_fraction - (tail_length / total_length)).clamp(0.0, front_fraction);
+
+    Some(RecentInkAccentState {
+        start_fraction,
+        front_fraction,
+        fade,
+        color: resolve_head_effect_color(style, head),
+        kind: head.kind,
+        size_multiplier: head.size_multiplier.max(0.5),
+        blur_radius: head.blur_radius.max(0.0),
+        blend_mode: head.blend_mode,
+    })
+}
+
+fn resolve_head_tail_length(
+    head: &RevealHeadEffect,
+    style: &StyleSnapshot,
+    total_length: f32,
+) -> f32 {
+    let base_tail = if head.tail_length > 0.0 {
+        head.tail_length
+    } else {
+        style.thickness.max(1.0) * 4.0
+    };
+    let kind_scale = match head.kind {
+        RevealHeadKind::SolidHead => 0.8,
+        RevealHeadKind::GlowHead => 1.15,
+        RevealHeadKind::CometTail => 1.8,
+    };
+    (base_tail * head.size_multiplier.max(0.5) * kind_scale)
+        .clamp(style.thickness.max(1.0), total_length)
+}
+
+fn resolve_head_effect_color(style: &StyleSnapshot, head: &RevealHeadEffect) -> RgbaColor {
+    match &head.color_source {
+        RevealHeadColorSource::StrokeColor => style.color,
+        RevealHeadColorSource::Custom(color) => *color,
+        RevealHeadColorSource::PresetAccent => {
+            if style.glow.enabled {
+                style.glow.color
+            } else if style.outline.enabled {
+                style.outline.color
+            } else if style.drop_shadow.enabled {
+                style.drop_shadow.color
+            } else {
+                style.color
+            }
+        }
+    }
+}
+
+fn halo_profiles(kind: RevealHeadKind) -> &'static [(f32, f32)] {
+    match kind {
+        RevealHeadKind::SolidHead => &[(1.0, 0.08), (0.6, 0.15), (0.28, 0.24)],
+        RevealHeadKind::GlowHead => &[(1.0, 0.14), (0.7, 0.24), (0.35, 0.36)],
+        RevealHeadKind::CometTail => &[(1.0, 0.10), (0.78, 0.18), (0.42, 0.28)],
+    }
+}
+
+fn core_profiles(kind: RevealHeadKind) -> &'static [(f32, f32)] {
+    match kind {
+        RevealHeadKind::SolidHead => &[(0.48, 0.24), (0.22, 0.38)],
+        RevealHeadKind::GlowHead => &[(0.42, 0.22), (0.20, 0.34)],
+        RevealHeadKind::CometTail => &[(0.36, 0.18), (0.16, 0.28)],
+    }
+}
+
+fn core_white_mix(kind: RevealHeadKind) -> f32 {
+    match kind {
+        RevealHeadKind::SolidHead => 0.50,
+        RevealHeadKind::GlowHead => 0.38,
+        RevealHeadKind::CometTail => 0.28,
+    }
+}
+
+fn smoothstep(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * (3.0 - 2.0 * value)
+}
+
+fn mix_towards_white(color: RgbaColor, amount: f32) -> RgbaColor {
+    let amount = amount.clamp(0.0, 1.0);
+    let mix = |channel: u8| -> u8 {
+        ((channel as f32) + (255.0 - channel as f32) * amount)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    RgbaColor::new(mix(color.r), mix(color.g), mix(color.b), color.a)
+}
+
+fn scale_point(point: Point2, render_scale: RenderScale) -> Point2 {
+    Point2 {
+        x: point.x * render_scale.x,
+        y: point.y * render_scale.y,
+    }
 }
 
 fn polyline_length(points: &[Point2]) -> f32 {
@@ -735,9 +1053,9 @@ fn to_tiny_blend_mode(blend_mode: BlendMode) -> SkBlendMode {
 #[cfg(test)]
 mod tests {
     use pauseink_domain::{
-        AnnotationProject, ClearEvent, ClearEventId, EntranceBehavior, EntranceKind, GlyphObject,
-        GlyphObjectId, MediaDuration, MediaTime, Point2, Stroke, StrokeId, StrokeSample,
-        StyleSnapshot,
+        AnnotationProject, BlendMode, ClearEvent, ClearEventId, EntranceBehavior, EntranceKind,
+        GlyphObject, GlyphObjectId, MediaDuration, MediaTime, Point2, RevealHeadColorSource,
+        RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeId, StrokeSample, StyleSnapshot,
     };
 
     use super::*;
@@ -839,6 +1157,11 @@ mod tests {
             image.rgba_pixels[index + 2],
             image.rgba_pixels[index + 3],
         ]
+    }
+
+    fn rgb_energy_at(image: &RenderedOverlay, x: usize, y: usize) -> u16 {
+        let rgba = rgba_at(image, x, y);
+        rgba[0] as u16 + rgba[1] as u16 + rgba[2] as u16
     }
 
     fn entrance_visibility(
@@ -970,6 +1293,186 @@ mod tests {
 
         assert!(alpha_at(&image, 35, 20) > 0);
         assert_eq!(alpha_at(&image, 95, 20), 0);
+    }
+
+    #[test]
+    fn reveal_head_effect_accents_recent_front_segment_without_tinting_old_ink() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::PathTrace, 1_000);
+        object.style.color = RgbaColor::new(32, 96, 224, 255);
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 160, 120, 255)),
+            size_multiplier: 1.45,
+            blur_radius: 10.0,
+            tail_length: 18.0,
+            persistence: 0.15,
+            blend_mode: BlendMode::Screen,
+        });
+
+        let project = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![object],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        let old_ink = rgba_at(&image, 24, 20);
+        let recent_front = rgba_at(&image, 58, 20);
+
+        assert!(
+            recent_front[0] > old_ink[0] + 18,
+            "expected recent front segment to gain warm highlight, old={old_ink:?} recent={recent_front:?}"
+        );
+        assert!(
+            recent_front[1] >= old_ink[1],
+            "expected accent not to darken recent ink, old={old_ink:?} recent={recent_front:?}"
+        );
+    }
+
+    #[test]
+    fn reveal_head_effect_does_not_apply_to_instant_entrance() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::Instant, 1_000);
+        object.style.color = RgbaColor::new(32, 96, 224, 255);
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 160, 120, 255)),
+            size_multiplier: 1.45,
+            blur_radius: 10.0,
+            tail_length: 18.0,
+            persistence: 0.15,
+            blend_mode: BlendMode::Screen,
+        });
+
+        let project = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![object],
+            ..AnnotationProject::default()
+        };
+
+        let image = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        assert_eq!(rgba_at(&image, 58, 20), [32, 96, 224, 255]);
+    }
+
+    #[test]
+    fn reveal_head_effect_persists_briefly_after_completion() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 10.0, y: 20.0 },
+            Point2 { x: 110.0, y: 20.0 },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::PathTrace, 1_000);
+        object.style.color = RgbaColor::new(96, 180, 255, 255);
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 255, 255, 255)),
+            size_multiplier: 1.35,
+            blur_radius: 8.0,
+            tail_length: 18.0,
+            persistence: 0.20,
+            blend_mode: BlendMode::Screen,
+        });
+
+        let project = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![object],
+            ..AnnotationProject::default()
+        };
+
+        let lingering = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(1_100),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+        let expired = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(1_260),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 160,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        assert!(
+            rgb_energy_at(&lingering, 107, 20) > rgb_energy_at(&expired, 107, 20) + 20,
+            "persistence 中は終端近傍の accent が残り、期限後は base に戻るべき"
+        );
+    }
+
+    #[test]
+    fn preset_accent_color_prefers_glow_then_outline_then_shadow_then_stroke() {
+        let mut style = StyleSnapshot {
+            color: RgbaColor::new(10, 20, 30, 255),
+            ..StyleSnapshot::default()
+        };
+        let head = RevealHeadEffect {
+            color_source: RevealHeadColorSource::PresetAccent,
+            ..RevealHeadEffect::default()
+        };
+
+        style.drop_shadow.enabled = true;
+        style.drop_shadow.color = RgbaColor::new(40, 50, 60, 255);
+        assert_eq!(
+            resolve_head_effect_color(&style, &head),
+            RgbaColor::new(40, 50, 60, 255)
+        );
+
+        style.outline.enabled = true;
+        style.outline.color = RgbaColor::new(70, 80, 90, 255);
+        assert_eq!(
+            resolve_head_effect_color(&style, &head),
+            RgbaColor::new(70, 80, 90, 255)
+        );
+
+        style.glow.enabled = true;
+        style.glow.color = RgbaColor::new(100, 110, 120, 255);
+        assert_eq!(
+            resolve_head_effect_color(&style, &head),
+            RgbaColor::new(100, 110, 120, 255)
+        );
     }
 
     #[test]

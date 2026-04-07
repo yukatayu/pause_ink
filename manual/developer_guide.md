@@ -144,10 +144,11 @@ project には mutable preset file そのものではなく、`project.presets.b
 - entrance.duration_mode
 - entrance.duration_ms
 - entrance.speed_scalar
+- entrance.head_effect
 
-renderer 側には outline / drop shadow / glow の描画処理があり、現在は object-first ではなく layer-first の multi-pass compositor にしてあります。これにより、後から描いた object の outer effect も含めて、先にある body を不自然に覆いにくくしています。出現時間は `fixed_total_duration` と `proportional_to_stroke_length` の 2 モードを持ち、後者は 600px を基準長として `speed_scalar` を掛けています。
+renderer 側には outline / drop shadow / glow に加えて timed entrance 用の `head accent` 描画処理があり、現在は object-first ではなく layer-first の multi-pass compositor にしてあります。これにより、後から描いた object の outer effect も含めて、先にある body を不自然に覆いにくくしています。`head accent` は detached な発光点ではなく、visible front 直後の短い path 区間を `HeadHalo -> HeadCore` で再描画する CPU-safe モデルです。出現時間は `fixed_total_duration` と `proportional_to_stroke_length` の 2 モードを持ち、後者は 600px を基準長として `speed_scalar` を掛けています。
 entrance sequencing は page 全体 1 本の queue ではなく、同じ `created_at` を持つ paused batch lane ごとに計算します。`Instant` object は lane の先頭時刻から即表示され、timed entrance だけが同じ lane 内の前の timed object 完了を待ちます。preview では current paused batch だけ `fully visible` override を掛け、`再生` / `保存` / `書き出し` では lane 本来の reveal へ戻します。
-未接続の残項目は reveal-head effect、post-action chain、clear / combo preset の専用 UI です。
+`RevealHeadColorSource::PresetAccent` は v1.0 では独立 accent palette を持たず、Glow / Outline / DropShadow の代表色を優先し、無ければ stroke color へ fall back します。未接続の残項目は post-action chain、clear / combo preset の専用 UI です。
 
 ## 6.4 template alignment
 
