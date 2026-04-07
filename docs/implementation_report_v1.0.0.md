@@ -14,6 +14,22 @@
 ### 最新作業ログ
 
 - 2026-04-07:
+  - Task: template underlay 半角英字の縦位置ずれ修正
+  - 実施内容: `crates/template_layout/src/lib.rs` の `TemplateSlotVerticalMetrics` に `text_top_offset` を追加し、slot box 用の `top_offset` と underlay text 用の描画起点を分離した。`crates/app/src/main.rs` では `template_underlay_text_origin()` を追加し、template preview の `TextShape` を slot box の左上ではなく metrics 補正済みの text origin から描くように変更した。
+  - 調査結果: sub-agent `Archimedes` も、root cause は `cap_height / x-height` ベースの slot box top と、font ascent を含む text layout top を同一視している点だと報告した。数値例では `A` の slot top `38px` に対して text top は `32px` で、6px 下へずれていた。
+  - 追加テスト:
+    - `pauseink_template_layout::tests::metrics_based_alignment_exposes_text_top_offset_above_slot_box_for_scaled_latin`
+    - `pauseink_template_layout::tests::metrics_based_latin_underlay_is_drawn_above_slot_top`
+    - `pauseink_template_layout::tests::underlay_draw_top_offset_only_raises_metrics_based_latin`
+    - `pauseink_app::tests::template_underlay_origin_is_raised_for_metrics_based_latin`
+  - 実行コマンド:
+    - `cargo fmt --all`
+    - `cargo test -q -p pauseink-template-layout -- --nocapture`
+    - `cargo test -q -p pauseink-app --lib --bins`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+  - 結果: すべて exit 0。半角英字 underlay は slot box より上へ補正され、slot geometry 自体と shaping ベースの横幅は既存挙動を維持した。
+- 2026-04-07:
   - Task: `V1-16 flat auto-group semantics / merge grouping`
   - 実施内容: `crates/app/src/lib.rs` に `AutoGroupContext` を追加し、same page・同一 style/entrance の連続 commit を flat group として persistent data へ吸収する経路を追加した。manual `グループ化` は nested group を作らず、選択対象 member を 1 group へ merge するように変更した。
   - UI 連携: `crates/app/src/main.rs` で guide 基準更新、guide 解除、template reset、template 配置確定を auto-group break として扱い、outline の `グループ化` enable 条件を `selected_target_object_ids()` ベースへ更新した。

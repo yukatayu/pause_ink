@@ -37,9 +37,9 @@ use pauseink_presets_core::{
 use pauseink_renderer::{render_overlay_rgba, RenderRequest};
 use pauseink_template_layout::{
     build_guide_geometry, guide_fallback_advance_step, guide_next_cell_origin_x,
-    template_grapheme_scale, template_slot_vertical_metrics, GuideGeometry, GuideLineKind,
-    GuidePlacement, Point, TemplateFontMetrics as TemplateSlotFontMetrics, TemplateSettings,
-    UnderlayMode,
+    template_grapheme_scale, template_slot_vertical_metrics, template_underlay_draw_top_offset,
+    GuideGeometry, GuideLineKind, GuidePlacement, Point,
+    TemplateFontMetrics as TemplateSlotFontMetrics, TemplateSettings, UnderlayMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -2372,6 +2372,19 @@ impl DesktopApp {
         slots
     }
 
+    fn template_underlay_text_origin(
+        &self,
+        slot: &pauseink_template_layout::TemplateSlot,
+    ) -> Point {
+        let draw_top_offset = template_underlay_draw_top_offset(
+            &slot.grapheme,
+            self.template.settings.font_size,
+            slot.scale,
+            self.template_font_metrics,
+        );
+        Point::new(slot.origin.x, slot.origin.y + draw_top_offset)
+    }
+
     fn refresh_guide_geometry(&mut self) {
         self.guide_geometry = self.guide_state.map(|guide_state| {
             guide_state.build_geometry(
@@ -3519,6 +3532,7 @@ impl DesktopApp {
                         | UnderlayMode::OutlineAndSlotBox
                         | UnderlayMode::FaintFill
                 ) {
+                    let text_origin = self.template_underlay_text_origin(slot);
                     let galley = ctx.fonts_mut(|fonts| {
                         fonts.layout_no_wrap(
                             slot.grapheme.clone(),
@@ -3530,7 +3544,10 @@ impl DesktopApp {
                     });
                     painter.add(
                         egui::epaint::TextShape::new(
-                            rect.left_top(),
+                            Pos2::new(
+                                frame_rect.left() + text_origin.x,
+                                frame_rect.top() + text_origin.y,
+                            ),
                             galley,
                             Color32::from_rgba_unmultiplied(220, 220, 240, 180),
                         )
@@ -8625,6 +8642,35 @@ mod tests {
         assert_eq!(slots.len(), 2);
         assert!((slots[0].origin.y - slots[1].origin.y).abs() < 0.01);
         assert!(slots[1].height > slots[0].height);
+    }
+
+    #[test]
+    fn template_underlay_origin_is_raised_for_metrics_based_latin() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let ctx = initialized_test_context();
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.template.text = "A".to_owned();
+        app.template.settings.font_size = 100.0;
+        app.template.settings.latin_scale = 0.6;
+        app.template.settings.tracking = 0.0;
+        app.template_font_metrics = Some(TemplateSlotFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        });
+
+        let slots = app.template_slots_at_origin(&ctx, Point::new(12.0, 24.0));
+        let draw_origin = app.template_underlay_text_origin(&slots[0]);
+
+        assert!(
+            draw_origin.y < slots[0].origin.y - 5.0,
+            "Latin underlay は slot top より上へ補正して描きたい: slot_top={} draw_y={}",
+            slots[0].origin.y,
+            draw_origin.y
+        );
     }
 
     #[test]

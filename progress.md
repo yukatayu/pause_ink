@@ -10,6 +10,9 @@
 - 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは post-action chain、clear/combo preset の専用 UI、portable sidecar packaging が残っているため 100% から巻き戻して管理する。
 - 現在の即時マイルストーン: `V1-15 gradient color / coordinate space / repeat` を完了。次の主対象は `V1-03 post-action chain`、`V1-04 clear effect / clear preset / combo preset`、`PKG-01 portable FFmpeg sidecar packaging`。
 - 最新の確認事項:
+  - template underlay の半角英字が slot box より下へずれる不具合を修正し、slot box 用 `top_offset` と underlay text 用 `text_top_offset` を分離した
+  - 半角英字 underlay は metrics があるときだけ slot top より少し上から描き、fallback / 非 Latin は上へ持ち上げない回帰を `template_layout` / `app` の test で固定した
+  - `cargo test -q -p pauseink-template-layout -- --nocapture`、`cargo test -q -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過した
   - `.docs/16_remaining_tasks_plan.md` を見直し、`V1-02` を「編集時の視認性」ではなく再生 / export 向けの `reveal hot-trail accent effect` として再定義した
   - `V1-06` は `page-first tree` 前提へ設計変更し、その前提を固める task として `V1-16 flat auto-group semantics / merge grouping` を新設した
   - `V1-16` を完了し、same page の連続筆記を flat auto-group として persistent data へ保存し、group 同士の group 化は nested ではなく member merge に寄せた

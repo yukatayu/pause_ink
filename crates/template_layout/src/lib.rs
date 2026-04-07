@@ -52,6 +52,7 @@ pub struct TemplateFontMetrics {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemplateSlotVerticalMetrics {
     pub top_offset: f32,
+    pub text_top_offset: f32,
     pub height: f32,
 }
 
@@ -189,6 +190,7 @@ pub fn template_slot_vertical_metrics(
     let clamped_scale = scale.max(0.0);
     let fallback = TemplateSlotVerticalMetrics {
         top_offset: font_size * (1.0 - clamped_scale),
+        text_top_offset: font_size * (1.0 - clamped_scale),
         height: font_size * clamped_scale,
     };
 
@@ -229,8 +231,20 @@ pub fn template_slot_vertical_metrics(
     ascender_height = ascender_height.max(0.0);
     TemplateSlotVerticalMetrics {
         top_offset: top_offset.max(0.0),
+        text_top_offset: (baseline_y - normalized.baseline_ratio * font_size * clamped_scale)
+            .max(0.0),
         height: (ascender_height + descender_height).max(1.0),
     }
+}
+
+pub fn template_underlay_draw_top_offset(
+    grapheme: &str,
+    font_size: f32,
+    scale: f32,
+    metrics: Option<TemplateFontMetrics>,
+) -> f32 {
+    let vertical = template_slot_vertical_metrics(grapheme, font_size, scale, metrics);
+    vertical.text_top_offset - vertical.top_offset
 }
 
 pub fn template_grapheme_scale(grapheme: &str, settings: &TemplateSettings) -> f32 {
@@ -410,6 +424,58 @@ mod tests {
         assert!(y.height > x.height);
         assert!(((x.top_offset + x.height) - 80.0).abs() < 0.01);
         assert!(((y.top_offset + y.height) - 92.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn metrics_based_alignment_exposes_text_top_offset_above_slot_box_for_scaled_latin() {
+        let metrics = TemplateFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        };
+        let upper = template_slot_vertical_metrics("A", 100.0, 0.6, Some(metrics));
+
+        assert!(
+            upper.text_top_offset < upper.top_offset,
+            "縮小英字の underlay text は slot box より上へ補正して描く必要がある"
+        );
+        assert!((upper.text_top_offset - 32.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn metrics_based_latin_underlay_is_drawn_above_slot_top() {
+        let metrics = TemplateFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        };
+
+        let offset = template_underlay_draw_top_offset("A", 100.0, 0.6, Some(metrics));
+
+        assert!(
+            offset < -5.0,
+            "metrics がある Latin underlay は slot top より少し上から描き始めたい: {offset}"
+        );
+    }
+
+    #[test]
+    fn underlay_draw_top_offset_only_raises_metrics_based_latin() {
+        let metrics = TemplateFontMetrics {
+            ascent_ratio: 0.8,
+            descent_ratio: 0.2,
+            x_height_ratio: Some(0.5),
+            cap_height_ratio: Some(0.7),
+        };
+
+        let fallback_offset = template_underlay_draw_top_offset("1", 100.0, 0.6, Some(metrics));
+        let kana_offset = template_underlay_draw_top_offset("あ", 100.0, 0.8, Some(metrics));
+        let no_metrics_offset = template_underlay_draw_top_offset("A", 100.0, 0.6, None);
+
+        assert!(fallback_offset.abs() < 0.01);
+        assert!(kana_offset >= 0.0);
+        assert!(no_metrics_offset.abs() < 0.01);
     }
 
     #[test]
