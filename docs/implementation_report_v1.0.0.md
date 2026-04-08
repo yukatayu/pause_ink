@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 継続。`V1-06 page-first outline / page events` を完了し、次候補は `V1-15 gradient color / coordinate space / repeat`。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、preview 縮小時でも見える `先端アクセント`、compact な `↺` preset reset UI、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在のフェーズ: Phase 20 継続。preview 再生中の `先端アクセント` 視認性と preset reset UI の整理を完了し、次候補は `V1-03 post-action chain`。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -13,6 +13,26 @@
 
 ### 最新作業ログ
 
+- 2026-04-08:
+  - Task: preview 再生中の `先端アクセント` 視認性改善と preset reset UI の整理
+  - 実施内容: `crates/renderer/src/lib.rs` の `render_recent_ink_accent_layer()` で `追従長 px` と `ぼかし` を preview の縮小率でさらに縮めないようにし、recent segment accent を user 指定 px ベースで描画するよう修正した。`crates/app/src/main.rs` では `presetへ戻す` ボタンと `継承中 / 上書き中` 行を廃止し、各 control の横に `↺` アイコンを置く compact reset UI へ置き換えた。
+  - 調査結果: sub-agent `Socrates` は「preview path 自体は export と同じ renderer を通っていて、明示的な preview-only disable 分岐は無い」と報告した。実際の root cause は renderer 側の accent scaling で、`tail_length` と `blur_radius` が `render_scale.stroke` で縮み、downscaled preview では recent segment が数 pixel しか残らず実質見えなくなっていた。
+  - 追加テスト:
+    - `pauseink_renderer::tests::reveal_head_effect_stays_visible_when_preview_is_downscaled`
+    - `pauseink_renderer::tests::reveal_head_effect_tail_length_remains_usable_in_downscaled_preview`
+    - `pauseink_app::tests::preset_reset_ui_uses_compact_icon_without_status_rows`
+  - 実行コマンド:
+    - `cargo test -q -p pauseink-renderer reveal_head_effect_tail_length_remains_usable_in_downscaled_preview -- --nocapture`
+    - `cargo test -q -p pauseink-renderer reveal_head_effect_stays_visible_when_preview_is_downscaled -- --nocapture`
+    - `cargo test -q -p pauseink-renderer -- --nocapture`
+    - `cargo test -q -p pauseink-app resetting_head_effect_to_preset_restores_or_disables_it -- --nocapture`
+    - `cargo test -q -p pauseink-app resetting_gradient_to_preset_restores_or_disables_it -- --nocapture`
+    - `cargo test -q -p pauseink-app preset_reset_ui_uses_compact_icon_without_status_rows -- --nocapture`
+    - `cargo fmt --all`
+    - `cargo test -q -p pauseink-app --lib --bins`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+  - 結果: すべて exit 0。downscaled preview でも `先端アクセント` の recent segment が RGB energy 差として残ること、旧来の `presetへ戻す` / `継承中` / `上書き中` UI 文言が消え、継承中 disabled / 上書き中 enabled の `↺` icon reset に置き換わったことを確認した。
 - 2026-04-07:
   - Task: template underlay 半角英字の縦位置ずれ修正
   - 実施内容: `crates/template_layout/src/lib.rs` の `TemplateSlotVerticalMetrics` に `text_top_offset` を追加し、slot box 用の `top_offset` と underlay text 用の描画起点を分離した。`crates/app/src/main.rs` では `template_underlay_text_origin()` を追加し、template preview の `TextShape` を slot box の左上ではなく metrics 補正済みの text origin から描くように変更した。

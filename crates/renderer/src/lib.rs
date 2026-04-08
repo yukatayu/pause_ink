@@ -1158,7 +1158,9 @@ fn render_recent_ink_accent_layer(
         return;
     }
     let total_visible_length = polyline_length(&visible_points);
-    let tail_length = (accent.tail_length * render_scale.stroke)
+    let stroke_width = style.thickness * width_multiplier * render_scale.stroke;
+    let tail_length = accent
+        .tail_length
         .max(style.thickness * render_scale.stroke)
         .min(total_visible_length);
     if tail_length <= f32::EPSILON {
@@ -1179,7 +1181,7 @@ fn render_recent_ink_accent_layer(
             continue;
         };
         let blur_width = accent.blur_radius.max(0.0) * blur_scale;
-        let width = (style.thickness * width_multiplier + blur_width) * render_scale.stroke;
+        let width = stroke_width + blur_width;
         let alpha = style.opacity * accent.fade * opacity;
         draw_stroked_path(
             pixmap,
@@ -1751,6 +1753,144 @@ mod tests {
         assert!(
             recent_front[1] >= old_ink[1],
             "expected accent not to darken recent ink, old={old_ink:?} recent={recent_front:?}"
+        );
+    }
+
+    #[test]
+    fn reveal_head_effect_stays_visible_when_preview_is_downscaled() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 100.0, y: 200.0 },
+            Point2 {
+                x: 1_100.0,
+                y: 200.0,
+            },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::PathTrace, 1_000);
+        object.style.color = RgbaColor::new(32, 96, 224, 255);
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 160, 120, 255)),
+            size_multiplier: 1.45,
+            blur_radius: 10.0,
+            tail_length: 18.0,
+            persistence: 0.15,
+            blend_mode: BlendMode::Screen,
+        });
+
+        let project = AnnotationProject {
+            strokes: vec![stroke.clone()],
+            glyph_objects: vec![object.clone()],
+            ..AnnotationProject::default()
+        };
+        let without_head = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![GlyphObject {
+                entrance: EntranceBehavior {
+                    head_effect: None,
+                    ..object.entrance.clone()
+                },
+                ..object
+            }],
+            ..AnnotationProject::default()
+        };
+
+        let with_head = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 1_600,
+            source_height: 480,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+        let without_head = render_overlay_rgba(&RenderRequest {
+            project: &without_head,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 1_600,
+            source_height: 480,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        assert!(
+            rgb_energy_at(&with_head, 58, 20) > rgb_energy_at(&without_head, 58, 20) + 8,
+            "preview downscale 後も先端アクセントが recent front で見える必要がある"
+        );
+    }
+
+    #[test]
+    fn reveal_head_effect_tail_length_remains_usable_in_downscaled_preview() {
+        let stroke = line_stroke(
+            "stroke-1",
+            0,
+            Point2 { x: 100.0, y: 200.0 },
+            Point2 {
+                x: 1_100.0,
+                y: 200.0,
+            },
+        );
+        let mut object = entrance_object("obj-1", "stroke-1", 0, 0, EntranceKind::PathTrace, 1_000);
+        object.style.color = RgbaColor::new(32, 96, 224, 255);
+        object.entrance.head_effect = Some(RevealHeadEffect {
+            kind: RevealHeadKind::GlowHead,
+            color_source: RevealHeadColorSource::Custom(RgbaColor::new(255, 160, 120, 255)),
+            size_multiplier: 1.45,
+            blur_radius: 10.0,
+            tail_length: 18.0,
+            persistence: 0.15,
+            blend_mode: BlendMode::Screen,
+        });
+
+        let project = AnnotationProject {
+            strokes: vec![stroke.clone()],
+            glyph_objects: vec![object.clone()],
+            ..AnnotationProject::default()
+        };
+        let without_head = AnnotationProject {
+            strokes: vec![stroke],
+            glyph_objects: vec![GlyphObject {
+                entrance: EntranceBehavior {
+                    head_effect: None,
+                    ..object.entrance.clone()
+                },
+                ..object
+            }],
+            ..AnnotationProject::default()
+        };
+
+        let with_head = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 1_600,
+            source_height: 480,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+        let without_head = render_overlay_rgba(&RenderRequest {
+            project: &without_head,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 160,
+            height: 48,
+            source_width: 1_600,
+            source_height: 480,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render should succeed");
+
+        assert!(
+            rgb_energy_at(&with_head, 46, 20) > rgb_energy_at(&without_head, 46, 20) + 8,
+            "追従長 px は preview 縮小後も先端から少し後ろまで見える長さとして効いてほしい"
         );
     }
 

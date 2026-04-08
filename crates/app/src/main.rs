@@ -50,6 +50,7 @@ const DEFAULT_BOTTOM_PANEL_CONTENT_WIDTH: f32 = 1400.0;
 const DEFAULT_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 72.0;
 const MIN_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 48.0;
 const MAX_TEMPLATE_TEXT_EDITOR_HEIGHT: f32 = 260.0;
+const PRESET_RESET_ICON_LABEL: &str = "↺";
 const PROJECT_EDITOR_UI_SETTINGS_KEY: &str = "pauseink_editor_ui";
 const PROJECT_BASE_STYLE_PRESET_KEY: &str = "base_style";
 const PROJECT_ENTRANCE_PRESET_KEY: &str = "entrance";
@@ -67,6 +68,17 @@ fn inline_wide_control_width(
     min_width: f32,
 ) -> f32 {
     (available_width - reserved_inline_width).max(min_width)
+}
+
+fn preset_reset_icon_button(ui: &mut egui::Ui, overridden: bool, label: &str) -> bool {
+    let button = egui::Button::new(egui::RichText::new(PRESET_RESET_ICON_LABEL).small());
+    let response = ui.add_enabled(overridden, button);
+    let response = if overridden {
+        response.on_hover_text(format!("{label} を preset 値へ戻します。"))
+    } else {
+        response.on_disabled_hover_text(format!("{label} は preset 値を継承中です。"))
+    };
+    response.clicked()
 }
 
 fn main() -> Result<()> {
@@ -4792,47 +4804,42 @@ impl DesktopApp {
                 self.session.active_style.color.g,
                 self.session.active_style.color.b,
             ];
-            if ui.color_edit_button_srgb(&mut color).changed() {
-                self.session.active_style.color = pauseink_domain::RgbaColor::new(
-                    color[0],
-                    color[1],
-                    color[2],
-                    self.session.active_style.color.a,
-                );
-                self.style_binding.inherit_color = false;
-                self.sync_active_style_to_current_object();
-                self.mark_project_ui_dirty();
-            }
-            if self
+            let can_reset_color = self
                 .bound_style_preset()
                 .and_then(|preset| preset.color_rgba)
-                .is_some()
-            {
-                ui.horizontal(|ui| {
-                    ui.small(if self.style_binding.inherit_color {
-                        "色: preset 継承中"
-                    } else {
-                        "色: 上書き中"
-                    });
-                    if ui
-                        .add_enabled(
-                            !self.style_binding.inherit_color,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        self.style_binding.inherit_color = true;
-                        self.refresh_bound_style_fields();
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
+                .is_some();
+            let mut reset_color_to_preset = false;
+            ui.horizontal(|ui| {
+                if ui.color_edit_button_srgb(&mut color).changed() {
+                    self.session.active_style.color = pauseink_domain::RgbaColor::new(
+                        color[0],
+                        color[1],
+                        color[2],
+                        self.session.active_style.color.a,
+                    );
+                    self.style_binding.inherit_color = false;
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                if can_reset_color {
+                    reset_color_to_preset =
+                        preset_reset_icon_button(ui, !self.style_binding.inherit_color, "色");
+                }
+            });
+            if reset_color_to_preset {
+                self.style_binding.inherit_color = true;
+                self.refresh_bound_style_fields();
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
             }
         } else {
             ui.small("グラデーション有効中。単色へ戻すと、保存済みの単色設定に戻ります。");
             let mut gradient_changed = false;
             let mut add_stop = false;
             let mut remove_stop = None;
+            let mut reset_gradient_to_preset = false;
+            let can_reset_gradient = self.bound_style_preset().is_some();
+            let gradient_overridden = !self.style_binding.inherit_gradient;
             {
                 let gradient = self.ensure_active_gradient();
                 ui.group(|ui| {
@@ -4867,6 +4874,10 @@ impl DesktopApp {
                                     )
                                     .changed();
                             });
+                        if can_reset_gradient {
+                            reset_gradient_to_preset =
+                                preset_reset_icon_button(ui, gradient_overridden, "グラデーション");
+                        }
                     });
                     ui.horizontal(|ui| {
                         ui.label("繰り返し");
@@ -4973,146 +4984,101 @@ impl DesktopApp {
                 sanitize_linear_gradient_editor(self.ensure_active_gradient());
                 self.mark_gradient_dirty();
             }
-            if self.bound_style_preset().is_some() {
-                ui.horizontal(|ui| {
-                    let preset_label = if self.style_binding.inherit_gradient {
-                        if self
-                            .bound_style_preset()
-                            .and_then(|preset| preset.gradient.as_ref())
-                            .is_some()
-                        {
-                            "グラデーション: preset 継承中"
-                        } else {
-                            "グラデーション: preset では無効"
-                        }
-                    } else {
-                        "グラデーション: 上書き中"
-                    };
-                    ui.small(preset_label);
-                    if ui
-                        .add_enabled(
-                            !self.style_binding.inherit_gradient,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        self.style_binding.inherit_gradient = true;
-                        self.refresh_bound_style_fields();
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
+            if reset_gradient_to_preset {
+                self.style_binding.inherit_gradient = true;
+                self.refresh_bound_style_fields();
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
             }
         }
-        if ui
-            .add(
-                egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
-                    .text("太さ"),
-            )
-            .changed()
-        {
-            self.style_binding.inherit_thickness = false;
-            self.sync_active_style_to_current_object();
-            self.mark_project_ui_dirty();
-        }
-        if self
-            .bound_style_preset()
-            .and_then(|preset| preset.thickness)
-            .is_some()
-        {
-            ui.horizontal(|ui| {
-                ui.small(if self.style_binding.inherit_thickness {
-                    "太さ: preset 継承中"
-                } else {
-                    "太さ: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.style_binding.inherit_thickness,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.style_binding.inherit_thickness = true;
-                    self.refresh_bound_style_fields();
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
-        if ui
-            .add(
-                egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
-                    .text("不透明度"),
-            )
-            .changed()
-        {
-            self.style_binding.inherit_opacity = false;
-            self.sync_active_style_to_current_object();
-            self.mark_project_ui_dirty();
-        }
-        if self
-            .bound_style_preset()
-            .is_some_and(|preset| preset.opacity.is_some() || preset.color_rgba.is_some())
-        {
-            ui.horizontal(|ui| {
-                ui.small(if self.style_binding.inherit_opacity {
-                    "不透明度: preset 継承中"
-                } else {
-                    "不透明度: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.style_binding.inherit_opacity,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.style_binding.inherit_opacity = true;
-                    self.refresh_bound_style_fields();
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
-        if ui
-            .add(
-                egui::Slider::new(
-                    &mut self.session.active_style.stabilization_strength,
-                    0.0..=1.0,
+        let mut reset_thickness_to_preset = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.session.active_style.thickness, 1.0..=32.0)
+                        .text("太さ"),
                 )
-                .text("手ブレ補正"),
-            )
-            .changed()
-        {
-            self.style_binding.inherit_stabilization_strength = false;
+                .changed()
+            {
+                self.style_binding.inherit_thickness = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.thickness)
+                .is_some()
+            {
+                reset_thickness_to_preset =
+                    preset_reset_icon_button(ui, !self.style_binding.inherit_thickness, "太さ");
+            }
+        });
+        if reset_thickness_to_preset {
+            self.style_binding.inherit_thickness = true;
+            self.refresh_bound_style_fields();
             self.sync_active_style_to_current_object();
             self.mark_project_ui_dirty();
         }
-        if self
-            .bound_style_preset()
-            .and_then(|preset| preset.stabilization_strength)
-            .is_some()
-        {
-            ui.horizontal(|ui| {
-                ui.small(if self.style_binding.inherit_stabilization_strength {
-                    "手ブレ補正: preset 継承中"
-                } else {
-                    "手ブレ補正: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.style_binding.inherit_stabilization_strength,
-                        egui::Button::new("presetへ戻す"),
+        let mut reset_opacity_to_preset = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.session.active_style.opacity, 0.05..=1.0)
+                        .text("不透明度"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_opacity = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .is_some_and(|preset| preset.opacity.is_some() || preset.color_rgba.is_some())
+            {
+                reset_opacity_to_preset =
+                    preset_reset_icon_button(ui, !self.style_binding.inherit_opacity, "不透明度");
+            }
+        });
+        if reset_opacity_to_preset {
+            self.style_binding.inherit_opacity = true;
+            self.refresh_bound_style_fields();
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
+        }
+        let mut reset_stabilization_to_preset = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Slider::new(
+                        &mut self.session.active_style.stabilization_strength,
+                        0.0..=1.0,
                     )
-                    .clicked()
-                {
-                    self.style_binding.inherit_stabilization_strength = true;
-                    self.refresh_bound_style_fields();
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
+                    .text("手ブレ補正"),
+                )
+                .changed()
+            {
+                self.style_binding.inherit_stabilization_strength = false;
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.stabilization_strength)
+                .is_some()
+            {
+                reset_stabilization_to_preset = preset_reset_icon_button(
+                    ui,
+                    !self.style_binding.inherit_stabilization_strength,
+                    "手ブレ補正",
+                );
+            }
+        });
+        if reset_stabilization_to_preset {
+            self.style_binding.inherit_stabilization_strength = true;
+            self.refresh_bound_style_fields();
+            self.sync_active_style_to_current_object();
+            self.mark_project_ui_dirty();
         }
         ui.horizontal(|ui| {
             ui.label("合成");
@@ -5139,41 +5105,41 @@ impl DesktopApp {
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
-        });
-        if self
-            .bound_style_preset()
-            .and_then(|preset| preset.blend_mode)
-            .is_some()
-        {
-            ui.horizontal(|ui| {
-                ui.small(if self.style_binding.inherit_blend_mode {
-                    "合成: preset 継承中"
-                } else {
-                    "合成: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.style_binding.inherit_blend_mode,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.style_binding.inherit_blend_mode = true;
-                    self.refresh_bound_style_fields();
-                    self.sync_active_style_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
-        ui.collapsing("アウトライン", |ui| {
-            if ui
-                .checkbox(&mut self.session.active_style.outline.enabled, "有効")
-                .changed()
+            if self
+                .bound_style_preset()
+                .and_then(|preset| preset.blend_mode)
+                .is_some()
+                && preset_reset_icon_button(ui, !self.style_binding.inherit_blend_mode, "合成")
             {
-                self.style_binding.inherit_outline = false;
+                self.style_binding.inherit_blend_mode = true;
+                self.refresh_bound_style_fields();
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
+        });
+        ui.collapsing("アウトライン", |ui| {
+            let mut reset_outline_to_preset = false;
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut self.session.active_style.outline.enabled, "有効")
+                    .changed()
+                {
+                    self.style_binding.inherit_outline = false;
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.outline.clone())
+                    .is_some()
+                {
+                    reset_outline_to_preset = preset_reset_icon_button(
+                        ui,
+                        !self.style_binding.inherit_outline,
+                        "アウトライン",
+                    );
+                }
+            });
             if ui
                 .add(
                     egui::Slider::new(&mut self.session.active_style.outline.width, 0.0..=24.0)
@@ -5192,41 +5158,36 @@ impl DesktopApp {
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
-            if self
-                .bound_style_preset()
-                .and_then(|preset| preset.outline.clone())
-                .is_some()
-            {
-                ui.horizontal(|ui| {
-                    ui.small(if self.style_binding.inherit_outline {
-                        "アウトライン: preset 継承中"
-                    } else {
-                        "アウトライン: 上書き中"
-                    });
-                    if ui
-                        .add_enabled(
-                            !self.style_binding.inherit_outline,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        self.style_binding.inherit_outline = true;
-                        self.refresh_bound_style_fields();
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-            }
-        });
-        ui.collapsing("ドロップシャドウ", |ui| {
-            if ui
-                .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
-                .changed()
-            {
-                self.style_binding.inherit_drop_shadow = false;
+            if reset_outline_to_preset {
+                self.style_binding.inherit_outline = true;
+                self.refresh_bound_style_fields();
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
+        });
+        ui.collapsing("ドロップシャドウ", |ui| {
+            let mut reset_drop_shadow_to_preset = false;
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut self.session.active_style.drop_shadow.enabled, "有効")
+                    .changed()
+                {
+                    self.style_binding.inherit_drop_shadow = false;
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.drop_shadow.clone())
+                    .is_some()
+                {
+                    reset_drop_shadow_to_preset = preset_reset_icon_button(
+                        ui,
+                        !self.style_binding.inherit_drop_shadow,
+                        "ドロップシャドウ",
+                    );
+                }
+            });
             if ui
                 .add(
                     egui::Slider::new(
@@ -5276,41 +5237,33 @@ impl DesktopApp {
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
-            if self
-                .bound_style_preset()
-                .and_then(|preset| preset.drop_shadow.clone())
-                .is_some()
-            {
-                ui.horizontal(|ui| {
-                    ui.small(if self.style_binding.inherit_drop_shadow {
-                        "ドロップシャドウ: preset 継承中"
-                    } else {
-                        "ドロップシャドウ: 上書き中"
-                    });
-                    if ui
-                        .add_enabled(
-                            !self.style_binding.inherit_drop_shadow,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        self.style_binding.inherit_drop_shadow = true;
-                        self.refresh_bound_style_fields();
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
-            }
-        });
-        ui.collapsing("グロー", |ui| {
-            if ui
-                .checkbox(&mut self.session.active_style.glow.enabled, "有効")
-                .changed()
-            {
-                self.style_binding.inherit_glow = false;
+            if reset_drop_shadow_to_preset {
+                self.style_binding.inherit_drop_shadow = true;
+                self.refresh_bound_style_fields();
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
+        });
+        ui.collapsing("グロー", |ui| {
+            let mut reset_glow_to_preset = false;
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut self.session.active_style.glow.enabled, "有効")
+                    .changed()
+                {
+                    self.style_binding.inherit_glow = false;
+                    self.sync_active_style_to_current_object();
+                    self.mark_project_ui_dirty();
+                }
+                if self
+                    .bound_style_preset()
+                    .and_then(|preset| preset.glow.clone())
+                    .is_some()
+                {
+                    reset_glow_to_preset =
+                        preset_reset_icon_button(ui, !self.style_binding.inherit_glow, "グロー");
+                }
+            });
             if ui
                 .add(
                     egui::Slider::new(&mut self.session.active_style.glow.blur_radius, 0.0..=48.0)
@@ -5329,30 +5282,11 @@ impl DesktopApp {
                 self.sync_active_style_to_current_object();
                 self.mark_project_ui_dirty();
             }
-            if self
-                .bound_style_preset()
-                .and_then(|preset| preset.glow.clone())
-                .is_some()
-            {
-                ui.horizontal(|ui| {
-                    ui.small(if self.style_binding.inherit_glow {
-                        "グロー: preset 継承中"
-                    } else {
-                        "グロー: 上書き中"
-                    });
-                    if ui
-                        .add_enabled(
-                            !self.style_binding.inherit_glow,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        self.style_binding.inherit_glow = true;
-                        self.refresh_bound_style_fields();
-                        self.sync_active_style_to_current_object();
-                        self.mark_project_ui_dirty();
-                    }
-                });
+            if reset_glow_to_preset {
+                self.style_binding.inherit_glow = true;
+                self.refresh_bound_style_fields();
+                self.sync_active_style_to_current_object();
+                self.mark_project_ui_dirty();
             }
         });
         ui.separator();
@@ -5382,28 +5316,15 @@ impl DesktopApp {
                 self.sync_active_entrance_to_current_object();
                 self.mark_project_ui_dirty();
             }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(ui, !self.entrance_binding.inherit_kind, "方式")
+            {
+                self.entrance_binding.inherit_kind = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
         });
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_kind {
-                    "方式: preset 継承中"
-                } else {
-                    "方式: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_kind,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_kind = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
         ui.horizontal(|ui| {
             ui.label("対象");
             let mut scope = self.session.active_entrance.scope;
@@ -5425,28 +5346,15 @@ impl DesktopApp {
                 self.sync_active_entrance_to_current_object();
                 self.mark_project_ui_dirty();
             }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(ui, !self.entrance_binding.inherit_scope, "対象")
+            {
+                self.entrance_binding.inherit_scope = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
         });
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_scope {
-                    "対象: preset 継承中"
-                } else {
-                    "対象: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_scope,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_scope = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
         ui.horizontal(|ui| {
             ui.label("順序");
             let mut order = self.session.active_entrance.order;
@@ -5467,28 +5375,15 @@ impl DesktopApp {
                 self.sync_active_entrance_to_current_object();
                 self.mark_project_ui_dirty();
             }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(ui, !self.entrance_binding.inherit_order, "順序")
+            {
+                self.entrance_binding.inherit_order = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
         });
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_order {
-                    "順序: preset 継承中"
-                } else {
-                    "順序: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_order,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_order = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
         ui.horizontal(|ui| {
             ui.label("時間モード");
             let mut duration_mode = self.session.active_entrance.duration_mode;
@@ -5512,103 +5407,83 @@ impl DesktopApp {
                 self.sync_active_entrance_to_current_object();
                 self.mark_project_ui_dirty();
             }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(
+                    ui,
+                    !self.entrance_binding.inherit_duration_mode,
+                    "時間モード",
+                )
+            {
+                self.entrance_binding.inherit_duration_mode = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
         });
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_duration_mode {
-                    "時間モード: preset 継承中"
-                } else {
-                    "時間モード: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_duration_mode,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_duration_mode = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
         let mut entrance_duration_ms =
             media_duration_to_millis(self.session.active_entrance.duration) as f32;
-        if ui
-            .add(
-                egui::Slider::new(&mut entrance_duration_ms, 50.0..=5_000.0)
-                    .logarithmic(true)
-                    .text(match self.session.active_entrance.duration_mode {
-                        pauseink_domain::EntranceDurationMode::FixedTotalDuration => "出現時間 ms",
-                        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
-                            "基準時間 ms"
-                        }
-                    }),
-            )
-            .changed()
-        {
-            self.session.active_entrance.duration =
-                pauseink_domain::MediaDuration::from_millis(entrance_duration_ms.round() as i64);
-            self.entrance_binding.inherit_duration_ms = false;
-            self.sync_active_entrance_to_current_object();
-            self.mark_project_ui_dirty();
-        }
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_duration_ms {
-                    "出現時間: preset 継承中"
-                } else {
-                    "出現時間: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_duration_ms,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_duration_ms = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
-        if ui
-            .add(
-                egui::Slider::new(&mut self.session.active_entrance.speed_scalar, 0.1..=8.0)
-                    .logarithmic(true)
-                    .text("出現速度"),
-            )
-            .changed()
-        {
-            self.entrance_binding.inherit_speed_scalar = false;
-            self.sync_active_entrance_to_current_object();
-            self.mark_project_ui_dirty();
-        }
-        if self.bound_entrance_preset().is_some() {
-            ui.horizontal(|ui| {
-                ui.small(if self.entrance_binding.inherit_speed_scalar {
-                    "出現速度: preset 継承中"
-                } else {
-                    "出現速度: 上書き中"
-                });
-                if ui
-                    .add_enabled(
-                        !self.entrance_binding.inherit_speed_scalar,
-                        egui::Button::new("presetへ戻す"),
-                    )
-                    .clicked()
-                {
-                    self.entrance_binding.inherit_speed_scalar = true;
-                    self.refresh_bound_entrance_fields();
-                    self.sync_active_entrance_to_current_object();
-                    self.mark_project_ui_dirty();
-                }
-            });
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut entrance_duration_ms, 50.0..=5_000.0)
+                        .logarithmic(true)
+                        .text(match self.session.active_entrance.duration_mode {
+                            pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
+                                "出現時間 ms"
+                            }
+                            pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+                                "基準時間 ms"
+                            }
+                        }),
+                )
+                .changed()
+            {
+                self.session.active_entrance.duration = pauseink_domain::MediaDuration::from_millis(
+                    entrance_duration_ms.round() as i64,
+                );
+                self.entrance_binding.inherit_duration_ms = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(
+                    ui,
+                    !self.entrance_binding.inherit_duration_ms,
+                    "出現時間",
+                )
+            {
+                self.entrance_binding.inherit_duration_ms = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.session.active_entrance.speed_scalar, 0.1..=8.0)
+                        .logarithmic(true)
+                        .text("出現速度"),
+                )
+                .changed()
+            {
+                self.entrance_binding.inherit_speed_scalar = false;
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+            if self.bound_entrance_preset().is_some()
+                && preset_reset_icon_button(
+                    ui,
+                    !self.entrance_binding.inherit_speed_scalar,
+                    "出現速度",
+                )
+            {
+                self.entrance_binding.inherit_speed_scalar = true;
+                self.refresh_bound_entrance_fields();
+                self.sync_active_entrance_to_current_object();
+                self.mark_project_ui_dirty();
+            }
+        });
         let bound_head_effect_exists = self
             .bound_entrance_preset()
             .and_then(|preset| preset.entrance.head_effect.as_ref())
@@ -5618,9 +5493,18 @@ impl DesktopApp {
         let mut head_effect_changed = false;
         ui.collapsing("先端アクセント", |ui| {
             let mut enabled = self.session.active_entrance.head_effect.is_some();
-            if ui.checkbox(&mut enabled, "有効").changed() {
-                toggle_head_effect_to = Some(enabled);
-            }
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut enabled, "有効").changed() {
+                    toggle_head_effect_to = Some(enabled);
+                }
+                if self.bound_entrance_preset().is_some() {
+                    reset_head_effect_to_preset = preset_reset_icon_button(
+                        ui,
+                        !self.entrance_binding.inherit_head_effect,
+                        "先端アクセント",
+                    );
+                }
+            });
 
             if let Some(head) = self.session.active_entrance.head_effect.as_mut() {
                 let mut kind = head.kind;
@@ -5740,27 +5624,11 @@ impl DesktopApp {
                     head_effect_changed = true;
                 }
             }
-
-            if self.bound_entrance_preset().is_some() {
-                ui.horizontal(|ui| {
-                    ui.small(if self.entrance_binding.inherit_head_effect {
-                        "先端アクセント: preset 継承中"
-                    } else {
-                        "先端アクセント: 上書き中"
-                    });
-                    if ui
-                        .add_enabled(
-                            !self.entrance_binding.inherit_head_effect,
-                            egui::Button::new("presetへ戻す"),
-                        )
-                        .clicked()
-                    {
-                        reset_head_effect_to_preset = true;
-                    }
-                });
-                if !bound_head_effect_exists && self.entrance_binding.inherit_head_effect {
-                    ui.small("この出現 preset では先端アクセントは無効です。");
-                }
+            if self.bound_entrance_preset().is_some()
+                && !bound_head_effect_exists
+                && self.entrance_binding.inherit_head_effect
+            {
+                ui.small("この出現 preset では先端アクセントは無効です。");
             }
         });
         if let Some(enabled) = toggle_head_effect_to {
@@ -8124,7 +7992,7 @@ mod tests {
 
         assert!(
             app.session.active_entrance.head_effect.is_some(),
-            "presetへ戻す で head effect を再適用したい"
+            "preset reset で head effect を再適用したい"
         );
 
         app.selected_entrance_preset_id = "marker_highlight".to_owned();
@@ -8137,7 +8005,7 @@ mod tests {
 
         assert!(
             app.session.active_entrance.head_effect.is_none(),
-            "preset に head effect が無い場合は presetへ戻す で無効化したい"
+            "preset に head effect が無い場合は reset で無効化したい"
         );
     }
 
@@ -8193,7 +8061,7 @@ mod tests {
             .active_style
             .gradient
             .as_ref()
-            .expect("presetへ戻す で gradient を再適用したい");
+            .expect("preset reset で gradient を再適用したい");
         assert_eq!(
             restored_gradient.repeat,
             pauseink_domain::GradientRepeat::Mirror
@@ -8214,11 +8082,11 @@ mod tests {
         assert_eq!(
             app.session.active_style.color_mode,
             pauseink_domain::ColorMode::Solid,
-            "gradient を持たない presetへ戻す と単色へ戻したい"
+            "gradient を持たない preset reset で単色へ戻したい"
         );
         assert!(
             app.session.active_style.gradient.is_none(),
-            "gradient を持たない presetへ戻す と gradient editor 状態も外したい"
+            "gradient を持たない preset reset で gradient editor 状態も外したい"
         );
     }
 
@@ -9388,6 +9256,19 @@ mod tests {
         assert!(!source.contains(&previous_button));
         assert!(!source.contains(&next_button));
         assert!(!source.contains(&slot_status));
+    }
+
+    #[test]
+    fn preset_reset_ui_uses_compact_icon_without_status_rows() {
+        let source = include_str!("main.rs");
+        let legacy_button = ["preset", "へ戻す"].concat();
+        let inherited_status = ["preset ", "継承中"].concat();
+        let overridden_status = ["上書", "き中"].concat();
+
+        assert!(source.contains("const PRESET_RESET_ICON_LABEL: &str = \"↺\";"));
+        assert!(!source.contains(&legacy_button));
+        assert!(!source.contains(&inherited_status));
+        assert!(!source.contains(&overridden_status));
     }
 
     #[test]
