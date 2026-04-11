@@ -1,0 +1,5 @@
+interface:
+  display_name: "Discord Report"
+  short_description: "Best-effort Discord progress/completion notification helper"
+policy:
+  allow_implicit_invocation: true

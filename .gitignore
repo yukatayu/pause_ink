@@ -7,3 +7,4 @@ pauseink_data/
 *.log
 __pycache__/
 *.pyc
+.codex-discord/

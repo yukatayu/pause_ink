@@ -221,6 +221,37 @@ If you change the stack, document the reason precisely in `docs/implementation_r
 
 ## Required working style
 
+### Discord notifications
+
+Use the repo-scoped `discord-report` skill for best-effort Discord notifications in this repository.
+
+- For tasks that edit files, run commands, or are expected to take more than a few minutes, activate `discord-report` before substantial work begins.
+- Before the work starts, run `python3 .agents/skills/discord-report/scripts/discord_notify.py begin --cwd .` once to record a task baseline. `begin` does not send a notification.
+- For short tasks, skip intermediate notifications and send only the final completion notification.
+- For long tasks, send progress only at meaningful natural milestones, with roughly 1 hour or more between updates unless the user explicitly asks for higher frequency.
+- Always send exactly one final completion notification before stopping work, and only when the user request is actually ending.
+- Do not use `complete` for intermediate reports, waiting states, or ongoing investigation.
+- If the repo is not under Git or no baseline is available, omit diff output.
+- Keep notification summaries concise and in Japanese.
+- Use `test` only for an explicit post-install or post-update connectivity check, not during normal work.
+- Notification failures are non-fatal. If the webhook is missing or the helper fails, continue the main task and report the issue in the normal response.
+
+Preferred helper commands:
+
+```bash
+python3 .agents/skills/discord-report/scripts/discord_notify.py begin --cwd .
+
+python3 .agents/skills/discord-report/scripts/discord_notify.py progress \
+  --summary "<ここまでに終えたこと>" \
+  --next-step "<次にやること>" \
+  --cwd .
+
+python3 .agents/skills/discord-report/scripts/discord_notify.py complete \
+  --summary "<最終的に何をしたかを1〜3文で>" \
+  --include-diff \
+  --cwd .
+```
+
 ### Plan before coding
 
 Before major code changes:
