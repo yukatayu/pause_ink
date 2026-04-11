@@ -4,8 +4,8 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、preview 縮小時でも見える `先端アクセント`、compact な `↺` preset reset UI、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 継続。preview 再生中の `先端アクセント` 視認性と preset reset UI の整理を完了し、次候補は `V1-03 post-action chain`。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、object-local `post-action chain` foundation、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、preview 縮小時でも見える `先端アクセント`、compact な `↺` preset reset UI、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在のフェーズ: Phase 20 継続。`V1-03 post-action chain` の foundation を object-local 範囲で接続し、次候補は inspector chain editor と `AfterStroke / AfterGroup / AfterRun` timing の本実装。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
@@ -13,6 +13,30 @@
 
 ### 最新作業ログ
 
+- 2026-04-11:
+  - Task: `V1-03 post-action chain` foundation
+  - 実施内容: `crates/renderer/src/lib.rs` に object-local `evaluate_post_actions()` を追加し、`DuringReveal` と `AfterGlyphObject` に対する `StyleChange / InterpolatedStyleChange / Pulse / Blink` を `effective style + alpha multiplier` へ変換して base/effect/reveal-head 描画へ通した。`crates/app/src/lib.rs` には `active_post_actions` と object 向け apply helper、`crates/domain/src/project_commands.rs` には `SetGlyphObjectPostActionsCommand` / `BatchSetGlyphObjectPostActionsCommand` を追加した。`crates/app/src/main.rs` と `crates/presets_core/src/lib.rs` では entrance preset と workspace/project restore に `post_actions` を通し、settings/project/preset の roundtrip を接続した。
+  - 設計調整: 既存 renderer はまだ `EffectScope::{Stroke, Group, Run}` を消費しておらず、`group/run` 完了時刻の定義も未固定だったため、今回の foundation は object-local に限定した。`AfterStroke / AfterGroup / AfterRun` と inspector の chain array editor は次段へ分離し、今回の接続で設計のねじれを増やさない方針を採った。
+  - 副次修正: `presets_core` の `BaseStylePresetStyleFile` で `fill_color` の追従漏れが見つかったため、`fill_color_rgba` を schema に戻して既存 fill/gradient save-load と整合させた。
+  - sub-agent review:
+    - `Locke` は domain に既存の `PostAction` 型と `GlyphObject::post_actions` / `Group::post_actions` がある一方、renderer が scope をまだ object-local 以上へ広げていないため、`DuringReveal` / `AfterGlyphObject` から始めるのが安全と報告した。
+    - `Hume` には foundation の semantic review を依頼したが、返答待ちが長く orphan 化しそうだったため local verification 完了時点で終了した。今回の採用判断は `Locke` の指摘と local test/evidence を優先して確定した。
+  - 追加テスト:
+    - `pauseink_renderer::tests::post_action_style_change_applies_after_glyph_object_reveal`
+    - `pauseink_renderer::tests::post_action_interpolated_style_change_progresses_after_glyph_object_reveal`
+    - `pauseink_app::tests::free_ink_commit_captures_active_post_actions_into_object`
+    - `pauseink_app::tests::save_settings_and_restart_restore_active_post_actions`
+  - 実行コマンド:
+    - `cargo test -q -p pauseink-renderer post_action_style_change_applies_after_glyph_object_reveal -- --nocapture`
+    - `cargo test -q -p pauseink-renderer post_action_interpolated_style_change_progresses_after_glyph_object_reveal -- --nocapture`
+    - `cargo test -q -p pauseink-presets-core -- --nocapture`
+    - `cargo test -q -p pauseink-app free_ink_commit_captures_active_post_actions_into_object -- --nocapture`
+    - `cargo test -q -p pauseink-app save_settings_and_restart_restore_active_post_actions -- --nocapture`
+    - `cargo test -q -p pauseink-renderer -- --nocapture`
+    - `cargo test -q -p pauseink-app --lib --bins`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+  - 結果: すべて exit 0。object-local post-action foundation、preset/settings/project の roundtrip、既存 export/renderer/app 回帰が崩れていないことを確認した。未着手の残りは inspector chain editor と `AfterStroke / AfterGroup / AfterRun` timing evaluator。
 - 2026-04-08:
   - Task: preview 再生中の `先端アクセント` 視認性改善と preset reset UI の整理
   - 実施内容: `crates/renderer/src/lib.rs` の `render_recent_ink_accent_layer()` で `追従長 px` と `ぼかし` を preview の縮小率でさらに縮めないようにし、recent segment accent を user 指定 px ベースで描画するよう修正した。`crates/app/src/main.rs` では `presetへ戻す` ボタンと `継承中 / 上書き中` 行を廃止し、各 control の横に `↺` アイコンを置く compact reset UI へ置き換えた。

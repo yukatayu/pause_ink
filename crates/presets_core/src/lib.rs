@@ -6,7 +6,8 @@ use pauseink_domain::{
     BlendMode, ClearKind, ClearOrdering, ClearTargetGranularity, ColorMode, ColorStop,
     DropShadowStyle, EntranceBehavior, EntranceDurationMode, EntranceKind, GlowStyle,
     GradientRepeat, GradientSpace, LinearGradientStyle, MediaDuration, OutlineStyle,
-    RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor,
+    PostAction, PostActionKind, PostActionTimingScope, RevealHeadColorSource, RevealHeadEffect,
+    RevealHeadKind, RgbaColor, StyleSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -112,6 +113,7 @@ pub struct EntrancePreset {
     pub id: String,
     pub display_name: String,
     pub entrance: EntranceBehavior,
+    pub post_actions: Vec<PostAction>,
     pub source: StylePresetSource,
     pub file_path: Option<PathBuf>,
 }
@@ -1020,6 +1022,7 @@ impl BaseStylePresetFile {
             id: self.id,
             display_name: format!("{} / 出現", self.display_name),
             entrance: entrance.into_domain(),
+            post_actions: Vec::new(),
             source: match self.source {
                 StylePresetSource::BuiltIn => default_source,
                 StylePresetSource::User => StylePresetSource::User,
@@ -1040,6 +1043,7 @@ impl BaseStylePresetFile {
                     rgba[3] = preset.opacity.unwrap_or(rgba[3]).clamp(0.0, 1.0);
                     rgba
                 }),
+                fill_color_rgba: None,
                 color_mode: preset.color_mode.map(ColorModeFile::from_domain),
                 gradient: preset
                     .gradient
@@ -1068,6 +1072,8 @@ struct EntrancePresetFile {
     source: StylePresetSource,
     #[serde(default)]
     entrance: BaseStylePresetEntranceFile,
+    #[serde(default)]
+    post_actions: Vec<PostActionFile>,
 }
 
 impl EntrancePresetFile {
@@ -1076,6 +1082,11 @@ impl EntrancePresetFile {
             id: self.id,
             display_name: self.display_name,
             entrance: self.entrance.into_domain(),
+            post_actions: self
+                .post_actions
+                .into_iter()
+                .map(PostActionFile::into_domain)
+                .collect(),
             source: match self.source {
                 StylePresetSource::BuiltIn => default_source,
                 StylePresetSource::User => StylePresetSource::User,
@@ -1090,6 +1101,11 @@ impl EntrancePresetFile {
             display_name: preset.display_name.clone(),
             source: preset.source,
             entrance: BaseStylePresetEntranceFile::from_domain(&preset.entrance),
+            post_actions: preset
+                .post_actions
+                .iter()
+                .map(PostActionFile::from_domain)
+                .collect(),
         }
     }
 }
@@ -1207,6 +1223,7 @@ impl ComboPresetFile {
 struct BaseStylePresetStyleFile {
     thickness: Option<f32>,
     color_rgba: Option<[f32; 4]>,
+    fill_color_rgba: Option<[f32; 4]>,
     color_mode: Option<ColorModeFile>,
     gradient: Option<LinearGradientStyleFile>,
     opacity: Option<f32>,
@@ -1215,6 +1232,71 @@ struct BaseStylePresetStyleFile {
     glow: Option<GlowStyleFile>,
     blend_mode: Option<BlendModeFile>,
     stabilization_strength: Option<f32>,
+}
+
+impl BaseStylePresetStyleFile {
+    fn into_domain(self) -> StyleSnapshot {
+        let (color_rgba, opacity) =
+            normalize_style_preset_color_and_opacity(self.color_rgba, self.opacity);
+        StyleSnapshot {
+            thickness: self.thickness.unwrap_or_else(|| StyleSnapshot::default().thickness),
+            color: color_rgba
+                .map(rgba_color_from_bytes)
+                .unwrap_or_else(|| StyleSnapshot::default().color),
+            fill_color: self
+                .fill_color_rgba
+                .map(normalize_color_rgba)
+                .map(rgba_color_from_bytes),
+            color_mode: self
+                .color_mode
+                .map(ColorModeFile::into_domain)
+                .or_else(|| self.gradient.as_ref().map(|_| ColorMode::LinearGradient))
+                .unwrap_or_else(|| StyleSnapshot::default().color_mode),
+            gradient: self.gradient.map(LinearGradientStyleFile::into_domain),
+            opacity: opacity.unwrap_or_else(|| StyleSnapshot::default().opacity),
+            outline: self
+                .outline
+                .map(OutlineStyleFile::into_domain)
+                .unwrap_or_else(|| StyleSnapshot::default().outline),
+            drop_shadow: self
+                .drop_shadow
+                .map(DropShadowStyleFile::into_domain)
+                .unwrap_or_else(|| StyleSnapshot::default().drop_shadow),
+            glow: self
+                .glow
+                .map(GlowStyleFile::into_domain)
+                .unwrap_or_else(|| StyleSnapshot::default().glow),
+            blend_mode: self
+                .blend_mode
+                .map(BlendModeFile::into_domain)
+                .unwrap_or_else(|| StyleSnapshot::default().blend_mode),
+            stabilization_strength: self
+                .stabilization_strength
+                .unwrap_or_else(|| StyleSnapshot::default().stabilization_strength),
+        }
+    }
+
+    fn from_style_snapshot(style: &StyleSnapshot) -> Self {
+        Self {
+            thickness: Some(style.thickness),
+            color_rgba: Some(float_color_rgba(rgba_color_to_bytes(style.color))),
+            fill_color_rgba: style
+                .fill_color
+                .map(rgba_color_to_bytes)
+                .map(float_color_rgba),
+            color_mode: Some(ColorModeFile::from_domain(style.color_mode)),
+            gradient: style
+                .gradient
+                .as_ref()
+                .map(LinearGradientStyleFile::from_domain),
+            opacity: Some(style.opacity),
+            outline: Some(OutlineStyleFile::from_domain(&style.outline)),
+            drop_shadow: Some(DropShadowStyleFile::from_domain(&style.drop_shadow)),
+            glow: Some(GlowStyleFile::from_domain(&style.glow)),
+            blend_mode: Some(BlendModeFile::from_domain(style.blend_mode)),
+            stabilization_strength: Some(style.stabilization_strength),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -1553,6 +1635,148 @@ impl BaseStylePresetEntranceFile {
                 .head_effect
                 .as_ref()
                 .map(RevealHeadEffectFile::from_domain),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+struct PostActionFile {
+    timing_scope: Option<PostActionTimingScopeFile>,
+    action: PostActionKindFile,
+}
+
+impl Default for PostActionFile {
+    fn default() -> Self {
+        Self {
+            timing_scope: Some(PostActionTimingScopeFile::AfterGlyphObject),
+            action: PostActionKindFile::NoOp,
+        }
+    }
+}
+
+impl PostActionFile {
+    fn into_domain(self) -> PostAction {
+        PostAction {
+            timing_scope: self
+                .timing_scope
+                .unwrap_or(PostActionTimingScopeFile::AfterGlyphObject)
+                .into_domain(),
+            action: self.action.into_domain(),
+        }
+    }
+
+    fn from_domain(action: &PostAction) -> Self {
+        Self {
+            timing_scope: Some(PostActionTimingScopeFile::from_domain(action.timing_scope)),
+            action: PostActionKindFile::from_domain(&action.action),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PostActionTimingScopeFile {
+    DuringReveal,
+    AfterStroke,
+    AfterGlyphObject,
+    AfterGroup,
+    AfterRun,
+}
+
+impl PostActionTimingScopeFile {
+    fn into_domain(self) -> PostActionTimingScope {
+        match self {
+            Self::DuringReveal => PostActionTimingScope::DuringReveal,
+            Self::AfterStroke => PostActionTimingScope::AfterStroke,
+            Self::AfterGlyphObject => PostActionTimingScope::AfterGlyphObject,
+            Self::AfterGroup => PostActionTimingScope::AfterGroup,
+            Self::AfterRun => PostActionTimingScope::AfterRun,
+        }
+    }
+
+    fn from_domain(scope: PostActionTimingScope) -> Self {
+        match scope {
+            PostActionTimingScope::DuringReveal => Self::DuringReveal,
+            PostActionTimingScope::AfterStroke => Self::AfterStroke,
+            PostActionTimingScope::AfterGlyphObject => Self::AfterGlyphObject,
+            PostActionTimingScope::AfterGroup => Self::AfterGroup,
+            PostActionTimingScope::AfterRun => Self::AfterRun,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PostActionKindFile {
+    NoOp,
+    StyleChange {
+        style: BaseStylePresetStyleFile,
+    },
+    InterpolatedStyleChange {
+        style: BaseStylePresetStyleFile,
+        duration_ms: i64,
+    },
+    Pulse {
+        cycles: u32,
+        duration_ms: i64,
+    },
+    Blink {
+        cycles: u32,
+        duration_ms: i64,
+    },
+}
+
+impl PostActionKindFile {
+    fn into_domain(self) -> PostActionKind {
+        match self {
+            Self::NoOp => PostActionKind::NoOp,
+            Self::StyleChange { style } => PostActionKind::StyleChange {
+                style: style.into_domain(),
+            },
+            Self::InterpolatedStyleChange { style, duration_ms } => {
+                PostActionKind::InterpolatedStyleChange {
+                    style: style.into_domain(),
+                    duration: MediaDuration::from_millis(duration_ms.max(0)),
+                }
+            }
+            Self::Pulse {
+                cycles,
+                duration_ms,
+            } => PostActionKind::Pulse {
+                cycles,
+                duration: MediaDuration::from_millis(duration_ms.max(0)),
+            },
+            Self::Blink {
+                cycles,
+                duration_ms,
+            } => PostActionKind::Blink {
+                cycles,
+                duration: MediaDuration::from_millis(duration_ms.max(0)),
+            },
+        }
+    }
+
+    fn from_domain(kind: &PostActionKind) -> Self {
+        match kind {
+            PostActionKind::NoOp => Self::NoOp,
+            PostActionKind::StyleChange { style } => Self::StyleChange {
+                style: BaseStylePresetStyleFile::from_style_snapshot(style),
+            },
+            PostActionKind::InterpolatedStyleChange { style, duration } => {
+                Self::InterpolatedStyleChange {
+                    style: BaseStylePresetStyleFile::from_style_snapshot(style),
+                    duration_ms: media_duration_millis(*duration),
+                }
+            }
+            PostActionKind::Pulse { cycles, duration } => Self::Pulse {
+                cycles: *cycles,
+                duration_ms: media_duration_millis(*duration),
+            },
+            PostActionKind::Blink { cycles, duration } => Self::Blink {
+                cycles: *cycles,
+                duration_ms: media_duration_millis(*duration),
+            },
         }
     }
 }
@@ -2634,6 +2858,16 @@ mod tests {
                     blend_mode: BlendMode::Screen,
                 }),
             },
+            post_actions: vec![pauseink_domain::PostAction {
+                timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+                action: pauseink_domain::PostActionKind::StyleChange {
+                    style: pauseink_domain::StyleSnapshot {
+                        color: RgbaColor::new(255, 200, 120, 255),
+                        opacity: 0.34,
+                        ..pauseink_domain::StyleSnapshot::default()
+                    },
+                },
+            }],
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -2645,5 +2879,13 @@ mod tests {
         assert_eq!(loaded_entrance.id, "trace_head");
         assert_eq!(loaded_entrance.entrance.kind, EntranceKind::Dissolve);
         assert!(loaded_entrance.entrance.head_effect.is_some());
+        assert_eq!(loaded_entrance.post_actions.len(), 1);
+        match &loaded_entrance.post_actions[0].action {
+            pauseink_domain::PostActionKind::StyleChange { style } => {
+                assert_eq!(style.color, RgbaColor::new(255, 200, 120, 255));
+                assert!((style.opacity - 0.34).abs() < 0.001);
+            }
+            other => panic!("unexpected post action: {other:?}"),
+        }
     }
 }

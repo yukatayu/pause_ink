@@ -433,6 +433,7 @@ struct EntrancePresetBindingState {
     inherit_duration_ms: bool,
     inherit_speed_scalar: bool,
     inherit_head_effect: bool,
+    inherit_post_actions: bool,
 }
 
 impl EntrancePresetBindingState {
@@ -445,6 +446,7 @@ impl EntrancePresetBindingState {
             inherit_duration_ms: true,
             inherit_speed_scalar: true,
             inherit_head_effect: true,
+            inherit_post_actions: true,
         }
     }
 }
@@ -476,6 +478,8 @@ impl SavedBaseStylePresetState {
 struct SavedEntrancePresetState {
     preset_id: Option<String>,
     resolved_snapshot: StoredEntranceBehavior,
+    #[serde(default)]
+    resolved_post_actions: Vec<pauseink_domain::PostAction>,
 }
 
 impl SavedEntrancePresetState {
@@ -483,6 +487,7 @@ impl SavedEntrancePresetState {
         Self {
             preset_id: app.bound_entrance_preset_id.clone(),
             resolved_snapshot: StoredEntranceBehavior::from_domain(&app.session.active_entrance),
+            resolved_post_actions: app.session.active_post_actions.clone(),
         }
     }
 }
@@ -1758,6 +1763,7 @@ impl DesktopApp {
             id: preset_id.clone(),
             display_name: display_name.clone(),
             entrance: self.session.active_entrance.clone(),
+            post_actions: self.session.active_post_actions.clone(),
             source: StylePresetSource::User,
             file_path: None,
         };
@@ -1925,6 +1931,9 @@ impl DesktopApp {
         if self.entrance_binding.inherit_head_effect {
             self.session.active_entrance.head_effect = preset.entrance.head_effect.clone();
         }
+        if self.entrance_binding.inherit_post_actions {
+            self.session.active_post_actions = preset.post_actions.clone();
+        }
     }
 
     fn apply_selected_style_preset(&mut self) {
@@ -1966,6 +1975,7 @@ impl DesktopApp {
         self.entrance_binding = EntrancePresetBindingState::inherit_all();
         self.refresh_bound_entrance_fields();
         self.sync_active_entrance_to_current_object();
+        self.sync_active_post_actions_to_current_object();
         self.mark_project_ui_dirty();
         self.push_log(format!("出現 preset 適用: {}", preset.display_name));
     }
@@ -2077,6 +2087,7 @@ impl DesktopApp {
             .and_then(|value| serde_json::from_value::<SavedEntrancePresetState>(value).ok())
         {
             self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
+            self.session.active_post_actions = entrance_state.resolved_post_actions;
             if let Some(preset_id) = entrance_state.preset_id {
                 self.bound_entrance_preset_id = Some(preset_id.clone());
                 self.selected_entrance_preset_id = preset_id;
@@ -2131,6 +2142,7 @@ impl DesktopApp {
             .and_then(|value| serde_json::from_value::<SavedEntrancePresetState>(value).ok())
         {
             self.session.active_entrance = entrance_state.resolved_snapshot.into_domain();
+            self.session.active_post_actions = entrance_state.resolved_post_actions;
             if let Some(preset_id) = entrance_state.preset_id {
                 self.bound_entrance_preset_id = Some(preset_id.clone());
                 self.selected_entrance_preset_id = preset_id;
@@ -2690,6 +2702,25 @@ impl DesktopApp {
             }
             Ok(false) => {}
             Err(error) => self.push_log(format!("出現設定の適用失敗: {error:#}")),
+        }
+    }
+
+    fn sync_active_post_actions_to_current_object(&mut self) {
+        let result = if let Some(object_id) = self.current_direct_edit_target_object_id() {
+            self.session.overwrite_glyph_object_post_actions(
+                &object_id,
+                self.session.active_post_actions.clone(),
+            )
+        } else {
+            self.session.apply_active_post_actions_to_selection()
+        };
+
+        match result {
+            Ok(true) => {
+                self.overlay_key = None;
+            }
+            Ok(false) => {}
+            Err(error) => self.push_log(format!("post-action の適用失敗: {error:#}")),
         }
     }
 
@@ -7973,6 +8004,51 @@ mod tests {
             reopened.session.active_entrance.head_effect.is_none(),
             "settings 再起動後も head effect override を維持したい"
         );
+    }
+
+    #[test]
+    fn save_settings_and_restart_restore_active_post_actions() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths.clone(), Settings::default(), None, None);
+
+        app.selected_entrance_preset_id = "white_pen_fastwrite".to_owned();
+        app.apply_selected_entrance_preset();
+        app.session.active_post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+            action: pauseink_domain::PostActionKind::InterpolatedStyleChange {
+                style: pauseink_domain::StyleSnapshot {
+                    color: pauseink_domain::RgbaColor::new(255, 210, 140, 255),
+                    opacity: 0.32,
+                    ..pauseink_domain::StyleSnapshot::default()
+                },
+                duration: pauseink_domain::MediaDuration::from_millis(900),
+            },
+        }];
+        app.entrance_binding.inherit_post_actions = false;
+
+        app.save_settings();
+
+        let loaded = load_settings_from_file(&portable_paths).expect("settings load");
+        let reopened = DesktopApp::new(portable_paths, loaded, None, None);
+
+        assert_eq!(
+            reopened.bound_entrance_preset_id.as_deref(),
+            Some("white_pen_fastwrite")
+        );
+        assert!(
+            !reopened.entrance_binding.inherit_post_actions,
+            "post-action override の継承状態を保持したい"
+        );
+        assert_eq!(reopened.session.active_post_actions.len(), 1);
+        match &reopened.session.active_post_actions[0].action {
+            pauseink_domain::PostActionKind::InterpolatedStyleChange { style, duration } => {
+                assert_eq!(style.color, pauseink_domain::RgbaColor::new(255, 210, 140, 255));
+                assert_eq!(*duration, pauseink_domain::MediaDuration::from_millis(900));
+            }
+            other => panic!("unexpected restored post action: {other:?}"),
+        }
     }
 
     #[test]

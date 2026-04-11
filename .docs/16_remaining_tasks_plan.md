@@ -314,6 +314,11 @@
 
 **目的:** `during reveal / after stroke / after glyph object / after group / after run` に対する built-in post-action を renderer と UI へ接続する。
 
+**進捗メモ**
+
+- foundation は着手済み。object-local の `DuringReveal / AfterGlyphObject` evaluator、`PostAction` の project/settings/preset roundtrip、history command までは接続済み。
+- 未完了なのは inspector の配列 editor、`AfterStroke / AfterGroup / AfterRun` timing evaluator、combo preset 連携。
+
 **具体的に困る場面**
 
 - 利用者が「書き終わった文字だけ少し発光させたい」「trace が終わった後に色を変えたい」と思っても、現状は reveal 以後の振る舞いを付けられない。
@@ -356,18 +361,19 @@
 
 **実装ステップ**
 
-1. renderer に `evaluate_post_actions` を追加する。
-2. group/run 完了時刻の導出 helper を renderer 内へ追加する。
-3. pulse / blink / interpolated style change を base style へ重ねる式を固定する。
-4. inspector に配列 editor を追加する。
-5. entrance preset / combo preset に post-action を保存できるようにする。
-6. export / preview 回帰を追加する。
+1. foundation 済みの object-local evaluator を基準に、合成優先順位と `Pulse / Blink` の UI semantics を最終固定する。
+2. `AfterStroke / AfterGroup / AfterRun` の完了時刻導出 helper を renderer 内へ追加する。
+3. inspector に `追加 / 削除 / 上下移動` の配列 editor を追加する。
+4. entrance preset / combo preset の UI と保存経路へ post-action chain を接続する。
+5. export / preview 回帰を追加する。
 
 **必要テスト**
 
 - `renderer`: `after glyph object` の style change が reveal 完了後に効く
+- `renderer`: foundation として `InterpolatedStyleChange` が reveal 完了後に進行する
 - `renderer`: `after group` が group 内最後の timed object 完了後にだけ発火する
 - `renderer`: `pulse` と `blink` が clear 境界を越えない
+- `app`: active post-actions が新規 free-ink commit と settings restart で roundtrip する
 - `app`: post-action chain の add/remove/reorder が save/reopen で保持される
 
 **完了条件**

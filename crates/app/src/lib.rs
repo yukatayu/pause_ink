@@ -5,13 +5,15 @@ use std::path::{Path, PathBuf};
 use anyhow::Result as AnyhowResult;
 use pauseink_domain::{
     AnnotationProject, AppendStrokeToGlyphObjectCommand, BatchSetGlyphObjectEntranceCommand,
-    BatchSetGlyphObjectStyleCommand, ClearEvent, ClearEventId, ClearKind, ClearOrdering,
-    ClearTargetGranularity, CommandBatch, CommandHistory, DerivedStrokePath, EntranceBehavior,
-    GlyphObject, GlyphObjectEntranceChange, GlyphObjectId, GlyphObjectStyleChange,
-    GlyphObjectZIndexChange, Group, GroupId, InsertClearEventCommand, InsertGlyphObjectCommand,
-    InsertGroupCommand, InsertStrokeCommand, MediaTime, NormalizeZOrderCommand, OrderingMetadata,
-    Point2, RemoveGroupCommand, SetGlyphObjectEntranceCommand, SetGlyphObjectStyleCommand, Stroke,
-    StrokeId, StrokeSample, StyleSnapshot, UpdateGroupMembershipCommand, DEFAULT_HISTORY_DEPTH,
+    BatchSetGlyphObjectPostActionsCommand, BatchSetGlyphObjectStyleCommand, ClearEvent,
+    ClearEventId, ClearKind, ClearOrdering, ClearTargetGranularity, CommandBatch, CommandHistory,
+    DerivedStrokePath, EntranceBehavior, GlyphObject, GlyphObjectEntranceChange, GlyphObjectId,
+    GlyphObjectPostActionsChange, GlyphObjectStyleChange, GlyphObjectZIndexChange, Group, GroupId,
+    InsertClearEventCommand, InsertGlyphObjectCommand, InsertGroupCommand, InsertStrokeCommand,
+    MediaTime, NormalizeZOrderCommand, OrderingMetadata, Point2, PostAction, RemoveGroupCommand,
+    SetGlyphObjectEntranceCommand, SetGlyphObjectPostActionsCommand, SetGlyphObjectStyleCommand,
+    Stroke, StrokeId, StrokeSample, StyleSnapshot, UpdateGroupMembershipCommand,
+    DEFAULT_HISTORY_DEPTH,
 };
 use pauseink_export::ExportSnapshot;
 use pauseink_media::{import_media, ImportedMedia, MediaError, MediaProvider, PlaybackState};
@@ -118,6 +120,7 @@ pub struct AppSession {
     pub editor_mode: EditorMode,
     pub active_style: StyleSnapshot,
     pub active_entrance: EntranceBehavior,
+    pub active_post_actions: Vec<PostAction>,
     pub guide: GuideState,
     pub template: TemplateState,
     pub selection: SelectionState,
@@ -150,6 +153,7 @@ impl AppSession {
             editor_mode: EditorMode::FreeInk,
             active_style: StyleSnapshot::default(),
             active_entrance,
+            active_post_actions: Vec::new(),
             guide: GuideState::default(),
             template: TemplateState::default(),
             selection: SelectionState::default(),
@@ -181,6 +185,7 @@ impl AppSession {
             editor_mode: EditorMode::FreeInk,
             active_style: StyleSnapshot::default(),
             active_entrance,
+            active_post_actions: Vec::new(),
             guide: GuideState::default(),
             template: TemplateState::default(),
             selection: SelectionState::default(),
@@ -461,6 +466,13 @@ impl AppSession {
         )
     }
 
+    pub fn apply_active_post_actions_to_selection(&mut self) -> AnyhowResult<bool> {
+        self.apply_post_actions_to_object_ids(
+            &self.selected_target_object_ids(),
+            self.active_post_actions.clone(),
+        )
+    }
+
     pub fn overwrite_glyph_object_style(
         &mut self,
         object_id: &GlyphObjectId,
@@ -475,6 +487,14 @@ impl AppSession {
         entrance: EntranceBehavior,
     ) -> AnyhowResult<bool> {
         self.apply_entrance_to_object_ids(std::slice::from_ref(object_id), entrance)
+    }
+
+    pub fn overwrite_glyph_object_post_actions(
+        &mut self,
+        object_id: &GlyphObjectId,
+        post_actions: Vec<PostAction>,
+    ) -> AnyhowResult<bool> {
+        self.apply_post_actions_to_object_ids(std::slice::from_ref(object_id), post_actions)
     }
 
     pub fn group_selected_objects(&mut self) -> AnyhowResult<Option<GroupId>> {
@@ -772,6 +792,13 @@ impl AppSession {
                 .find(|object| object.id == object_id)
                 .map(|object| object.entrance.clone())
                 .ok_or_else(|| anyhow::anyhow!("target glyph object not found: {}", object_id.0))?;
+            let previous_post_actions = self
+                .project
+                .glyph_objects
+                .iter()
+                .find(|object| object.id == object_id)
+                .map(|object| object.post_actions.clone())
+                .ok_or_else(|| anyhow::anyhow!("target glyph object not found: {}", object_id.0))?;
             self.history.apply(
                 &mut self.project,
                 Box::new(CommandBatch::new(vec![
@@ -793,6 +820,11 @@ impl AppSession {
                         from: previous_entrance,
                         to: self.active_entrance.clone(),
                     }),
+                    Box::new(SetGlyphObjectPostActionsCommand {
+                        object_id: object_id.clone(),
+                        from: previous_post_actions,
+                        to: self.active_post_actions.clone(),
+                    }),
                 ])),
             )?;
             object_id
@@ -804,6 +836,7 @@ impl AppSession {
                 stroke_ids: vec![stroke_id.clone()],
                 style: self.active_style.clone(),
                 entrance: self.active_entrance.clone(),
+                post_actions: self.active_post_actions.clone(),
                 ordering: OrderingMetadata {
                     z_index: self.project.glyph_objects.len() as i32,
                     capture_order,
@@ -1115,6 +1148,38 @@ impl AppSession {
         self.history.apply(
             &mut self.project,
             Box::new(BatchSetGlyphObjectEntranceCommand { changes }),
+        )?;
+        self.dirty = true;
+        Ok(true)
+    }
+
+    fn apply_post_actions_to_object_ids(
+        &mut self,
+        object_ids: &[GlyphObjectId],
+        post_actions: Vec<PostAction>,
+    ) -> AnyhowResult<bool> {
+        let changes = object_ids
+            .iter()
+            .filter_map(|object_id| {
+                self.project
+                    .glyph_objects
+                    .iter()
+                    .find(|object| object.id == *object_id)
+                    .filter(|object| object.post_actions != post_actions)
+                    .map(|object| GlyphObjectPostActionsChange {
+                        object_id: object_id.clone(),
+                        from: object.post_actions.clone(),
+                        to: post_actions.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            return Ok(false);
+        }
+
+        self.history.apply(
+            &mut self.project,
+            Box::new(BatchSetGlyphObjectPostActionsCommand { changes }),
         )?;
         self.dirty = true;
         Ok(true)
@@ -1940,6 +2005,36 @@ mod tests {
         assert_eq!(session.project.strokes[0].raw_samples.len(), 2);
         assert_eq!(session.project.strokes[0].stabilized_samples.len(), 2);
         assert_eq!(session.project.strokes[0].derived_path.points.len(), 2);
+    }
+
+    #[test]
+    fn free_ink_commit_captures_active_post_actions_into_object() {
+        let mut session = AppSession::default();
+        session.active_post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+            action: pauseink_domain::PostActionKind::StyleChange {
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 180, 90, 255),
+                    opacity: 0.4,
+                    ..StyleSnapshot::default()
+                },
+            },
+        }];
+
+        session.begin_stroke(Point2 { x: 12.0, y: 18.0 }, MediaTime::from_millis(100));
+        session.append_stroke_point(Point2 { x: 36.0, y: 28.0 }, MediaTime::from_millis(120));
+        let object_id = session
+            .commit_stroke(false)
+            .expect("commit should succeed")
+            .expect("object id");
+        let object = session
+            .project
+            .glyph_objects
+            .iter()
+            .find(|object| object.id == object_id)
+            .expect("object should exist");
+
+        assert_eq!(object.post_actions, session.active_post_actions);
     }
 
     #[test]

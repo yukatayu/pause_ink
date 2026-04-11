@@ -1,6 +1,6 @@
 use crate::{
     AnnotationProject, ClearEvent, ClearEventId, Command, CommandError, EntranceBehavior,
-    GlyphObject, GlyphObjectId, Group, GroupId, Stroke, StrokeId, StyleSnapshot,
+    GlyphObject, GlyphObjectId, Group, GroupId, PostAction, Stroke, StrokeId, StyleSnapshot,
 };
 
 pub struct InsertStrokeCommand {
@@ -350,6 +350,23 @@ pub struct BatchSetGlyphObjectEntranceCommand {
     pub changes: Vec<GlyphObjectEntranceChange>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphObjectPostActionsChange {
+    pub object_id: GlyphObjectId,
+    pub from: Vec<PostAction>,
+    pub to: Vec<PostAction>,
+}
+
+pub struct SetGlyphObjectPostActionsCommand {
+    pub object_id: GlyphObjectId,
+    pub from: Vec<PostAction>,
+    pub to: Vec<PostAction>,
+}
+
+pub struct BatchSetGlyphObjectPostActionsCommand {
+    pub changes: Vec<GlyphObjectPostActionsChange>,
+}
+
 impl Command<AnnotationProject> for BatchSetGlyphObjectEntranceCommand {
     fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
         for change in &self.changes {
@@ -366,6 +383,32 @@ impl Command<AnnotationProject> for BatchSetGlyphObjectEntranceCommand {
     fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
         for change in self.changes.iter().rev() {
             SetGlyphObjectEntranceCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .undo(state)?;
+        }
+        Ok(())
+    }
+}
+
+impl Command<AnnotationProject> for BatchSetGlyphObjectPostActionsCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in &self.changes {
+            SetGlyphObjectPostActionsCommand {
+                object_id: change.object_id.clone(),
+                from: change.from.clone(),
+                to: change.to.clone(),
+            }
+            .apply(state)?;
+        }
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        for change in self.changes.iter().rev() {
+            SetGlyphObjectPostActionsCommand {
                 object_id: change.object_id.clone(),
                 from: change.from.clone(),
                 to: change.to.clone(),
@@ -435,6 +478,32 @@ impl Command<AnnotationProject> for SetGlyphObjectEntranceCommand {
             )));
         }
         object.entrance = self.from.clone();
+        Ok(())
+    }
+}
+
+impl Command<AnnotationProject> for SetGlyphObjectPostActionsCommand {
+    fn apply(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.post_actions != self.from {
+            return Err(CommandError::new(format!(
+                "unexpected current post-actions for {} during apply",
+                self.object_id.0
+            )));
+        }
+        object.post_actions = self.to.clone();
+        Ok(())
+    }
+
+    fn undo(&self, state: &mut AnnotationProject) -> Result<(), CommandError> {
+        let object = find_object_mut(state, &self.object_id)?;
+        if object.post_actions != self.to {
+            return Err(CommandError::new(format!(
+                "unexpected current post-actions for {} during undo",
+                self.object_id.0
+            )));
+        }
+        object.post_actions = self.from.clone();
         Ok(())
     }
 }

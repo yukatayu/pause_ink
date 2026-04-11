@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use pauseink_domain::{
     AnnotationProject, BlendMode, ClearKind, ColorMode, ColorStop, DerivedStrokePath,
     GeometryTransform, GlyphObject, GradientRepeat, GradientSpace, LinearGradientStyle, MediaTime,
-    Point2, RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke,
-    StrokeSample, StyleSnapshot, TimeBase,
+    Point2, PostAction, PostActionKind, PostActionTimingScope, RevealHeadColorSource,
+    RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeSample, StyleSnapshot, TimeBase,
 };
 use tiny_skia::{
     BlendMode as SkBlendMode, GradientStop as SkGradientStop, LinearGradient, Paint, PathBuilder,
@@ -68,6 +68,12 @@ struct RecentInkAccentState {
     size_multiplier: f32,
     blur_radius: f32,
     blend_mode: BlendMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PostActionEvaluation {
+    style: StyleSnapshot,
+    alpha_multiplier: f32,
 }
 
 const DEFAULT_ENTRANCE_DURATION_SECONDS: f64 = 0.6;
@@ -221,16 +227,22 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 if !visibility.is_visible() {
                     continue;
                 }
+                let post_action = evaluate_post_actions(request.project, object, request.time);
+                let mut effective_visibility = visibility;
+                effective_visibility.alpha *= post_action.alpha_multiplier;
+                if !effective_visibility.is_visible() {
+                    continue;
+                }
 
                 render_stroke_layer(
                     &mut pixmap,
                     request,
                     Some(object),
                     stroke,
-                    &object.style,
+                    &post_action.style,
                     &object.transform,
-                    visibility,
-                    recent_ink_accent_state(request, object, stroke, &object.style),
+                    effective_visibility,
+                    recent_ink_accent_state(request, object, stroke, &post_action.style),
                     render_scale,
                     layer,
                 );
@@ -275,17 +287,23 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
             if !visibility.is_visible() {
                 continue;
             }
+            let post_action = evaluate_post_actions(request.project, object, request.time);
+            let mut effective_visibility = visibility;
+            effective_visibility.alpha *= post_action.alpha_multiplier;
+            if !effective_visibility.is_visible() {
+                continue;
+            }
 
-            let accent = recent_ink_accent_state(request, object, stroke, &object.style);
+            let accent = recent_ink_accent_state(request, object, stroke, &post_action.style);
             for layer in body_layers {
                 render_stroke_layer(
                     &mut pixmap,
                     request,
                     Some(object),
                     stroke,
-                    &object.style,
+                    &post_action.style,
                     &object.transform,
-                    visibility,
+                    effective_visibility,
                     accent,
                     render_scale,
                     layer,
@@ -347,6 +365,63 @@ fn evaluate_visibility(
     VisibilityState {
         alpha: (entrance.alpha * clear.alpha).clamp(0.0, 1.0),
         path_fraction: (entrance.path_fraction * clear.path_fraction).clamp(0.0, 1.0),
+    }
+}
+
+fn evaluate_post_actions(
+    project: &AnnotationProject,
+    object: &GlyphObject,
+    time: MediaTime,
+) -> PostActionEvaluation {
+    if object.post_actions.is_empty() {
+        return PostActionEvaluation {
+            style: object.style.clone(),
+            alpha_multiplier: 1.0,
+        };
+    }
+
+    let (reveal_start_seconds, reveal_end_seconds) = object_reveal_window_seconds(project, object);
+    let current_seconds = media_time_seconds(time);
+    let mut style = object.style.clone();
+    let mut alpha_multiplier = 1.0_f32;
+
+    for post_action in &object.post_actions {
+        match post_action.timing_scope {
+            PostActionTimingScope::DuringReveal => {
+                if current_seconds < reveal_start_seconds || current_seconds > reveal_end_seconds {
+                    continue;
+                }
+                apply_post_action_to_effective_style(
+                    &mut style,
+                    &mut alpha_multiplier,
+                    post_action,
+                    reveal_start_seconds,
+                    Some(reveal_end_seconds),
+                    current_seconds,
+                );
+            }
+            PostActionTimingScope::AfterGlyphObject => {
+                if current_seconds < reveal_end_seconds {
+                    continue;
+                }
+                apply_post_action_to_effective_style(
+                    &mut style,
+                    &mut alpha_multiplier,
+                    post_action,
+                    reveal_end_seconds,
+                    None,
+                    current_seconds,
+                );
+            }
+            PostActionTimingScope::AfterStroke
+            | PostActionTimingScope::AfterGroup
+            | PostActionTimingScope::AfterRun => {}
+        }
+    }
+
+    PostActionEvaluation {
+        style,
+        alpha_multiplier: alpha_multiplier.clamp(0.0, 1.0),
     }
 }
 
@@ -432,6 +507,15 @@ fn effective_entrance_start_seconds(project: &AnnotationProject, object: &GlyphO
     }
 
     batch_anchor_seconds
+}
+
+fn object_reveal_window_seconds(project: &AnnotationProject, object: &GlyphObject) -> (f64, f64) {
+    let start_seconds = effective_entrance_start_seconds(project, object);
+    let end_seconds = match object.entrance.kind {
+        pauseink_domain::EntranceKind::Instant => start_seconds,
+        _ => start_seconds + entrance_duration_seconds(project, object),
+    };
+    (start_seconds, end_seconds)
 }
 
 fn entrance_duration_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
@@ -564,6 +648,154 @@ fn media_time_seconds(time: MediaTime) -> f64 {
 
 fn media_duration_seconds(ticks: i64, time_base: TimeBase) -> f64 {
     ticks as f64 * time_base.numerator as f64 / time_base.denominator as f64
+}
+
+fn apply_post_action_to_effective_style(
+    style: &mut StyleSnapshot,
+    alpha_multiplier: &mut f32,
+    post_action: &PostAction,
+    anchor_seconds: f64,
+    hard_end_seconds: Option<f64>,
+    current_seconds: f64,
+) {
+    let elapsed_seconds = (current_seconds - anchor_seconds).max(0.0);
+    match &post_action.action {
+        PostActionKind::NoOp => {}
+        PostActionKind::StyleChange { style: target } => {
+            *style = target.clone();
+        }
+        PostActionKind::InterpolatedStyleChange {
+            style: target,
+            duration,
+        } => {
+            let duration_seconds = media_duration_seconds(duration.ticks, duration.time_base);
+            let effective_duration = hard_end_seconds
+                .map(|hard_end| (hard_end - anchor_seconds).max(0.0))
+                .map(|window| {
+                    if duration_seconds <= f64::EPSILON {
+                        window
+                    } else {
+                        window.min(duration_seconds)
+                    }
+                })
+                .unwrap_or(duration_seconds);
+            let progress = if effective_duration <= f64::EPSILON {
+                1.0
+            } else {
+                (elapsed_seconds / effective_duration).clamp(0.0, 1.0) as f32
+            };
+            *style = interpolate_style_snapshot(style, target, progress);
+        }
+        PostActionKind::Pulse { cycles, duration } => {
+            let duration_seconds = media_duration_seconds(duration.ticks, duration.time_base);
+            let Some(progress) = action_progress(
+                elapsed_seconds,
+                duration_seconds,
+                hard_end_seconds.map(|hard_end| (hard_end - anchor_seconds).max(0.0)),
+            ) else {
+                return;
+            };
+            let cycles = (*cycles).max(1) as f32;
+            let wave = (progress * std::f32::consts::TAU * cycles).sin().abs();
+            let intensity = wave.powf(1.35);
+            style.opacity = (style.opacity * (1.0 + intensity * 0.18)).clamp(0.0, 1.0);
+            style.glow.enabled = true;
+            style.glow.blur_radius =
+                style.glow.blur_radius.max(style.thickness * (0.45 + intensity * 1.6));
+            style.glow.color = mix_colors(
+                representative_ink_color(style),
+                RgbaColor::new(255, 255, 255, 255),
+                0.18 + intensity * 0.28,
+            );
+        }
+        PostActionKind::Blink { cycles, duration } => {
+            let duration_seconds = media_duration_seconds(duration.ticks, duration.time_base);
+            let Some(progress) = action_progress(
+                elapsed_seconds,
+                duration_seconds,
+                hard_end_seconds.map(|hard_end| (hard_end - anchor_seconds).max(0.0)),
+            ) else {
+                return;
+            };
+            let cycles = (*cycles).max(1) as f32;
+            let phase = ((progress * cycles * 2.0).floor() as i32) % 2;
+            if phase == 1 {
+                *alpha_multiplier *= 0.0;
+            }
+        }
+    }
+}
+
+fn action_progress(
+    elapsed_seconds: f64,
+    duration_seconds: f64,
+    hard_limit_seconds: Option<f64>,
+) -> Option<f32> {
+    let effective_duration = hard_limit_seconds
+        .map(|window| {
+            if duration_seconds <= f64::EPSILON {
+                window
+            } else {
+                window.min(duration_seconds)
+            }
+        })
+        .unwrap_or(duration_seconds);
+    if effective_duration <= f64::EPSILON {
+        return Some(1.0);
+    }
+    if elapsed_seconds > effective_duration {
+        return None;
+    }
+    Some((elapsed_seconds / effective_duration).clamp(0.0, 1.0) as f32)
+}
+
+fn interpolate_style_snapshot(from: &StyleSnapshot, to: &StyleSnapshot, progress: f32) -> StyleSnapshot {
+    let t = progress.clamp(0.0, 1.0);
+    let mut blended = from.clone();
+    blended.color = mix_colors(from.color, to.color, t);
+    blended.thickness = lerp_f32(from.thickness, to.thickness, t);
+    blended.opacity = lerp_f32(from.opacity, to.opacity, t);
+    blended.stabilization_strength =
+        lerp_f32(from.stabilization_strength, to.stabilization_strength, t);
+    blended.outline.width = lerp_f32(from.outline.width, to.outline.width, t);
+    blended.outline.color = mix_colors(from.outline.color, to.outline.color, t);
+    blended.outline.enabled = if t >= 1.0 {
+        to.outline.enabled
+    } else {
+        from.outline.enabled
+    };
+    blended.drop_shadow.offset_x = lerp_f32(from.drop_shadow.offset_x, to.drop_shadow.offset_x, t);
+    blended.drop_shadow.offset_y = lerp_f32(from.drop_shadow.offset_y, to.drop_shadow.offset_y, t);
+    blended.drop_shadow.blur_radius =
+        lerp_f32(from.drop_shadow.blur_radius, to.drop_shadow.blur_radius, t);
+    blended.drop_shadow.color = mix_colors(from.drop_shadow.color, to.drop_shadow.color, t);
+    blended.drop_shadow.enabled = if t >= 1.0 {
+        to.drop_shadow.enabled
+    } else {
+        from.drop_shadow.enabled
+    };
+    blended.glow.blur_radius = lerp_f32(from.glow.blur_radius, to.glow.blur_radius, t);
+    blended.glow.color = mix_colors(from.glow.color, to.glow.color, t);
+    blended.glow.enabled = if t >= 1.0 { to.glow.enabled } else { from.glow.enabled };
+    if t >= 1.0 {
+        blended.color_mode = to.color_mode;
+        blended.gradient = to.gradient.clone();
+        blended.blend_mode = to.blend_mode;
+    }
+    blended
+}
+
+fn lerp_f32(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
+}
+
+fn mix_colors(from: RgbaColor, to: RgbaColor, t: f32) -> RgbaColor {
+    RgbaColor::new(
+        lerp_f32(from.r as f32, to.r as f32, t).round().clamp(0.0, 255.0) as u8,
+        lerp_f32(from.g as f32, to.g as f32, t).round().clamp(0.0, 255.0) as u8,
+        lerp_f32(from.b as f32, to.b as f32, t).round().clamp(0.0, 255.0) as u8,
+        lerp_f32(from.a as f32, to.a as f32, t).round().clamp(0.0, 255.0) as u8,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1572,6 +1804,10 @@ mod tests {
     fn rgb_energy_at(image: &RenderedOverlay, x: usize, y: usize) -> u16 {
         let rgba = rgba_at(image, x, y);
         rgba[0] as u16 + rgba[1] as u16 + rgba[2] as u16
+    }
+
+    fn red_channel_at(image: &RenderedOverlay, x: usize, y: usize) -> u8 {
+        rgba_at(image, x, y)[0]
     }
 
     fn entrance_visibility(
@@ -2654,6 +2890,126 @@ mod tests {
 
         assert_eq!(before_queue_release, VisibilityState::HIDDEN);
         assert!(after_queue_release.alpha > 0.25 && after_queue_release.alpha < 0.35);
+    }
+
+    #[test]
+    fn post_action_style_change_applies_after_glyph_object_reveal() {
+        let mut object = demo_object("stroke-1", 0);
+        object.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(600),
+            ..EntranceBehavior::default()
+        };
+        object.style.color = RgbaColor::new(40, 180, 255, 255);
+        object.post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+            action: pauseink_domain::PostActionKind::StyleChange {
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 96, 64, 255),
+                    thickness: 15.0,
+                    opacity: 0.38,
+                    ..object.style.clone()
+                },
+            },
+        }];
+
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-1", 0)],
+            glyph_objects: vec![object.clone()],
+            ..AnnotationProject::default()
+        };
+
+        let before_finish = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(300),
+            preview_force_visible_batch: None,
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render before finish");
+        let after_finish = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(900),
+            preview_force_visible_batch: None,
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render after finish");
+
+        assert!(
+            red_channel_at(&after_finish, 32, 20) > red_channel_at(&before_finish, 32, 20) + 30,
+            "reveal 完了後は post-action style change の暖色寄りへ変化してほしい"
+        );
+        assert!(
+            alpha_at(&after_finish, 32, 20) < alpha_at(&before_finish, 32, 20),
+            "opacity を下げた style change が reveal 完了後に反映されてほしい"
+        );
+    }
+
+    #[test]
+    fn post_action_interpolated_style_change_progresses_after_glyph_object_reveal() {
+        let mut object = demo_object("stroke-1", 0);
+        object.entrance = EntranceBehavior {
+            kind: EntranceKind::PathTrace,
+            duration: MediaDuration::from_millis(400),
+            ..EntranceBehavior::default()
+        };
+        object.style.color = RgbaColor::new(40, 180, 255, 255);
+        object.post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+            action: pauseink_domain::PostActionKind::InterpolatedStyleChange {
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 220, 120, 255),
+                    opacity: 0.28,
+                    ..object.style.clone()
+                },
+                duration: MediaDuration::from_millis(800),
+            },
+        }];
+
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-1", 0)],
+            glyph_objects: vec![object],
+            ..AnnotationProject::default()
+        };
+
+        let early = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(500),
+            preview_force_visible_batch: None,
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render early");
+        let late = render_overlay_rgba(&RenderRequest {
+            project: &project,
+            time: MediaTime::from_millis(1_100),
+            preview_force_visible_batch: None,
+            width: 128,
+            height: 48,
+            source_width: 128,
+            source_height: 48,
+            background: RgbaColor::new(0, 0, 0, 0),
+        })
+        .expect("render late");
+
+        assert!(
+            red_channel_at(&late, 32, 20) > red_channel_at(&early, 32, 20) + 20,
+            "interpolated style change は reveal 完了後に徐々に target color へ近づいてほしい"
+        );
+        assert!(
+            alpha_at(&late, 32, 20) < alpha_at(&early, 32, 20),
+            "interpolated style change の target opacity が時間とともに効いてほしい"
+        );
     }
 
     #[test]
