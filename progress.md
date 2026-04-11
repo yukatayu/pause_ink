@@ -6,19 +6,17 @@
 
 - 作業ブランチ: `develop`
 - 目標バージョン: `v1.0.0`
-- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、前スロット追加、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、flat auto-group semantics / merge grouping、page-first outline / page events、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、linear gradient color mode まで反映済み。
-- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは post-action chain、clear/combo preset の専用 UI、portable sidecar packaging が残っているため 100% から巻き戻して管理する。
-- 現在の即時マイルストーン: `V1-03 post-action chain` の foundation を完了。object-local の `DuringReveal / AfterGlyphObject` evaluator と preset/settings/project 保存経路は接続済み。次の主対象は `V1-03` の残り UI/chain editor と group/run scope、`V1-04 clear effect / clear preset / combo preset`、`PKG-01 portable FFmpeg sidecar packaging`。
+- 全体状態: `AGENTS.md` と `.docs/10_testing_and_done_criteria.md` に対して概算 99%。単一ウィンドウ GUI、`.pauseink` save/load、autosave/recovery、preferences/cache manager/runtime diagnostics、Google Fonts cache と graceful failure、export queue/engine、transparent/composite export、README/manual/tutorial/report/progress の同期、preview 座標ずれと UI 日本語文字化けの修正、template underlay / guide 操作性 / transport discoverability / shortcut / panel resize、描画中ストロークのライブプレビュー、object style 同期、guide 解除の stale state 解消、multi-stroke effect の backend 合成順補正、FFmpeg runtime の手動再検出と Windows/macOS/Linux の system path 探索強化、project ごとの style/entrance/template/guide 状態保存、portable user preset CRUD、effect editor、出現速度 editor、`先端アクセント` editor、`後段演出` chain editor、paused batch preview semantics、cross-object effect order、起動時ワークスペース復元、再生中入力禁止、左右ペインの固定ヘッダ付き縦スクロール、template 詳細 popup、guide 次文字字間調整、outline 起点の複数選択 / group / ungroup / z-order foundation、flat auto-group semantics / merge grouping、page-first outline / page events、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、linear gradient color mode まで反映済み。
+- 完了判定: host build/test/save-load/export、portable-state rule、Google Fonts graceful failure、Windows build 試行記録、final QA/docs review 相当の主要項目は通過済み。ただし `.docs/11_implementation_plan.md` ベースでは clear/combo preset の専用 UI、portable sidecar packaging、release sidecar 統合、cross-platform closeout が残っているため 100% から巻き戻して管理する。
+- 現在の即時マイルストーン: `V1-03 post-action chain` を完了。次の主対象は `V1-04 clear effect / clear preset / combo preset`、`PKG-01 portable FFmpeg sidecar packaging`、`PKG-02 GitHub Release sidecar 統合`。
 - 最新の確認事項:
-  - `V1-03` の foundation として、renderer に object-local `evaluate_post_actions` を追加し、`DuringReveal` と `AfterGlyphObject` に対する `StyleChange / InterpolatedStyleChange / Pulse / Blink` を `effective style` と `alpha multiplier` へ変換する基礎を実装した
-  - この段階では group/run timing へ踏み込まず、既存 renderer がまだ `EffectScope::{Stroke, Group, Run}` を消費していない現状に合わせて object-local に限定し、設計のねじれを増やさないようにした
-  - app session に `active_post_actions` を追加し、新規 free-ink commit と既存 object 追記の両方で `post_actions` を object へ保存できるようにした
-  - `SetGlyphObjectPostActionsCommand` と `BatchSetGlyphObjectPostActionsCommand` を追加し、後続の UI array editor が history 経由で post-action chain を差し替えられる基礎を整えた
-  - entrance preset と workspace/project 復元経路には `post_actions` を通し、user preset 保存、`settings.json5` 再起動復元、project reopen 復元まで roundtrip するようにした
-  - `presets_core` の base style schema では今回の追加で `fill_color` の追従漏れが見つかったため、`fill_color_rgba` を復旧して既存 gradient/fill 系 save/load と整合させた
-  - 回帰として `post_action_style_change_applies_after_glyph_object_reveal`、`post_action_interpolated_style_change_progresses_after_glyph_object_reveal`、`free_ink_commit_captures_active_post_actions_into_object`、`save_settings_and_restart_restore_active_post_actions` を追加した
-  - 今回の確認として `cargo test -q -p pauseink-renderer post_action_style_change_applies_after_glyph_object_reveal -- --nocapture`、`cargo test -q -p pauseink-renderer post_action_interpolated_style_change_progresses_after_glyph_object_reveal -- --nocapture`、`cargo test -q -p pauseink-presets-core -- --nocapture`、`cargo test -q -p pauseink-app free_ink_commit_captures_active_post_actions_into_object -- --nocapture`、`cargo test -q -p pauseink-app save_settings_and_restart_restore_active_post_actions -- --nocapture`、`cargo test -q -p pauseink-renderer -- --nocapture`、`cargo test -q -p pauseink-app --lib --bins`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets` を再通過した
-  - `V1-03` の残りは inspector 上の配列 editor、reorder/add/remove UI、`AfterStroke / AfterGroup / AfterRun` の timing evaluator、combo preset 連携であり、foundation と full feature の境界を計画と report に明記した
+  - `V1-03` を完了し、右ペイン `出現` に `後段演出` の配列 editor を追加した。`追加 / 削除 / 上下移動`、`発火タイミング`、`種類`、`target style`、`Pulse / Blink` の duration/cycle 編集を GUI から扱える
+  - renderer では `AfterStroke / AfterGroup / AfterRun` の anchor helper を追加し、`AfterStroke` は `scope=画ごと` かつ `order=直列/逆順/並列` を踏まえた stroke-local window、`AfterGroup` は同一 page の group member 完了、`AfterRun` は同一 page + same `created_at` batch 完了を基準に評価するようにした
+  - entrance preset / workspace settings / project reopen への `post_actions` roundtrip は既存 foundation を活かしつつ、project reopen test に `AfterGroup` と `AfterRun` を追加して保存経路を固定した
+  - combo preset の `entrance_override.post_actions` は app 側の専用 UI をまだ持たないが、`presets_core` の save/load roundtrip test を追加して file schema 上の連携は固定した
+  - 回帰として `post_action_after_group_waits_for_last_group_member_reveal`、`post_action_after_run_waits_for_last_batch_member_reveal`、`post_action_after_stroke_uses_stroke_scope_windows`、`editing_active_post_actions_syncs_selection_and_supports_reorder`、`combo_preset_entrance_override_roundtrips_post_actions` を追加した
+  - 今回の確認として `cargo test -q -p pauseink-renderer post_action_ -- --nocapture`、`cargo test -q -p pauseink-app editing_active_post_actions_syncs_selection_and_supports_reorder -- --nocapture`、`cargo test -q -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`、`cargo test -q -p pauseink-app save_settings_and_restart_restore_active_post_actions -- --nocapture`、`cargo test -q -p pauseink-presets-core combo_preset_entrance_override_roundtrips_post_actions -- --nocapture` を通した
+  - 最終確認として `cargo fmt --all`、`cargo test --workspace`、`cargo check -p pauseink-app --all-targets`、`git diff --check` を通した
   - preview 再生中の `先端アクセント` が効いていないように見えた原因は、renderer が `追従長 px` と `ぼかし` を preview の downscale 率でさらに縮めていたことだった
   - `crates/renderer/src/lib.rs` で reveal head accent の `tail_length` と `blur_radius` を preview 縮小時にも user 指定 px として扱うように修正し、縮小 preview でも recent segment の光り方が消えないようにした
   - 回帰として `reveal_head_effect_stays_visible_when_preview_is_downscaled` と `reveal_head_effect_tail_length_remains_usable_in_downscaled_preview` を追加し、preview/downscale 条件でも先端アクセントの RGB energy が増えることを固定した
@@ -225,7 +223,7 @@
   - Windows / macOS の runtime 実行確認はこの Linux host では行えず、現時点では探索ロジックの unit test と Linux 実機検証まで
   - Windows 実機での console 点滅解消確認と macOS 実機での runtime 実行確認は、この Linux host では未実施
   - GUI 実機での「保存済み project open 後に media が即復元されるか」の目視確認は、この Linux host では未実施
-  - post-action chain は object-local foundation まで接続済みだが、inspector の配列 editor と `AfterStroke / AfterGroup / AfterRun` timing evaluator は未接続
+  - post-action chain は renderer timing evaluator、`後段演出` chain editor、project/settings/preset 保存まで接続済み
   - clear / combo preset の専用 UI は未接続
   - headless host では GUI 実表示 smoke を実行できない
 
@@ -247,7 +245,7 @@
 | Phase 11 | 完了 | 100% | free ink capture と stabilization | GUI 経由の free ink / grouping / undo-redo と smoke を実装 |
 | Phase 12 | 完了 | 100% | guide system | guide capture と editor-only guide 表示を v1.0 範囲で実装 |
 | Phase 13 | 完了 | 100% | outline / groups / page events | object/page event track を v1.0 最小線で実装 |
-| Phase 14 | 進行中 | 96% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI と preset/save に加え reveal head accent まで接続済み。残りは post-action chain と clear/combo preset |
+| Phase 14 | 進行中 | 98% | style / entrance / clear effects | outline / drop shadow / glow / entrance UI、reveal head accent、post-action chain まで接続済み。残りは clear/combo preset |
 | Phase 15 | 完了 | 100% | export UI と export engine | custom 編集、queue、transparent/composite smoke を確認 |
 | Phase 16 | 完了 | 100% | preferences / cache manager / recovery | preferences/cache manager/runtime diagnostics/recovery を実装 |
 | Phase 17 | 進行中 | 99% | README / manuals / tutorials / polish | 残 task 計画を `.docs/16_remaining_tasks_plan.md` へ整理し、具体例と先決事項まで反映済み |
@@ -256,5 +254,5 @@
 ## 次の具体的な一手
 
 1. display server がある Linux または実機 Windows で、outline 起点の複数選択 / group / z-order、effect editor、出現速度 editor、template 字詰め、guide 進行を目視確認する。
-2. `.docs/16_remaining_tasks_plan.md` に従って `V1-16 flat auto-group semantics / merge grouping`、`V1-06 page-first outline / page events`、`V1-15 gradient color` の順で閉じる。
-3. その後 `V1-04 clear/combo preset`、`V1-03 post-action chain`、packaging / QA の順で仕上げる。
+2. `.docs/16_remaining_tasks_plan.md` に従って `V1-04 clear/combo preset` を閉じる。
+3. その後 `PKG-01 portable FFmpeg sidecar packaging`、`PKG-02 GitHub Release sidecar 統合`、`QA-01 cross-platform validation / closeout` の順で仕上げる。

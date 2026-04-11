@@ -117,10 +117,10 @@
 
 ## 3. 実装対象の現状スナップショット
 
-- `reveal hot-trail accent` は domain に型があるが、`crates/app/src/main.rs` の inspector と `crates/renderer/src/lib.rs` の描画には未接続。
-- `post-action chain` も domain に型だけあり、app / renderer / preset へ未接続。
+- `reveal hot-trail accent` は app inspector、renderer、preset/save に接続済み。
+- `post-action chain` は renderer timing evaluator、app の `後段演出` editor、preset/settings/project save に接続済み。combo preset は file schema roundtrip まで固定済み。
 - clear event は domain と renderer に最小 primitive があるが、app 側は `全消去 -> Instant clear 挿入` のみで、`kind / duration / granularity / ordering` の編集 UI と preset 導線が無い。
-- `V1-01`, `V1-02`, `V1-05`〜`V1-16` は develop で完了済み。以後の中心は `V1-03`, `V1-04`, `PKG-*`, `QA-01`。
+- `V1-01`, `V1-02`, `V1-03`, `V1-05`〜`V1-16` は develop で完了済み。以後の中心は `V1-04`, `PKG-*`, `QA-01`。
 - outline / page events panel は `page -> group -> object -> stroke` の page-first tree、alive highlight、auto-follow、current page filter まで接続済み。
 - group は explicit 操作に加えて same page / same style / same entrance の連続筆記を flat auto-group として扱い、group 同士の group 化は nested ではなく member merge へ寄せてある。
 - gradient color は `linear` のみ、base stroke のみ、`stroke/object/canvas` scope、`repeat/mirror`、2〜4 stop で実装済み。
@@ -316,8 +316,7 @@
 
 **進捗メモ**
 
-- foundation は着手済み。object-local の `DuringReveal / AfterGlyphObject` evaluator、`PostAction` の project/settings/preset roundtrip、history command までは接続済み。
-- 未完了なのは inspector の配列 editor、`AfterStroke / AfterGroup / AfterRun` timing evaluator、combo preset 連携。
+- 完了済み。object-local foundation に加えて、inspector の配列 editor、`AfterStroke / AfterGroup / AfterRun` timing evaluator、combo preset file schema roundtrip まで接続済み。
 
 **具体的に困る場面**
 
@@ -326,9 +325,9 @@
 
 **現状の問題**
 
-- domain の `PostAction` 型が死蔵されている。
-- renderer は reveal 後の style change / pulse / blink を全く評価していない。
-- inspector と project save/reopen に post-action 編集 UI が無い。
+- 解消済み。domain の `PostAction` は object / group / preset / project/settings roundtrip まで接続済み。
+- 解消済み。renderer は `DuringReveal / AfterStroke / AfterGlyphObject / AfterGroup / AfterRun` を評価する。
+- 解消済み。inspector には `追加 / 削除 / 上下移動` の配列 editor があり、project save/reopen にも反映される。
 
 **設計**
 

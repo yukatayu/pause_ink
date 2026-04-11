@@ -2018,6 +2018,414 @@ impl DesktopApp {
         self.mark_project_ui_dirty();
     }
 
+    fn mark_post_actions_dirty(&mut self) {
+        self.entrance_binding.inherit_post_actions = false;
+        self.sync_active_post_actions_to_current_object();
+        self.mark_project_ui_dirty();
+    }
+
+    fn add_default_post_action(&mut self) {
+        self.session
+            .active_post_actions
+            .push(default_post_action(&self.session.active_style));
+        self.mark_post_actions_dirty();
+    }
+
+    fn remove_active_post_action(&mut self, index: usize) {
+        if index >= self.session.active_post_actions.len() {
+            return;
+        }
+        self.session.active_post_actions.remove(index);
+        self.mark_post_actions_dirty();
+    }
+
+    fn move_active_post_action_up(&mut self, index: usize) {
+        if index == 0 || index >= self.session.active_post_actions.len() {
+            return;
+        }
+        self.session.active_post_actions.swap(index, index - 1);
+        self.mark_post_actions_dirty();
+    }
+
+    fn move_active_post_action_down(&mut self, index: usize) {
+        if index + 1 >= self.session.active_post_actions.len() {
+            return;
+        }
+        self.session.active_post_actions.swap(index, index + 1);
+        self.mark_post_actions_dirty();
+    }
+
+    fn draw_post_action_chain_editor(&mut self, ui: &mut egui::Ui) {
+        let has_bound_preset = self.bound_entrance_preset().is_some();
+        let bound_post_action_count = self
+            .bound_entrance_preset()
+            .map(|preset| preset.post_actions.len())
+            .unwrap_or_default();
+
+        let mut reset_to_preset = false;
+        ui.horizontal(|ui| {
+            ui.label("後段演出");
+            if has_bound_preset {
+                reset_to_preset = preset_reset_icon_button(
+                    ui,
+                    !self.entrance_binding.inherit_post_actions,
+                    "後段演出",
+                );
+            }
+            if ui.small_button("追加").clicked() {
+                self.add_default_post_action();
+            }
+        });
+
+        if reset_to_preset {
+            self.entrance_binding.inherit_post_actions = true;
+            self.refresh_bound_entrance_fields();
+            self.sync_active_post_actions_to_current_object();
+            self.mark_project_ui_dirty();
+            return;
+        }
+
+        if self.session.active_post_actions.is_empty() {
+            ui.small("後段演出なし。書き終わり後の発光や色変化を足したいときに追加します。");
+            if has_bound_preset
+                && bound_post_action_count == 0
+                && self.entrance_binding.inherit_post_actions
+            {
+                ui.small("この出現 preset では後段演出は無効です。");
+            }
+            return;
+        }
+
+        let base_style_seed = self.session.active_style.clone();
+        let mut chain_changed = false;
+        let mut move_up: Option<usize> = None;
+        let mut move_down: Option<usize> = None;
+        let mut remove: Option<usize> = None;
+
+        for index in 0..self.session.active_post_actions.len() {
+            let summary = post_action_summary(&self.session.active_post_actions[index]);
+            egui::CollapsingHeader::new(summary)
+                .id_salt(("post_action_row", index))
+                .default_open(index + 1 == self.session.active_post_actions.len())
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("↑"))
+                            .on_hover_text("1 つ上へ")
+                            .clicked()
+                        {
+                            move_up = Some(index);
+                        }
+                        if ui
+                            .add_enabled(
+                                index + 1 < self.session.active_post_actions.len(),
+                                egui::Button::new("↓"),
+                            )
+                            .on_hover_text("1 つ下へ")
+                            .clicked()
+                        {
+                            move_down = Some(index);
+                        }
+                        if ui
+                            .button("削除")
+                            .on_hover_text("この後段演出を削除")
+                            .clicked()
+                        {
+                            remove = Some(index);
+                        }
+                    });
+
+                    let post_action = &mut self.session.active_post_actions[index];
+                    ui.horizontal(|ui| {
+                        ui.label("発火");
+                        let mut timing_scope = post_action.timing_scope;
+                        egui::ComboBox::from_id_salt(("post_action_timing_scope", index))
+                            .selected_text(post_action_timing_scope_label(timing_scope))
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    pauseink_domain::PostActionTimingScope::DuringReveal,
+                                    pauseink_domain::PostActionTimingScope::AfterStroke,
+                                    pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+                                    pauseink_domain::PostActionTimingScope::AfterGroup,
+                                    pauseink_domain::PostActionTimingScope::AfterRun,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut timing_scope,
+                                        candidate,
+                                        post_action_timing_scope_label(candidate),
+                                    );
+                                }
+                            });
+                        if timing_scope != post_action.timing_scope {
+                            post_action.timing_scope = timing_scope;
+                            chain_changed = true;
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("種類");
+                        let mut action_kind = post_action_kind_tag(&post_action.action);
+                        egui::ComboBox::from_id_salt(("post_action_kind", index))
+                            .selected_text(post_action_kind_tag_label(action_kind))
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    PostActionKindTag::NoOp,
+                                    PostActionKindTag::StyleChange,
+                                    PostActionKindTag::InterpolatedStyleChange,
+                                    PostActionKindTag::Pulse,
+                                    PostActionKindTag::Blink,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut action_kind,
+                                        candidate,
+                                        post_action_kind_tag_label(candidate),
+                                    );
+                                }
+                            });
+                        if action_kind != post_action_kind_tag(&post_action.action) {
+                            post_action.action =
+                                default_post_action_kind(action_kind, &base_style_seed);
+                            chain_changed = true;
+                        }
+                    });
+
+                    match &mut post_action.action {
+                        pauseink_domain::PostActionKind::NoOp => {
+                            ui.small("何もしません。タイミング確認用の placeholder に使えます。");
+                        }
+                        pauseink_domain::PostActionKind::StyleChange { style } => {
+                            chain_changed |= Self::draw_post_action_style_editor(
+                                ui,
+                                index,
+                                style,
+                                &base_style_seed,
+                            );
+                        }
+                        pauseink_domain::PostActionKind::InterpolatedStyleChange {
+                            style,
+                            duration,
+                        } => {
+                            chain_changed |= Self::draw_post_action_style_editor(
+                                ui,
+                                index,
+                                style,
+                                &base_style_seed,
+                            );
+                            let mut duration_ms = media_duration_to_millis(*duration) as f32;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut duration_ms, 0.0..=8_000.0)
+                                        .text("時間 ms"),
+                                )
+                                .changed()
+                            {
+                                *duration = pauseink_domain::MediaDuration::from_millis(
+                                    duration_ms.round() as i64,
+                                );
+                                chain_changed = true;
+                            }
+                        }
+                        pauseink_domain::PostActionKind::Pulse { cycles, duration } => {
+                            let mut cycle_count = (*cycles).clamp(1, 8);
+                            if ui
+                                .add(egui::Slider::new(&mut cycle_count, 1..=8).text("回数"))
+                                .changed()
+                            {
+                                *cycles = cycle_count;
+                                chain_changed = true;
+                            }
+                            let mut duration_ms = media_duration_to_millis(*duration) as f32;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut duration_ms, 0.0..=5_000.0)
+                                        .text("時間 ms"),
+                                )
+                                .changed()
+                            {
+                                *duration = pauseink_domain::MediaDuration::from_millis(
+                                    duration_ms.round() as i64,
+                                );
+                                chain_changed = true;
+                            }
+                            ui.small("現在の線を軽く発光させます。");
+                        }
+                        pauseink_domain::PostActionKind::Blink { cycles, duration } => {
+                            let mut cycle_count = (*cycles).clamp(1, 8);
+                            if ui
+                                .add(egui::Slider::new(&mut cycle_count, 1..=8).text("回数"))
+                                .changed()
+                            {
+                                *cycles = cycle_count;
+                                chain_changed = true;
+                            }
+                            let mut duration_ms = media_duration_to_millis(*duration) as f32;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut duration_ms, 0.0..=5_000.0)
+                                        .text("時間 ms"),
+                                )
+                                .changed()
+                            {
+                                *duration = pauseink_domain::MediaDuration::from_millis(
+                                    duration_ms.round() as i64,
+                                );
+                                chain_changed = true;
+                            }
+                            ui.small("現在の線を点滅させます。");
+                        }
+                    }
+                });
+            if index + 1 < self.session.active_post_actions.len() {
+                ui.separator();
+            }
+        }
+
+        if let Some(index) = remove {
+            self.remove_active_post_action(index);
+            return;
+        }
+        if let Some(index) = move_up {
+            self.move_active_post_action_up(index);
+            return;
+        }
+        if let Some(index) = move_down {
+            self.move_active_post_action_down(index);
+            return;
+        }
+        if chain_changed {
+            self.mark_post_actions_dirty();
+        }
+    }
+
+    fn draw_post_action_style_editor(
+        ui: &mut egui::Ui,
+        index: usize,
+        style: &mut pauseink_domain::StyleSnapshot,
+        base_style_seed: &pauseink_domain::StyleSnapshot,
+    ) -> bool {
+        let mut changed = false;
+        if ui
+            .small_button("現在の基本スタイルで初期化")
+            .on_hover_text("現在の基本スタイルを target style の初期値としてコピーします。")
+            .clicked()
+        {
+            *style = base_style_seed.clone();
+            changed = true;
+        }
+
+        let mut color = rgba_to_color32(style.color);
+        ui.horizontal(|ui| {
+            ui.label("色");
+            if ui.color_edit_button_srgba(&mut color).changed() {
+                style.color = color32_to_rgba(color);
+                changed = true;
+            }
+        });
+
+        changed |= ui
+            .add(egui::Slider::new(&mut style.thickness, 1.0..=48.0).text("太さ"))
+            .changed();
+        changed |= ui
+            .add(egui::Slider::new(&mut style.opacity, 0.0..=1.0).text("不透明度"))
+            .changed();
+
+        ui.horizontal(|ui| {
+            ui.label("合成");
+            let mut blend_mode = style.blend_mode;
+            egui::ComboBox::from_id_salt(("post_action_blend_mode", index))
+                .selected_text(blend_mode_label(blend_mode))
+                .show_ui(ui, |ui| {
+                    for candidate in [
+                        pauseink_domain::BlendMode::Normal,
+                        pauseink_domain::BlendMode::Screen,
+                        pauseink_domain::BlendMode::Additive,
+                        pauseink_domain::BlendMode::Multiply,
+                    ] {
+                        ui.selectable_value(
+                            &mut blend_mode,
+                            candidate,
+                            blend_mode_label(candidate),
+                        );
+                    }
+                });
+            if blend_mode != style.blend_mode {
+                style.blend_mode = blend_mode;
+                changed = true;
+            }
+        });
+
+        ui.collapsing("outline / glow / shadow", |ui| {
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut style.outline.enabled, "outline").changed() {
+                    changed = true;
+                }
+                if style.outline.enabled {
+                    changed |= ui
+                        .add(egui::Slider::new(&mut style.outline.width, 0.0..=24.0).text("幅"))
+                        .changed();
+                    let mut outline_color = rgba_to_color32(style.outline.color);
+                    if ui.color_edit_button_srgba(&mut outline_color).changed() {
+                        style.outline.color = color32_to_rgba(outline_color);
+                        changed = true;
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut style.glow.enabled, "glow").changed() {
+                    changed = true;
+                }
+                if style.glow.enabled {
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut style.glow.blur_radius, 0.0..=32.0)
+                                .text("ぼかし"),
+                        )
+                        .changed();
+                    let mut glow_color = rgba_to_color32(style.glow.color);
+                    if ui.color_edit_button_srgba(&mut glow_color).changed() {
+                        style.glow.color = color32_to_rgba(glow_color);
+                        changed = true;
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui
+                    .checkbox(&mut style.drop_shadow.enabled, "shadow")
+                    .changed()
+                {
+                    changed = true;
+                }
+                if style.drop_shadow.enabled {
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut style.drop_shadow.offset_x, -24.0..=24.0)
+                                .text("X"),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut style.drop_shadow.offset_y, -24.0..=24.0)
+                                .text("Y"),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut style.drop_shadow.blur_radius, 0.0..=32.0)
+                                .text("ぼかし"),
+                        )
+                        .changed();
+                    let mut shadow_color = rgba_to_color32(style.drop_shadow.color);
+                    if ui.color_edit_button_srgba(&mut shadow_color).changed() {
+                        style.drop_shadow.color = color32_to_rgba(shadow_color);
+                        changed = true;
+                    }
+                }
+            });
+        });
+
+        changed
+    }
+
     fn persist_project_ui_state_into_document(&mut self) {
         let editor_state = serde_json::to_value(ProjectEditorUiState::capture(self))
             .expect("project editor ui state should serialize");
@@ -5677,6 +6085,8 @@ impl DesktopApp {
             self.sync_active_entrance_to_current_object();
             self.mark_project_ui_dirty();
         }
+        ui.separator();
+        self.draw_post_action_chain_editor(ui);
         ui.small(match self.session.active_entrance.duration_mode {
             pauseink_domain::EntranceDurationMode::FixedTotalDuration => {
                 "固定時間モードでは、値が短いほど速く出現します。出現速度はこの時間に追加で倍率を掛けます。"
@@ -6516,6 +6926,88 @@ fn entrance_order_label(order: pauseink_domain::EffectOrder) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostActionKindTag {
+    NoOp,
+    StyleChange,
+    InterpolatedStyleChange,
+    Pulse,
+    Blink,
+}
+
+fn post_action_timing_scope_label(scope: pauseink_domain::PostActionTimingScope) -> &'static str {
+    match scope {
+        pauseink_domain::PostActionTimingScope::DuringReveal => "出現中",
+        pauseink_domain::PostActionTimingScope::AfterStroke => "画後",
+        pauseink_domain::PostActionTimingScope::AfterGlyphObject => "文字後",
+        pauseink_domain::PostActionTimingScope::AfterGroup => "グループ後",
+        pauseink_domain::PostActionTimingScope::AfterRun => "run 後",
+    }
+}
+
+fn post_action_kind_tag(action: &pauseink_domain::PostActionKind) -> PostActionKindTag {
+    match action {
+        pauseink_domain::PostActionKind::NoOp => PostActionKindTag::NoOp,
+        pauseink_domain::PostActionKind::StyleChange { .. } => PostActionKindTag::StyleChange,
+        pauseink_domain::PostActionKind::InterpolatedStyleChange { .. } => {
+            PostActionKindTag::InterpolatedStyleChange
+        }
+        pauseink_domain::PostActionKind::Pulse { .. } => PostActionKindTag::Pulse,
+        pauseink_domain::PostActionKind::Blink { .. } => PostActionKindTag::Blink,
+    }
+}
+
+fn post_action_kind_tag_label(kind: PostActionKindTag) -> &'static str {
+    match kind {
+        PostActionKindTag::NoOp => "何もしない",
+        PostActionKindTag::StyleChange => "即時スタイル変更",
+        PostActionKindTag::InterpolatedStyleChange => "時間つきスタイル変更",
+        PostActionKindTag::Pulse => "パルス発光",
+        PostActionKindTag::Blink => "点滅",
+    }
+}
+
+fn default_post_action(style_seed: &pauseink_domain::StyleSnapshot) -> pauseink_domain::PostAction {
+    pauseink_domain::PostAction {
+        timing_scope: pauseink_domain::PostActionTimingScope::AfterGlyphObject,
+        action: default_post_action_kind(PostActionKindTag::Pulse, style_seed),
+    }
+}
+
+fn default_post_action_kind(
+    kind: PostActionKindTag,
+    style_seed: &pauseink_domain::StyleSnapshot,
+) -> pauseink_domain::PostActionKind {
+    match kind {
+        PostActionKindTag::NoOp => pauseink_domain::PostActionKind::NoOp,
+        PostActionKindTag::StyleChange => pauseink_domain::PostActionKind::StyleChange {
+            style: style_seed.clone(),
+        },
+        PostActionKindTag::InterpolatedStyleChange => {
+            pauseink_domain::PostActionKind::InterpolatedStyleChange {
+                style: style_seed.clone(),
+                duration: pauseink_domain::MediaDuration::from_millis(600),
+            }
+        }
+        PostActionKindTag::Pulse => pauseink_domain::PostActionKind::Pulse {
+            cycles: 2,
+            duration: pauseink_domain::MediaDuration::from_millis(700),
+        },
+        PostActionKindTag::Blink => pauseink_domain::PostActionKind::Blink {
+            cycles: 2,
+            duration: pauseink_domain::MediaDuration::from_millis(600),
+        },
+    }
+}
+
+fn post_action_summary(action: &pauseink_domain::PostAction) -> String {
+    format!(
+        "{} / {}",
+        post_action_timing_scope_label(action.timing_scope),
+        post_action_kind_tag_label(post_action_kind_tag(&action.action))
+    )
+}
+
 fn reveal_head_kind_label(kind: pauseink_domain::RevealHeadKind) -> &'static str {
     match kind {
         pauseink_domain::RevealHeadKind::SolidHead => "ソフト",
@@ -7008,6 +7500,25 @@ mod tests {
             persistence: 0.18,
             blend_mode: pauseink_domain::BlendMode::Screen,
         });
+        app.session.active_post_actions = vec![
+            pauseink_domain::PostAction {
+                timing_scope: pauseink_domain::PostActionTimingScope::AfterGroup,
+                action: pauseink_domain::PostActionKind::Pulse {
+                    cycles: 3,
+                    duration: pauseink_domain::MediaDuration::from_millis(750),
+                },
+            },
+            pauseink_domain::PostAction {
+                timing_scope: pauseink_domain::PostActionTimingScope::AfterRun,
+                action: pauseink_domain::PostActionKind::StyleChange {
+                    style: pauseink_domain::StyleSnapshot {
+                        color: pauseink_domain::RgbaColor::new(255, 225, 160, 255),
+                        opacity: 0.36,
+                        ..pauseink_domain::StyleSnapshot::default()
+                    },
+                },
+            },
+        ];
         app.template.text = "保存\n対象".to_owned();
         app.template.font_family = template_font_family.clone();
         app.template_text_editor_height = 148.0;
@@ -7086,6 +7597,21 @@ mod tests {
         );
         assert_eq!(reopened_head.blur_radius, 9.0);
         assert!((reopened_head.persistence - 0.18).abs() < 0.001);
+        assert_eq!(reopened.session.active_post_actions.len(), 2);
+        assert_eq!(
+            reopened.session.active_post_actions[0].timing_scope,
+            pauseink_domain::PostActionTimingScope::AfterGroup
+        );
+        match &reopened.session.active_post_actions[1].action {
+            pauseink_domain::PostActionKind::StyleChange { style } => {
+                assert_eq!(
+                    style.color,
+                    pauseink_domain::RgbaColor::new(255, 225, 160, 255)
+                );
+                assert!((style.opacity - 0.36).abs() < 0.001);
+            }
+            other => panic!("unexpected reopened post action: {other:?}"),
+        }
         assert_eq!(reopened.template.text, "保存\n対象");
         assert_eq!(reopened.template.font_family, template_font_family);
         assert_eq!(
@@ -8044,11 +8570,62 @@ mod tests {
         assert_eq!(reopened.session.active_post_actions.len(), 1);
         match &reopened.session.active_post_actions[0].action {
             pauseink_domain::PostActionKind::InterpolatedStyleChange { style, duration } => {
-                assert_eq!(style.color, pauseink_domain::RgbaColor::new(255, 210, 140, 255));
+                assert_eq!(
+                    style.color,
+                    pauseink_domain::RgbaColor::new(255, 210, 140, 255)
+                );
                 assert_eq!(*duration, pauseink_domain::MediaDuration::from_millis(900));
             }
             other => panic!("unexpected restored post action: {other:?}"),
         }
+    }
+
+    #[test]
+    fn editing_active_post_actions_syncs_selection_and_supports_reorder() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+
+        app.session.begin_stroke(
+            Point2 { x: 10.0, y: 10.0 },
+            pauseink_domain::MediaTime::from_millis(0),
+        );
+        app.session.append_stroke_point(
+            Point2 { x: 60.0, y: 20.0 },
+            pauseink_domain::MediaTime::from_millis(10),
+        );
+        app.session
+            .commit_stroke(false)
+            .expect("stroke commit should succeed");
+
+        app.add_default_post_action();
+        app.add_default_post_action();
+        app.session.active_post_actions[0].timing_scope =
+            pauseink_domain::PostActionTimingScope::AfterStroke;
+        app.session.active_post_actions[1].timing_scope =
+            pauseink_domain::PostActionTimingScope::AfterRun;
+        app.mark_post_actions_dirty();
+        app.move_active_post_action_up(1);
+        app.remove_active_post_action(1);
+
+        assert_eq!(app.session.active_post_actions.len(), 1);
+        assert_eq!(
+            app.session.active_post_actions[0].timing_scope,
+            pauseink_domain::PostActionTimingScope::AfterRun
+        );
+        assert!(
+            !app.entrance_binding.inherit_post_actions,
+            "chain 編集時は preset 継承を外したい"
+        );
+
+        let object = app
+            .session
+            .project
+            .glyph_objects
+            .first()
+            .expect("committed object");
+        assert_eq!(object.post_actions, app.session.active_post_actions);
     }
 
     #[test]

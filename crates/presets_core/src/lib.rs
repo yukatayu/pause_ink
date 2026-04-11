@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use pauseink_domain::{
     BlendMode, ClearKind, ClearOrdering, ClearTargetGranularity, ColorMode, ColorStop,
     DropShadowStyle, EntranceBehavior, EntranceDurationMode, EntranceKind, GlowStyle,
-    GradientRepeat, GradientSpace, LinearGradientStyle, MediaDuration, OutlineStyle,
-    PostAction, PostActionKind, PostActionTimingScope, RevealHeadColorSource, RevealHeadEffect,
-    RevealHeadKind, RgbaColor, StyleSnapshot,
+    GradientRepeat, GradientSpace, LinearGradientStyle, MediaDuration, OutlineStyle, PostAction,
+    PostActionKind, PostActionTimingScope, RevealHeadColorSource, RevealHeadEffect, RevealHeadKind,
+    RgbaColor, StyleSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -1239,7 +1239,9 @@ impl BaseStylePresetStyleFile {
         let (color_rgba, opacity) =
             normalize_style_preset_color_and_opacity(self.color_rgba, self.opacity);
         StyleSnapshot {
-            thickness: self.thickness.unwrap_or_else(|| StyleSnapshot::default().thickness),
+            thickness: self
+                .thickness
+                .unwrap_or_else(|| StyleSnapshot::default().thickness),
             color: color_rgba
                 .map(rgba_color_from_bytes)
                 .unwrap_or_else(|| StyleSnapshot::default().color),
@@ -2886,6 +2888,59 @@ mod tests {
                 assert!((style.opacity - 0.34).abs() < 0.001);
             }
             other => panic!("unexpected post action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn combo_preset_entrance_override_roundtrips_post_actions() {
+        let temp_dir = tempdir().expect("temp dir");
+        let combo_path = temp_dir.path().join("combo_with_post_actions.json5");
+        let preset = ComboPreset {
+            id: "combo_with_post_actions".to_owned(),
+            display_name: "Combo With Post Actions".to_owned(),
+            refs: ComboPresetRefs::default(),
+            style_override: None,
+            entrance_override: Some(EntrancePreset {
+                id: "combo_with_post_actions".to_owned(),
+                display_name: "Combo Entrance".to_owned(),
+                entrance: EntranceBehavior {
+                    kind: EntranceKind::PathTrace,
+                    duration: MediaDuration::from_millis(840),
+                    ..EntranceBehavior::default()
+                },
+                post_actions: vec![pauseink_domain::PostAction {
+                    timing_scope: pauseink_domain::PostActionTimingScope::AfterRun,
+                    action: pauseink_domain::PostActionKind::Blink {
+                        cycles: 2,
+                        duration: MediaDuration::from_millis(600),
+                    },
+                }],
+                source: StylePresetSource::User,
+                file_path: None,
+            }),
+            clear_override: None,
+            source: StylePresetSource::User,
+            file_path: None,
+        };
+
+        save_combo_preset_to_path(&combo_path, &preset).expect("combo preset save");
+        let loaded = load_combo_preset_from_path(&combo_path).expect("combo preset load");
+
+        let entrance = loaded
+            .entrance_override
+            .as_ref()
+            .expect("entrance override should roundtrip");
+        assert_eq!(entrance.post_actions.len(), 1);
+        assert_eq!(
+            entrance.post_actions[0].timing_scope,
+            pauseink_domain::PostActionTimingScope::AfterRun
+        );
+        match &entrance.post_actions[0].action {
+            pauseink_domain::PostActionKind::Blink { cycles, duration } => {
+                assert_eq!(*cycles, 2);
+                assert_eq!(*duration, MediaDuration::from_millis(600));
+            }
+            other => panic!("unexpected combo post action: {other:?}"),
         }
     }
 }

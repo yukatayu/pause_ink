@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use pauseink_domain::{
-    AnnotationProject, BlendMode, ClearKind, ColorMode, ColorStop, DerivedStrokePath,
-    GeometryTransform, GlyphObject, GradientRepeat, GradientSpace, LinearGradientStyle, MediaTime,
-    Point2, PostAction, PostActionKind, PostActionTimingScope, RevealHeadColorSource,
-    RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeSample, StyleSnapshot, TimeBase,
+    AnnotationProject, BlendMode, ClearKind, ColorMode, ColorStop, DerivedStrokePath, EffectOrder,
+    EffectScope, GeometryTransform, GlyphObject, GradientRepeat, GradientSpace,
+    LinearGradientStyle, MediaTime, Point2, PostAction, PostActionKind, PostActionTimingScope,
+    RevealHeadColorSource, RevealHeadEffect, RevealHeadKind, RgbaColor, Stroke, StrokeSample,
+    StyleSnapshot, TimeBase,
 };
 use tiny_skia::{
     BlendMode as SkBlendMode, GradientStop as SkGradientStop, LinearGradient, Paint, PathBuilder,
@@ -227,7 +228,8 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
                 if !visibility.is_visible() {
                     continue;
                 }
-                let post_action = evaluate_post_actions(request.project, object, request.time);
+                let post_action =
+                    evaluate_post_actions(request.project, object, stroke, request.time);
                 let mut effective_visibility = visibility;
                 effective_visibility.alpha *= post_action.alpha_multiplier;
                 if !effective_visibility.is_visible() {
@@ -287,7 +289,7 @@ pub fn render_overlay_rgba(request: &RenderRequest<'_>) -> Result<RenderedOverla
             if !visibility.is_visible() {
                 continue;
             }
-            let post_action = evaluate_post_actions(request.project, object, request.time);
+            let post_action = evaluate_post_actions(request.project, object, stroke, request.time);
             let mut effective_visibility = visibility;
             effective_visibility.alpha *= post_action.alpha_multiplier;
             if !effective_visibility.is_visible() {
@@ -371,6 +373,7 @@ fn evaluate_visibility(
 fn evaluate_post_actions(
     project: &AnnotationProject,
     object: &GlyphObject,
+    stroke: &Stroke,
     time: MediaTime,
 ) -> PostActionEvaluation {
     if object.post_actions.is_empty() {
@@ -400,6 +403,20 @@ fn evaluate_post_actions(
                     current_seconds,
                 );
             }
+            PostActionTimingScope::AfterStroke => {
+                let (_, stroke_end_seconds) = stroke_reveal_window_seconds(project, object, stroke);
+                if current_seconds < stroke_end_seconds {
+                    continue;
+                }
+                apply_post_action_to_effective_style(
+                    &mut style,
+                    &mut alpha_multiplier,
+                    post_action,
+                    stroke_end_seconds,
+                    None,
+                    current_seconds,
+                );
+            }
             PostActionTimingScope::AfterGlyphObject => {
                 if current_seconds < reveal_end_seconds {
                     continue;
@@ -413,9 +430,34 @@ fn evaluate_post_actions(
                     current_seconds,
                 );
             }
-            PostActionTimingScope::AfterStroke
-            | PostActionTimingScope::AfterGroup
-            | PostActionTimingScope::AfterRun => {}
+            PostActionTimingScope::AfterGroup => {
+                let group_end_seconds = group_reveal_end_seconds(project, object);
+                if current_seconds < group_end_seconds {
+                    continue;
+                }
+                apply_post_action_to_effective_style(
+                    &mut style,
+                    &mut alpha_multiplier,
+                    post_action,
+                    group_end_seconds,
+                    None,
+                    current_seconds,
+                );
+            }
+            PostActionTimingScope::AfterRun => {
+                let run_end_seconds = run_reveal_end_seconds(project, object);
+                if current_seconds < run_end_seconds {
+                    continue;
+                }
+                apply_post_action_to_effective_style(
+                    &mut style,
+                    &mut alpha_multiplier,
+                    post_action,
+                    run_end_seconds,
+                    None,
+                    current_seconds,
+                );
+            }
         }
     }
 
@@ -516,6 +558,124 @@ fn object_reveal_window_seconds(project: &AnnotationProject, object: &GlyphObjec
         _ => start_seconds + entrance_duration_seconds(project, object),
     };
     (start_seconds, end_seconds)
+}
+
+fn stroke_reveal_window_seconds(
+    project: &AnnotationProject,
+    object: &GlyphObject,
+    stroke: &Stroke,
+) -> (f64, f64) {
+    let (object_start_seconds, object_end_seconds) = object_reveal_window_seconds(project, object);
+    if !matches!(object.entrance.scope, EffectScope::Stroke)
+        || matches!(object.entrance.kind, pauseink_domain::EntranceKind::Instant)
+        || object.stroke_ids.len() <= 1
+    {
+        return (object_start_seconds, object_end_seconds);
+    }
+
+    if matches!(object.entrance.order, EffectOrder::Parallel) {
+        return (object_start_seconds, object_end_seconds);
+    }
+
+    let total_duration_seconds = (object_end_seconds - object_start_seconds).max(0.0);
+    if total_duration_seconds <= f64::EPSILON {
+        return (object_start_seconds, object_end_seconds);
+    }
+
+    let mut ordered_strokes = object
+        .stroke_ids
+        .iter()
+        .filter_map(|stroke_id| {
+            project
+                .strokes
+                .iter()
+                .find(|candidate| candidate.id == *stroke_id)
+        })
+        .collect::<Vec<_>>();
+    if matches!(object.entrance.order, EffectOrder::Reverse) {
+        ordered_strokes.reverse();
+    }
+
+    let stroke_weights = ordered_strokes
+        .iter()
+        .map(|candidate| stroke_duration_weight(project, object, candidate))
+        .collect::<Vec<_>>();
+    let total_weight = stroke_weights
+        .iter()
+        .copied()
+        .sum::<f64>()
+        .max(f64::EPSILON);
+
+    let mut elapsed = 0.0_f64;
+    for (candidate, weight) in ordered_strokes.iter().zip(stroke_weights.iter().copied()) {
+        let fraction = (weight / total_weight).clamp(0.0, 1.0);
+        let segment_duration = total_duration_seconds * fraction;
+        let start_seconds = object_start_seconds + elapsed;
+        let end_seconds = start_seconds + segment_duration;
+        if candidate.id == stroke.id {
+            return (start_seconds, end_seconds);
+        }
+        elapsed += segment_duration;
+    }
+
+    (object_start_seconds, object_end_seconds)
+}
+
+fn stroke_duration_weight(
+    _project: &AnnotationProject,
+    object: &GlyphObject,
+    stroke: &Stroke,
+) -> f64 {
+    match object.entrance.duration_mode {
+        pauseink_domain::EntranceDurationMode::FixedTotalDuration => 1.0,
+        pauseink_domain::EntranceDurationMode::ProportionalToStrokeLength => {
+            let points = transformed_visible_points(stroke, &object.transform, 1.0);
+            polyline_length(&points).max(1.0) as f64
+        }
+    }
+}
+
+fn group_reveal_end_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
+    let object_page = object.page_index(&project.clear_events);
+    let Some(group) = project
+        .groups
+        .iter()
+        .find(|group| group.glyph_object_ids.contains(&object.id))
+    else {
+        return object_reveal_window_seconds(project, object).1;
+    };
+
+    group
+        .glyph_object_ids
+        .iter()
+        .filter_map(|object_id| {
+            project
+                .glyph_objects
+                .iter()
+                .find(|candidate| candidate.id == *object_id)
+        })
+        .filter(|candidate| candidate.page_index(&project.clear_events) == object_page)
+        .map(|candidate| object_reveal_window_seconds(project, candidate).1)
+        .fold(
+            object_reveal_window_seconds(project, object).1,
+            |latest, candidate_end| latest.max(candidate_end),
+        )
+}
+
+fn run_reveal_end_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
+    let object_page = object.page_index(&project.clear_events);
+    project
+        .glyph_objects
+        .iter()
+        .filter(|candidate| {
+            candidate.page_index(&project.clear_events) == object_page
+                && candidate.created_at == object.created_at
+        })
+        .map(|candidate| object_reveal_window_seconds(project, candidate).1)
+        .fold(
+            object_reveal_window_seconds(project, object).1,
+            |latest, candidate_end| latest.max(candidate_end),
+        )
 }
 
 fn entrance_duration_seconds(project: &AnnotationProject, object: &GlyphObject) -> f64 {
@@ -700,8 +860,10 @@ fn apply_post_action_to_effective_style(
             let intensity = wave.powf(1.35);
             style.opacity = (style.opacity * (1.0 + intensity * 0.18)).clamp(0.0, 1.0);
             style.glow.enabled = true;
-            style.glow.blur_radius =
-                style.glow.blur_radius.max(style.thickness * (0.45 + intensity * 1.6));
+            style.glow.blur_radius = style
+                .glow
+                .blur_radius
+                .max(style.thickness * (0.45 + intensity * 1.6));
             style.glow.color = mix_colors(
                 representative_ink_color(style),
                 RgbaColor::new(255, 255, 255, 255),
@@ -749,7 +911,11 @@ fn action_progress(
     Some((elapsed_seconds / effective_duration).clamp(0.0, 1.0) as f32)
 }
 
-fn interpolate_style_snapshot(from: &StyleSnapshot, to: &StyleSnapshot, progress: f32) -> StyleSnapshot {
+fn interpolate_style_snapshot(
+    from: &StyleSnapshot,
+    to: &StyleSnapshot,
+    progress: f32,
+) -> StyleSnapshot {
     let t = progress.clamp(0.0, 1.0);
     let mut blended = from.clone();
     blended.color = mix_colors(from.color, to.color, t);
@@ -776,7 +942,11 @@ fn interpolate_style_snapshot(from: &StyleSnapshot, to: &StyleSnapshot, progress
     };
     blended.glow.blur_radius = lerp_f32(from.glow.blur_radius, to.glow.blur_radius, t);
     blended.glow.color = mix_colors(from.glow.color, to.glow.color, t);
-    blended.glow.enabled = if t >= 1.0 { to.glow.enabled } else { from.glow.enabled };
+    blended.glow.enabled = if t >= 1.0 {
+        to.glow.enabled
+    } else {
+        from.glow.enabled
+    };
     if t >= 1.0 {
         blended.color_mode = to.color_mode;
         blended.gradient = to.gradient.clone();
@@ -791,10 +961,18 @@ fn lerp_f32(from: f32, to: f32, t: f32) -> f32 {
 
 fn mix_colors(from: RgbaColor, to: RgbaColor, t: f32) -> RgbaColor {
     RgbaColor::new(
-        lerp_f32(from.r as f32, to.r as f32, t).round().clamp(0.0, 255.0) as u8,
-        lerp_f32(from.g as f32, to.g as f32, t).round().clamp(0.0, 255.0) as u8,
-        lerp_f32(from.b as f32, to.b as f32, t).round().clamp(0.0, 255.0) as u8,
-        lerp_f32(from.a as f32, to.a as f32, t).round().clamp(0.0, 255.0) as u8,
+        lerp_f32(from.r as f32, to.r as f32, t)
+            .round()
+            .clamp(0.0, 255.0) as u8,
+        lerp_f32(from.g as f32, to.g as f32, t)
+            .round()
+            .clamp(0.0, 255.0) as u8,
+        lerp_f32(from.b as f32, to.b as f32, t)
+            .round()
+            .clamp(0.0, 255.0) as u8,
+        lerp_f32(from.a as f32, to.a as f32, t)
+            .round()
+            .clamp(0.0, 255.0) as u8,
     )
 }
 
@@ -3009,6 +3187,150 @@ mod tests {
         assert!(
             alpha_at(&late, 32, 20) < alpha_at(&early, 32, 20),
             "interpolated style change の target opacity が時間とともに効いてほしい"
+        );
+    }
+
+    #[test]
+    fn post_action_after_group_waits_for_last_group_member_reveal() {
+        let mut object_a =
+            entrance_object("object-a", "stroke-a", 0, 1, EntranceKind::PathTrace, 400);
+        object_a.post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterGroup,
+            action: pauseink_domain::PostActionKind::StyleChange {
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 96, 64, 255),
+                    ..object_a.style.clone()
+                },
+            },
+        }];
+        let object_b = entrance_object("object-b", "stroke-b", 0, 2, EntranceKind::PathTrace, 600);
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-a", 0), demo_stroke("stroke-b", 0)],
+            glyph_objects: vec![object_a.clone(), object_b],
+            groups: vec![pauseink_domain::Group {
+                id: pauseink_domain::GroupId::new("group-1"),
+                glyph_object_ids: vec![object_a.id.clone(), GlyphObjectId::new("object-b")],
+                ..pauseink_domain::Group::default()
+            }],
+            ..AnnotationProject::default()
+        };
+        let stroke = project
+            .strokes
+            .iter()
+            .find(|stroke| stroke.id == StrokeId::new("stroke-a"))
+            .expect("stroke-a");
+
+        let before_group_end =
+            evaluate_post_actions(&project, &object_a, stroke, MediaTime::from_millis(900));
+        let after_group_end =
+            evaluate_post_actions(&project, &object_a, stroke, MediaTime::from_millis(1_100));
+
+        assert_eq!(before_group_end.style.color, object_a.style.color);
+        assert_eq!(
+            after_group_end.style.color,
+            RgbaColor::new(255, 96, 64, 255),
+            "group 内最後の timed reveal 完了後にだけ style change が効いてほしい"
+        );
+    }
+
+    #[test]
+    fn post_action_after_run_waits_for_last_batch_member_reveal() {
+        let mut object_a =
+            entrance_object("object-a", "stroke-a", 0, 1, EntranceKind::PathTrace, 400);
+        object_a.post_actions = vec![pauseink_domain::PostAction {
+            timing_scope: pauseink_domain::PostActionTimingScope::AfterRun,
+            action: pauseink_domain::PostActionKind::StyleChange {
+                style: StyleSnapshot {
+                    color: RgbaColor::new(255, 210, 120, 255),
+                    ..object_a.style.clone()
+                },
+            },
+        }];
+        let object_b = entrance_object("object-b", "stroke-b", 0, 2, EntranceKind::PathTrace, 500);
+        let project = AnnotationProject {
+            strokes: vec![demo_stroke("stroke-a", 0), demo_stroke("stroke-b", 0)],
+            glyph_objects: vec![object_a.clone(), object_b],
+            ..AnnotationProject::default()
+        };
+        let stroke = project
+            .strokes
+            .iter()
+            .find(|stroke| stroke.id == StrokeId::new("stroke-a"))
+            .expect("stroke-a");
+
+        let before_run_end =
+            evaluate_post_actions(&project, &object_a, stroke, MediaTime::from_millis(700));
+        let after_run_end =
+            evaluate_post_actions(&project, &object_a, stroke, MediaTime::from_millis(950));
+
+        assert_eq!(before_run_end.style.color, object_a.style.color);
+        assert_eq!(
+            after_run_end.style.color,
+            RgbaColor::new(255, 210, 120, 255),
+            "同一 batch run 内最後の timed reveal 完了後に style change が効いてほしい"
+        );
+    }
+
+    #[test]
+    fn post_action_after_stroke_uses_stroke_scope_windows() {
+        let stroke_a = line_stroke(
+            "stroke-a",
+            0,
+            Point2 { x: 12.0, y: 20.0 },
+            Point2 { x: 62.0, y: 20.0 },
+        );
+        let stroke_b = line_stroke(
+            "stroke-b",
+            0,
+            Point2 { x: 12.0, y: 28.0 },
+            Point2 { x: 108.0, y: 28.0 },
+        );
+        let style = StyleSnapshot {
+            color: RgbaColor::new(64, 180, 255, 255),
+            thickness: 8.0,
+            ..StyleSnapshot::default()
+        };
+        let object = GlyphObject {
+            id: GlyphObjectId::new("object-1"),
+            stroke_ids: vec![stroke_a.id.clone(), stroke_b.id.clone()],
+            style: style.clone(),
+            entrance: EntranceBehavior {
+                kind: EntranceKind::PathTrace,
+                scope: pauseink_domain::EffectScope::Stroke,
+                order: pauseink_domain::EffectOrder::Serial,
+                duration: MediaDuration::from_millis(600),
+                ..EntranceBehavior::default()
+            },
+            post_actions: vec![pauseink_domain::PostAction {
+                timing_scope: pauseink_domain::PostActionTimingScope::AfterStroke,
+                action: pauseink_domain::PostActionKind::StyleChange {
+                    style: StyleSnapshot {
+                        color: RgbaColor::new(255, 120, 96, 255),
+                        ..style.clone()
+                    },
+                },
+            }],
+            ..GlyphObject::default()
+        };
+        let project = AnnotationProject {
+            strokes: vec![stroke_a.clone(), stroke_b.clone()],
+            glyph_objects: vec![object.clone()],
+            ..AnnotationProject::default()
+        };
+
+        let first_after_first_end =
+            evaluate_post_actions(&project, &object, &stroke_a, MediaTime::from_millis(350));
+        let second_before_second_end =
+            evaluate_post_actions(&project, &object, &stroke_b, MediaTime::from_millis(350));
+
+        assert_eq!(
+            first_after_first_end.style.color,
+            RgbaColor::new(255, 120, 96, 255),
+            "先頭 stroke は自分の reveal window 終了後に post-action を始めてほしい"
+        );
+        assert_eq!(
+            second_before_second_end.style.color, style.color,
+            "後続 stroke は自分の reveal window が終わるまで post-action を待ってほしい"
         );
     }
 

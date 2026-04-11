@@ -4,7 +4,7 @@
 プロジェクト拡張子: **`.pauseink`**
 
 この repository は、PauseInk v1.0 を仕様固定済みの handoff package として実装していくための Rust workspace です。  
-現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、`先端アクセント` editor、単色 / 線形グラデーション切替、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD、outline 起点の複数選択 / flat group / z-order foundation、same page の連続筆記 auto-group、page-first のオブジェクト一覧 / ページイベント一覧まで接続されています。
+現在は single-window のデスクトップアプリ、`.pauseink` 保存/読込、free ink、guide/template 補助、manual clear、transparent/composite export、portable data 管理、transport bar、Undo/Redo shortcut、template font dropdown、effect editor、出現速度 editor、`先端アクセント` editor、`後段演出` chain editor、単色 / 線形グラデーション切替、project ごとの style/entrance/template/guide 状態保存、style/entrance の分離 preset と field-level 継承/上書き/reset、user preset CRUD、outline 起点の複数選択 / flat group / z-order foundation、same page の連続筆記 auto-group、page-first のオブジェクト一覧 / ページイベント一覧まで接続されています。
 
 ## PauseInk とは
 
@@ -55,7 +55,6 @@ whiteboard アプリでも、通常フォント置換アプリでもありませ
 - optional codec pack の正式導線
 - Windows 向け release packaging
 - clear / combo preset の専用 UI 適用
-- post-action chain
 - partial clear
 - pen pressure
 

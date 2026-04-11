@@ -4,14 +4,40 @@
 
 ## 1. 要約
 
-- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、object-local `post-action chain` foundation、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、preview 縮小時でも見える `先端アクセント`、compact な `↺` preset reset UI、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
-- 現在のフェーズ: Phase 20 継続。`V1-03 post-action chain` の foundation を object-local 範囲で接続し、次候補は inspector chain editor と `AfterStroke / AfterGroup / AfterRun` timing の本実装。
+- 現在の状態: v1.0.0 の done criteria を満たす実装、文書、検証ログを揃えた。`media` の runtime discovery / probe / preview frame、`presets_core` の export profile catalog と base style preset loader / user preset overlay / save helper、`export` の concrete settings 計算 / 実行 / HW fallback / progress report、`domain` の typed model / project command、`project_io` の typed wrapper / annotation sync、`renderer` の overlay / clear / path trace 描画と stabilization helper、`post-action chain` の renderer timing evaluator、`app` の session / free ink / save-load / guide-template 状態、single-window GUI、autosave cadence / recovery prompt、preferences / cache manager / runtime diagnostics / export queue / built-in+user style preset 適用、project ごとの style/template/guide state 保存、preview overlay の source/target 縮尺修正、`egui` 日本語 UI font bootstrap、描画中ストロークの live preview、template 前後 slot 移動、配置済み template の再 layout、fixed-height 下部パネルと内容幅指定、append 時の object style 同期、guide 解除時の stale state reset、FFmpeg runtime の手動再検出、最後の検出エラー表示、Windows/macOS/Linux の system runtime 探索強化、`Esc` による popup 優先 close と template/guide cancel、metrics-based template alignment、preview 縮小時でも見える `先端アクセント`、compact な `↺` preset reset UI、`後段演出` chain editor、`.docs/` / `README.md` / `manual/` / `progress.md` / `samples/` の同期に加え、GitHub Actions による `main` / PR CI と tag release build まで整備した。
+- 現在のフェーズ: Phase 20 継続。`V1-03 post-action chain` を完了し、次候補は `V1-04 clear effect / clear preset / combo preset` と packaging / QA です。
 - ホスト環境: Linux x86_64 / Rust stable 1.93.0 / host に Ubuntu apt `ffmpeg 6.1.1-3ubuntu5` と `ffprobe 6.1.1-3ubuntu5` がある。portable sidecar runtime は未配置。
 - 最新の検証済み build: `cargo check -p pauseink-app --all-targets`
 - 最新の検証済み composite export: `cargo test --workspace` 内の `pauseink_export::tests::composite_avi_export_smoke_if_host_runtime_exists`
 - 最新の検証済み transparent export: `cargo test --workspace` 内の `pauseink_export::tests::transparent_png_sequence_export_smoke_if_host_runtime_exists`
 
 ### 最新作業ログ
+
+- 2026-04-11:
+  - Task: `V1-03 post-action chain` completion
+  - 実施内容: `crates/renderer/src/lib.rs` で `evaluate_post_actions()` を stroke-aware に拡張し、`AfterStroke / AfterGroup / AfterRun` の anchor helper を追加した。`AfterStroke` は `scope=Stroke` のとき stroke-local reveal window、`AfterGroup` は同一 page の group member 完了、`AfterRun` は同一 page + same `created_at` batch 完了で発火する。`crates/app/src/main.rs` には `後段演出` array editor、`追加 / 削除 / 上下移動` helper、preset reset icon、target style editor を追加し、selection/current object へ history 経由で即時同期するよう接続した。
+  - 設計調整: sub-agent `Halley` の指摘どおり、renderer の差し込み点は `evaluate_post_actions()` に限定し、clear/page 境界 evaluator には触れない方針を維持した。`run` は user 向け UI には出さず、現行 reveal queue と整合する最小定義として「同一 page + same created_at batch」に固定した。combo preset は app 側の専用 editor をまだ持たないが、`presets_core` の `ComboPresetFile -> EntrancePresetFile -> post_actions` 経路は既に存在していたため、今回は file schema roundtrip test を追加して連携を固定した。
+  - sub-agent review:
+    - `Halley` は `AfterStroke` だけ stroke 引数が必要、`AfterGroup` は `project.groups[*].glyph_object_ids` から member reveal end を集める helper が最小、`AfterRun` は既存 lane 定義の same `created_at` batch を使うのが最短と報告した。採用した。
+  - 追加テスト:
+    - `pauseink_renderer::tests::post_action_after_group_waits_for_last_group_member_reveal`
+    - `pauseink_renderer::tests::post_action_after_run_waits_for_last_batch_member_reveal`
+    - `pauseink_renderer::tests::post_action_after_stroke_uses_stroke_scope_windows`
+    - `pauseink_app::tests::editing_active_post_actions_syncs_selection_and_supports_reorder`
+    - `pauseink_app::tests::save_and_reopen_project_restores_style_template_and_guide_state`
+    - `pauseink_presets_core::tests::combo_preset_entrance_override_roundtrips_post_actions`
+  - 実行コマンド:
+    - `cargo fmt --all`
+    - `cargo test -q -p pauseink-renderer post_action_ -- --nocapture`
+    - `cargo test -q -p pauseink-app editing_active_post_actions_syncs_selection_and_supports_reorder -- --nocapture`
+    - `cargo test -q -p pauseink-app save_and_reopen_project_restores_style_template_and_guide_state -- --nocapture`
+    - `cargo test -q -p pauseink-app save_settings_and_restart_restore_active_post_actions -- --nocapture`
+    - `cargo test -q -p pauseink-presets-core combo_preset_entrance_override_roundtrips_post_actions -- --nocapture`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+    - `git diff --check`
+  - 結果: すべて exit 0。`後段演出` UI、group/run/stroke timing evaluator、project/settings/preset の保存経路、combo preset file schema roundtrip、workspace 全体の回帰が崩れていないことを確認した。
+  - Known gap: `StyleChange / InterpolatedStyleChange` の target style editor は v1.0 では単色・太さ・不透明度・outline/glow/shadow・blend mode を中心に露出している。gradient target の個別 editor は future work とするが、preset / project file schema 上は保持される。
 
 - 2026-04-11:
   - Task: `V1-03 post-action chain` foundation
@@ -1406,7 +1432,7 @@
 - `.pauseink` の metadata/media/settings/pages/presets は一部 generic JSON を残しており、完全 typed schema ではない。
 - selection / multi-select / group / ungroup / z-order の UI はまだ最小で、outline panel も表示中心。
 - built-in / user style preset は base style に加えて `outline / drop shadow / glow / blend mode / entrance kind / duration mode / duration / speed scalar` を読み書きできる。clear / combo preset の専用 UI はまだ無い。
-- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱え、recent segment の `head accent` も `HeadHalo / HeadCore` pass で接続済み。未接続の残項目は post-action chain と clear / combo preset 専用 UI。
+- renderer は outline / drop shadow / glow の primitive を持ち、同一 object 内では cross-stroke ordering を multi-pass compositor で補正する。entrance は `fixed_total_duration` と `proportional_to_stroke_length` を UI/renderer 一貫で扱え、recent segment の `head accent` と `post-action chain` も接続済み。未接続の残項目は clear / combo preset 専用 UI。
 - Google Fonts は configured family 管理、portable cache、fetch、graceful failure、template font dropdown 反映まで実装した。scale が切り替わる run 境界での字詰めは font engine の section 境界に従うため、完全な DTP 相当の組版ではない。
 - thumbnails / media probe cache は directory / cleanup 基盤まではあるが、積極的な populate はまだ限定的。
 - autosave は単一最新 slot 方式で、複数世代保持や復旧差分比較は未実装。
