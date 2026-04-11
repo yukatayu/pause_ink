@@ -1677,3 +1677,31 @@
   - 結果:
     - exit 0。workspace test 全通、`pauseink-app --all-targets` check 通過、whitespace error なし。
     - `gradient_mode_toggle_preserves_solid_return_color`、`saving_gradient_preset_does_not_overwrite_solid_fallback_color`、`resetting_gradient_to_preset_restores_or_disables_it`、`gradient_affects_base_stroke_but_effect_layers_remain_solid` を追加し、V1-15 の app/renderer 回帰を固定した。
+- 2026-04-11T18:20:00+09:00
+  - 直近マイルストーン: コード全体の監査に基づく小規模リファクタと境界回帰の補強。
+  - sub-agent review:
+    - reviewer `Lagrange` に repo 全体の設計 / テスト密度を監査させ、次の 3 点を優先採用した。
+      - `domain` の `CommandBatch` 途中失敗 rollback を直接固定する test が薄い。
+      - `.pauseink` unknown field preservation は `project_io` 単体に寄っており、app の save/load 経路での保証が薄い。
+      - preview 用 `RenderRequest` の責務を UI 側で増やし過ぎないよう、組み立て境界を 1 箇所に寄せる価値がある。
+    - 監査結果は妥当と判断し、大きなアーキテクチャ変更は見送り、上記 3 点だけを局所修正対象にした。
+  - 実施内容:
+    - `crates/domain/src/lib.rs`
+      - `batch_post_action_commands_update_multiple_objects_and_undo` を追加し、`BatchSetGlyphObjectPostActionsCommand` の apply/undo を履歴経由で固定した。
+      - `command_batch_rolls_back_prior_commands_when_later_command_fails` を追加し、`CommandBatch::apply` の部分失敗時に先行 command が rollback され、履歴にも積まれないことを固定した。
+    - `crates/project_io/src/lib.rs`
+      - extra field の収集を `collect_extra_fields_by_id()` へ寄せ、`sync_annotation_project()` の重複ロジックを小さく整理した。
+      - `sync_annotation_project_preserves_known_entity_extra_fields` を拡張し、stroke/object に加えて group/clear event の extra preservation も検証対象にした。
+    - `crates/app/src/lib.rs`
+      - `save_reopen_preserves_unknown_fields_across_project_sections` を追加し、`AppSession::load_project_from_str -> save_project_to_path -> load_project_from_path` 経由で top-level / project / media / settings / pages / presets / group / clear event の未知フィールドが残ることを固定した。
+    - `crates/app/src/main.rs`
+      - preview overlay 用の `RenderRequest` 生成を `build_preview_render_request()` に寄せた。
+      - `preview_render_request_helper_carries_time_batch_and_clamped_sizes` を追加し、paused preview batch と size clamp を helper 単位で固定した。
+  - 実行コマンド:
+    - `cargo fmt --all`
+    - `cargo test --workspace`
+    - `cargo check -p pauseink-app --all-targets`
+    - `git diff --check`
+  - 結果:
+    - exit 0。workspace test 全通、`pauseink-app --all-targets` check 通過、whitespace error なし。
+    - 今回は大きい横断リファクタは行わず、保存互換・履歴 rollback・preview request 境界の 3 点に限定したため、差分は 4 ファイルに留まった。

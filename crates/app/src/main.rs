@@ -1384,6 +1384,25 @@ impl DesktopApp {
         }
     }
 
+    fn build_preview_render_request(
+        &self,
+        target_width: u32,
+        target_height: u32,
+        source_width: u32,
+        source_height: u32,
+    ) -> RenderRequest<'_> {
+        RenderRequest {
+            project: &self.session.project,
+            time: self.session.current_time(),
+            preview_force_visible_batch: self.current_preview_force_visible_batch(),
+            width: target_width.max(1),
+            height: target_height.max(1),
+            source_width: source_width.max(1),
+            source_height: source_height.max(1),
+            background: pauseink_domain::RgbaColor::new(0, 0, 0, 0),
+        }
+    }
+
     fn set_preview_force_visible_batch(&mut self, anchor: pauseink_domain::MediaTime) {
         if self.preview_visible_batch_anchor == Some(anchor) {
             return;
@@ -3740,31 +3759,27 @@ impl DesktopApp {
         source_width: u32,
         source_height: u32,
     ) {
-        let preview_force_visible_batch = self.current_preview_force_visible_batch();
-        let key = (
-            self.session.current_time().ticks,
-            self.session.project.strokes.len(),
-            self.session.project.clear_events.len(),
+        let request = self.build_preview_render_request(
             target_width,
             target_height,
             source_width,
             source_height,
-            preview_force_visible_batch,
+        );
+        let key = (
+            request.time.ticks,
+            self.session.project.strokes.len(),
+            self.session.project.clear_events.len(),
+            request.width,
+            request.height,
+            request.source_width,
+            request.source_height,
+            request.preview_force_visible_batch,
         );
         if self.overlay_key.as_ref() == Some(&key) {
             return;
         }
 
-        match render_overlay_rgba(&RenderRequest {
-            project: &self.session.project,
-            time: self.session.current_time(),
-            preview_force_visible_batch,
-            width: target_width.max(1),
-            height: target_height.max(1),
-            source_width: source_width.max(1),
-            source_height: source_height.max(1),
-            background: pauseink_domain::RgbaColor::new(0, 0, 0, 0),
-        }) {
+        match render_overlay_rgba(&request) {
             Ok(overlay) => {
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [overlay.width as usize, overlay.height as usize],
@@ -9365,6 +9380,30 @@ mod tests {
             None,
             "play 開始時には preview-only batch override を timeline へ戻すべき"
         );
+    }
+
+    #[test]
+    fn preview_render_request_helper_carries_time_batch_and_clamped_sizes() {
+        let temp_dir = tempdir().expect("temp dir");
+        let portable_paths = PortablePaths::from_root(temp_dir.path().join("pauseink_data"));
+        portable_paths.ensure_exists().expect("portable dirs");
+        let mut app = DesktopApp::new(portable_paths, Settings::default(), None, None);
+        app.session.playback = Some(PlaybackState::new(sample_imported_media()));
+        app.session
+            .seek(pauseink_domain::MediaTime::from_millis(1_120));
+        app.set_preview_force_visible_batch(pauseink_domain::MediaTime::from_millis(1_000));
+
+        let request = app.build_preview_render_request(0, 240, 0, 1080);
+
+        assert_eq!(request.time, pauseink_domain::MediaTime::from_millis(1_120));
+        assert_eq!(
+            request.preview_force_visible_batch,
+            Some(pauseink_domain::MediaTime::from_millis(1_000))
+        );
+        assert_eq!(request.width, 1);
+        assert_eq!(request.height, 240);
+        assert_eq!(request.source_width, 1);
+        assert_eq!(request.source_height, 1080);
     }
 
     #[test]

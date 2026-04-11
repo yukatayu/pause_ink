@@ -758,6 +758,101 @@ mod tests {
     }
 
     #[test]
+    fn batch_post_action_commands_update_multiple_objects_and_undo() {
+        let original_post_actions = vec![PostAction {
+            timing_scope: PostActionTimingScope::AfterGlyphObject,
+            action: PostActionKind::NoOp,
+        }];
+        let updated_post_actions = vec![
+            PostAction {
+                timing_scope: PostActionTimingScope::AfterStroke,
+                action: PostActionKind::Pulse {
+                    cycles: 2,
+                    duration: MediaDuration::from_millis(250),
+                },
+            },
+            PostAction {
+                timing_scope: PostActionTimingScope::AfterRun,
+                action: PostActionKind::Blink {
+                    cycles: 3,
+                    duration: MediaDuration::from_millis(400),
+                },
+            },
+        ];
+        let mut project = AnnotationProject {
+            glyph_objects: vec![
+                GlyphObject {
+                    id: GlyphObjectId::new("object-1"),
+                    post_actions: original_post_actions.clone(),
+                    ..GlyphObject::default()
+                },
+                GlyphObject {
+                    id: GlyphObjectId::new("object-2"),
+                    post_actions: original_post_actions.clone(),
+                    ..GlyphObject::default()
+                },
+            ],
+            ..AnnotationProject::default()
+        };
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+
+        history
+            .apply(
+                &mut project,
+                Box::new(BatchSetGlyphObjectPostActionsCommand {
+                    changes: vec![
+                        GlyphObjectPostActionsChange {
+                            object_id: GlyphObjectId::new("object-1"),
+                            from: original_post_actions.clone(),
+                            to: updated_post_actions.clone(),
+                        },
+                        GlyphObjectPostActionsChange {
+                            object_id: GlyphObjectId::new("object-2"),
+                            from: original_post_actions.clone(),
+                            to: updated_post_actions.clone(),
+                        },
+                    ],
+                }),
+            )
+            .expect("batch post-action updates should apply");
+
+        assert_eq!(project.glyph_objects[0].post_actions, updated_post_actions);
+        assert_eq!(project.glyph_objects[1].post_actions, updated_post_actions);
+        assert!(history.undo(&mut project).expect("undo should succeed"));
+        assert_eq!(project.glyph_objects[0].post_actions, original_post_actions);
+        assert_eq!(project.glyph_objects[1].post_actions, original_post_actions);
+    }
+
+    #[test]
+    fn command_batch_rolls_back_prior_commands_when_later_command_fails() {
+        let mut project = AnnotationProject::default();
+        let mut history = CommandHistory::with_limit(DEFAULT_HISTORY_DEPTH);
+        let stroke = Stroke {
+            id: StrokeId::new("stroke-1"),
+            ..Stroke::default()
+        };
+
+        let result = history.apply(
+            &mut project,
+            Box::new(CommandBatch::new(vec![
+                Box::new(InsertStrokeCommand {
+                    stroke: stroke.clone(),
+                    index: None,
+                }),
+                Box::new(InsertStrokeCommand {
+                    stroke,
+                    index: None,
+                }),
+            ])),
+        );
+
+        assert!(result.is_err());
+        assert!(project.strokes.is_empty());
+        assert!(!history.undo(&mut project).expect("undo should not exist"));
+        assert!(!history.redo(&mut project).expect("redo should not exist"));
+    }
+
+    #[test]
     fn normalize_z_order_command_reorders_without_touching_capture_or_reveal_order() {
         let mut project = AnnotationProject {
             glyph_objects: vec![

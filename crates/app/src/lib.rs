@@ -1776,6 +1776,7 @@ mod tests {
     use pauseink_media::{
         MediaProbe, MediaProvider, MediaRuntime, MediaSupport, PreviewFrame, RuntimeCapabilities,
     };
+    use serde_json::json;
     use tempfile::tempdir;
 
     use super::*;
@@ -2157,6 +2158,101 @@ mod tests {
         assert!(saved.contains("\"top_unknown\": true"));
         assert!(saved.contains("\"keep_me\": 1"));
         assert!(saved.contains("\"keep_object\": 2"));
+    }
+
+    #[test]
+    fn save_reopen_preserves_unknown_fields_across_project_sections() {
+        let source = r#"
+        {
+          format_version: "1.0.0",
+          top_unknown: { keep_top: true },
+          project: {
+            metadata: {
+              title: "unknown field test",
+              meta_unknown: 7,
+            },
+            media: {
+              source_path: "sample.mp4",
+              media_unknown: { keep_media: true },
+            },
+            settings: {
+              editor_unknown: { keep_settings: true },
+            },
+            pages: [
+              {
+                page_unknown: { keep_page: true },
+              },
+            ],
+            strokes: [],
+            objects: [],
+            groups: [
+              {
+                id: "group_0001",
+                glyph_object_ids: [],
+                custom_group_block: { keep_group: true },
+              },
+            ],
+            clear_events: [
+              {
+                id: "clear_0001",
+                time: { ticks: 1000, time_base: { numerator: 1, denominator: 1000 } },
+                custom_clear_block: { keep_clear: true },
+              },
+            ],
+            presets: {
+              preset_unknown: { keep_presets: true },
+            },
+            project_unknown: { keep_project: true },
+          },
+        }
+        "#;
+        let temp_dir = tempdir().expect("temp dir");
+        let path = temp_dir.path().join("unknown-roundtrip.pauseink");
+        let mut session =
+            AppSession::load_project_from_str(source).expect("session load should succeed");
+
+        session
+            .save_project_to_path(&path)
+            .expect("project save should succeed");
+
+        let reopened = AppSession::load_project_from_path(&path).expect("project reload");
+
+        assert_eq!(
+            reopened.document.extra.get("top_unknown"),
+            Some(&json!({ "keep_top": true }))
+        );
+        assert_eq!(
+            reopened.document.project.extra.get("project_unknown"),
+            Some(&json!({ "keep_project": true }))
+        );
+        assert_eq!(
+            reopened.document.project.media.get("media_unknown"),
+            Some(&json!({ "keep_media": true }))
+        );
+        assert_eq!(
+            reopened.document.project.settings.get("editor_unknown"),
+            Some(&json!({ "keep_settings": true }))
+        );
+        assert_eq!(
+            reopened.document.project.pages[0].get("page_unknown"),
+            Some(&json!({ "keep_page": true }))
+        );
+        assert_eq!(
+            reopened.document.project.presets.get("preset_unknown"),
+            Some(&json!({ "keep_presets": true }))
+        );
+        assert_eq!(
+            reopened.document.project.groups[0]
+                .extra
+                .get("custom_group_block"),
+            Some(&json!({ "keep_group": true }))
+        );
+        assert_eq!(
+            reopened.document.project.clear_events[0]
+                .extra
+                .get("custom_clear_block"),
+            Some(&json!({ "keep_clear": true }))
+        );
     }
 
     #[test]

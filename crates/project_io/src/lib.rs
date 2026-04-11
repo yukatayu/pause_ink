@@ -150,26 +150,26 @@ impl PauseInkProject {
     }
 
     pub fn sync_annotation_project(&mut self, annotations: &AnnotationProject) {
-        let stroke_extra = self
-            .strokes
-            .iter()
-            .map(|entry| (entry.stroke.id.0.clone(), entry.extra.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let object_extra = self
-            .objects
-            .iter()
-            .map(|entry| (entry.object.id.0.clone(), entry.extra.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let group_extra = self
-            .groups
-            .iter()
-            .map(|entry| (entry.group.id.0.clone(), entry.extra.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let clear_event_extra = self
-            .clear_events
-            .iter()
-            .map(|entry| (entry.clear_event.id.0.clone(), entry.extra.clone()))
-            .collect::<BTreeMap<_, _>>();
+        let stroke_extra = collect_extra_fields_by_id(
+            &self.strokes,
+            |entry| &entry.stroke.id.0,
+            |entry| &entry.extra,
+        );
+        let object_extra = collect_extra_fields_by_id(
+            &self.objects,
+            |entry| &entry.object.id.0,
+            |entry| &entry.extra,
+        );
+        let group_extra = collect_extra_fields_by_id(
+            &self.groups,
+            |entry| &entry.group.id.0,
+            |entry| &entry.extra,
+        );
+        let clear_event_extra = collect_extra_fields_by_id(
+            &self.clear_events,
+            |entry| &entry.clear_event.id.0,
+            |entry| &entry.extra,
+        );
 
         self.strokes = annotations
             .strokes
@@ -211,6 +211,17 @@ impl PauseInkProject {
             })
             .collect();
     }
+}
+
+fn collect_extra_fields_by_id<T>(
+    items: &[T],
+    id_of: impl Fn(&T) -> &str,
+    extra_of: impl Fn(&T) -> &ExtraFields,
+) -> BTreeMap<String, ExtraFields> {
+    items
+        .iter()
+        .map(|entry| (id_of(entry).to_owned(), extra_of(entry).clone()))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -455,6 +466,21 @@ mod tests {
                 },
                 extra: BTreeMap::from([("custom".into(), json!("value"))]),
             }],
+            groups: vec![ProjectGroup {
+                group: Group {
+                    id: pauseink_domain::GroupId::new("group-1"),
+                    glyph_object_ids: vec![pauseink_domain::GlyphObjectId::new("object-1")],
+                    ..Group::default()
+                },
+                extra: BTreeMap::from([("group_note".into(), json!("keep"))]),
+            }],
+            clear_events: vec![ProjectClearEvent {
+                clear_event: ClearEvent {
+                    id: pauseink_domain::ClearEventId::new("clear-1"),
+                    ..ClearEvent::default()
+                },
+                extra: BTreeMap::from([("clear_note".into(), json!("keep"))]),
+            }],
             ..PauseInkProject::default()
         };
         let annotations = AnnotationProject {
@@ -474,6 +500,16 @@ mod tests {
                 stroke_ids: vec![pauseink_domain::StrokeId::new("stroke-1")],
                 ..GlyphObject::default()
             }],
+            groups: vec![Group {
+                id: pauseink_domain::GroupId::new("group-1"),
+                glyph_object_ids: vec![pauseink_domain::GlyphObjectId::new("object-1")],
+                ..Group::default()
+            }],
+            clear_events: vec![ClearEvent {
+                id: pauseink_domain::ClearEventId::new("clear-1"),
+                time: pauseink_domain::MediaTime::from_millis(456),
+                ..ClearEvent::default()
+            }],
             ..AnnotationProject::default()
         };
 
@@ -485,6 +521,14 @@ mod tests {
         assert_eq!(
             project.objects[0].extra.get("custom"),
             Some(&json!("value"))
+        );
+        assert_eq!(
+            project.groups[0].extra.get("group_note"),
+            Some(&json!("keep"))
+        );
+        assert_eq!(
+            project.clear_events[0].extra.get("clear_note"),
+            Some(&json!("keep"))
         );
         assert_eq!(project.to_annotation_project(), annotations);
     }
